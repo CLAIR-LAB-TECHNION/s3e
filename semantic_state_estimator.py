@@ -1,6 +1,7 @@
 from pddl2nl_query_converter import PDDL2NLQueryConverter
 from llava_utils import LlavaModel
 import torch
+from tqdm.auto import tqdm
 
 
 class SemanticStateEstimator:
@@ -42,20 +43,32 @@ class SemanticStateEstimator:
         )
 
         # get tokens for words of interest (yes and no)
-        self.tokens_of_interest = self.vqa_model.tokenizer.encode('yes', 'no')
+        self.tokens_of_interest = self.vqa_model.tokenizer.encode(['yes', 'no'])
+        self.yes_tokens = self.vqa_model.tokenizer.encode(['yes', 'YES', 'Yes'])
+        self.no_tokens = self.vqa_model.tokenizer.encode(['no', 'NO', 'No'])
 
     def estimate_state(self, images):
         # TODO receive simulation state instead of renderings.
 
-        # state_sym_probs_map = {}
-        # for pred, query in self.queries_dict.items():
-        #     logits = self.vqa_model(images, query, get_logits=True)  # get logits
-        #     yes_no_logits = logits[-1][self.tokens_of_interest]  # filter out logits for "yes" and "no" words
-        #     probs = torch.softmax(yes_no_logits, dim=-1)  # get probabilities from logits
-        #     state_sym_probs_map[pred] = probs[0].item()  # map probability of "yes" to the predicate
-        preds, queries = zip(*self.queries_dict.items())
-        logits = self.vqa_model(images, queries, get_logits=True)  # get logits
-        yes_no_logits = logits[:, -1, self.tokens_of_interest]
-        probs = torch.softmax(yes_no_logits, dim=-1)
+        state_sym_probs_map = {}
+        for pred, query in tqdm(self.queries_dict.items()):
+            probs = self.vqa_model(images, query, get_probs=True)[-1]  # get probs for next token
+            yes_probs = probs[self.yes_tokens].sum()  # get yes tokens prob
+            no_probs = probs[self.no_tokens].sum()  # get no tokens prob
+            state_sym_probs_map[pred] = (yes_probs / (yes_probs + no_probs)).item()  # map probability of "yes" to the predicate
+        return state_sym_probs_map
+
+        # state = set()
+        # for pred, query in tqdm(self.queries_dict.items()):
+        #     response = self.vqa_model(images, query)
+        #     if response.lower() == 'yes':
+        #         state.add(pred)
+        # return state
         
-        return dict(zip(preds, probs[:, 0].tolist()))
+        #TODO conform to batch size to preserve memory
+        # preds, queries = zip(*self.queries_dict.items())
+        # probs = self.vqa_model(images, queries, get_probs=True)[:, -1]  # get probs of next token
+        # yes_probs = probs[:, self.yes_tokens].sum(dim=-1)
+        # no_probs = probs[:, self.no_tokens].sum(dim=-1)
+        # normalized_yes_probs = yes_probs / (yes_probs + no_probs)
+        # return dict(zip(preds, normalized_yes_probs.tolist()))

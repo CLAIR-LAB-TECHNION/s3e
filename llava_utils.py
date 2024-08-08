@@ -40,7 +40,8 @@ class LlavaModel:
 
         self.inference_kwargs = inference_kwargs
 
-    def __call__(self, image_files, query, file_sep=',', get_logits=False, return_prompt=False):
+    def __call__(self, image_files, query, file_sep=',', get_logits=False, get_probs=False,
+                 return_prompt=False):
         prompt, output = eval_preloaded_model(
             self.tokenizer,
             self.model,
@@ -52,6 +53,7 @@ class LlavaModel:
             self.system_override,
             file_sep,
             get_logits=get_logits,
+            get_probs=get_probs,
             **self.inference_kwargs
         )
         
@@ -182,7 +184,7 @@ def get_conv_mode(model_path, set_conv_mode=None):
 
 def run_inference(tokenizer, model, prompt, images_tensor, image_sizes,
                   temperature=0, top_p=None, num_beams=1, max_new_tokens=512,
-                  get_logits=False):
+                  get_logits=False, get_probs=False):
     #TODO support running with multiple images for the same query
 
     if isinstance(prompt, list):
@@ -212,18 +214,21 @@ def run_inference(tokenizer, model, prompt, images_tensor, image_sizes,
             .cuda()
         )
 
-    if get_logits:
+    if get_logits or get_probs:
         with torch.inference_mode():
             outputs = model.forward(input_ids,
                                     images=images_tensor,
                                     image_sizes=image_sizes,
                                     use_cache=True)
 
-        logits = outputs.logits.cpu()
+        out = outputs.logits
+        if get_probs:
+            out = torch.softmax(out, dim=-1)
+        out = out.cpu()
         if multi_prompt:
-            return logits
+            return out
         else:
-            return logits[0]
+            return out[0]
 
     with torch.inference_mode():
         output_ids = model.generate(
@@ -246,7 +251,8 @@ def run_inference(tokenizer, model, prompt, images_tensor, image_sizes,
 
 def eval_preloaded_model(tokenizer, model, image_processor, images, query, conv_mode, system=None,
                          system_override=False, sep=',', temperature=0,
-                         top_p=None, num_beams=1, max_new_tokens=512, get_logits=False):
+                         top_p=None, num_beams=1, max_new_tokens=512, get_logits=False,
+                         get_probs=False):
     if isinstance(query, str):
         qs = set_image_token(model, query)
         prompt = get_prompt(qs, conv_mode, system, system_override)
@@ -262,20 +268,20 @@ def eval_preloaded_model(tokenizer, model, image_processor, images, query, conv_
         images_tensor, image_sizes = load_image_tensors(images, image_processor, model, sep)
     
     outputs = run_inference(tokenizer, model, prompt, images_tensor, image_sizes,
-                            temperature, top_p, num_beams, max_new_tokens, get_logits)
+                            temperature, top_p, num_beams, max_new_tokens, get_logits, get_probs)
                             
     return prompt, outputs
 
 
 def eval_model(model_path, images, query, conv_mode=None, system=None, system_override=False,
                sep=',', model_base=None, temperature=0, top_p=None, num_beams=1,
-               max_new_tokens=512, get_logits=False):
+               max_new_tokens=512, get_logits=False, get_probs=False):
     tokenizer, model, image_processor, context_len = load_model(model_path, model_base)
     conv_mode = get_conv_mode(model_path, conv_mode)
 
     return eval_preloaded_model(tokenizer, model, image_processor, images, query, conv_mode,
                                 system, system_override, sep, temperature, top_p, num_beams,
-                                max_new_tokens, get_logits)
+                                max_new_tokens, get_logits, get_probs)
 
 
 # ===== Results Display =====
