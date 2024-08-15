@@ -36,13 +36,13 @@ class LlavaOVModel:
 
         self.inference_kwargs = inference_kwargs
 
-    def __call__(self, images, query, get_probs=False):
+    def __call__(self, images, query, get_logits=False):
         # force queries to be a list batch
-        if isinstance(query, list):
-            multi_prompt = True
-        else:
+        if isinstance(query, str):
             multi_prompt = False
             query = [query]
+        else:
+            multi_prompt = True
 
         # force images to be a list of lists, each list belongs to a corresponding query
         if not isinstance(images[0], list):
@@ -81,16 +81,16 @@ class LlavaOVModel:
         input_ids = torch.stack(input_ids).to(self.device)
 
         # run inference
-        if get_probs:
+        if get_logits:
             # run model feed-forward and get logits
             with torch.inference_mode():
                 outputs = self.model.forward(input_ids,
                                              images=image_tensor,
                                              image_sizes=image_sizes,
-                                             use_cache=True)
+                                             use_cache=True,
+                                             dpo_forward=True)
 
-            # get probabilities from logits
-            out = torch.softmax(outputs.logits, dim=-1).cpu()
+            out = outputs[0]
 
         else:
             # generate text output
@@ -102,11 +102,9 @@ class LlavaOVModel:
                 temperature=0,
                 max_new_tokens=4096,
             )
-            print(cont.shape)
-            out = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
 
         # force remove images tensors from GPU memory
-        remove_from_gpu_memory(image_tensor)
+        # remove_from_gpu_memory(input_ids, image_tensor)
 
         # output according to input
         if multi_prompt:
