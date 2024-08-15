@@ -1,9 +1,9 @@
 (define (domain body-movement)
   (:requirements :strips :typing)
-  (:types joint appendage person)
+  (:types joint extremity person)
   (:predicates
   	(is-person-joint-bent ?p - person ?j - joint)
-  	(is-person-apendage-in-front ?p - person ?a1 ?a2 - appendage)
+  	(is-person-extremity-above-waist ?p - person ?a - extremity)
   	(is-person-mid-air ?p - person)
   )
 
@@ -18,17 +18,26 @@
   (:action jump
 	  :parameters (?p - person)
 	  :precondition ()
-	  :effect (and 
+	  :effect (and
 	  	(is-person-mid-air ?p)
 	  )
   )
 
-  (:action move-in-front
-	:parameters (?p - person ?a1 ?a2 - appendage)
+  (:action lift-extremity
+	:parameters (?p - person ?a - extremity)
 	:precondition ()
 	:effect (and
-		(is-person-apendage-in-front ?p ?a1 ?a2)
-		(not (is-person-apendage-in-front ?p ?a2 ?a1))
+		(is-person-extremity-above-waist ?p ?a)
+	)
+  )
+
+  (:action drop-extremity
+	:parameters (?p - person ?a - extremity)
+	:precondition (and
+		(is-person-extremity-above-waist ?p ?a)
+	)
+	:effect (and
+		(not (is-person-extremity-above-waist ?p ?a))
 	)
   )
 )

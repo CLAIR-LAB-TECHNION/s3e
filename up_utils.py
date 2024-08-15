@@ -5,6 +5,16 @@ import os
 from unified_planning.io import PDDLReader, PDDLWriter
 
 
+def create_up_problem(domain, problem):
+    if domain.lower().endswith(".pddl"):
+        assert problem.lower().endswith(".pddl"), "if domain is a file, problem must also be a file"
+        up_problem = create_up_problem_from_pddl_files(domain, problem)
+    else:
+        up_problem = create_up_problem_from_ppdl_str(domain, problem)
+    
+    return up_problem
+
+
 def create_up_problem_from_pddl_files(domain_filename, problem_filename):
     reader = PDDLReader()
     return reader.parse_problem(domain_filename, problem_filename)

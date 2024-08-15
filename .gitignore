@@ -1,3 +1,7 @@
+# custom ignores
+cache/
+
+
 # Created by https://www.toptal.com/developers/gitignore/api/python,pycharm,visualstudiocode,windows,linux,macos,jupyternotebooks
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,pycharm,visualstudiocode,windows,linux,macos,jupyternotebooks
 

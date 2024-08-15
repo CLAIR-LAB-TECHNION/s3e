@@ -1,7 +1,17 @@
+import os
 from pddl2nl_query_converter import PDDL2NLQueryConverter
-from llava_utils import LlavaModel
-import torch
+from misc import model_and_kwargs_to_filename, NL_PREDICATES_CACHE_DIR
 from tqdm.auto import tqdm
+import json
+from up_utils import create_up_problem
+import transformers
+
+if transformers.__version__ == "4.37.2":
+    legacy = True
+    from llava_utils import LlavaModel
+else:
+    legacy = False
+    from llava_next_utils import LlavaOVModel as LlavaModel
 
 
 class SemanticStateEstimator:
@@ -14,23 +24,10 @@ class SemanticStateEstimator:
         nl_converter_kwargs=None,
         vqa_kwargs=None,
     ):
-        # set kwargs to default values
-        nl_converter_kwargs = nl_converter_kwargs or {}
-        vqa_kwargs = vqa_kwargs or {}
-
-        # create pddl predicate-to-NL converter
-        pddl2nl = PDDL2NLQueryConverter.from_uninitialized(
-            nl_converter_model_id, domain, problem, **nl_converter_kwargs
-        )
-
-        # convert predicates to NL queries
-        queries = pddl2nl.convert_to_nl(pddl2nl.all_grounded_predicates)
-        self.queries_dict = {
-            pred: query for pred, query in zip(pddl2nl.all_grounded_predicates, queries)
-        }
-
-        # remove pddl predicate-to-NL converter from memory
-        del pddl2nl
+        self.queries_dict = self.get_queries_dict(domain,
+                                                  problem,
+                                                  nl_converter_model_id,
+                                                  nl_converter_kwargs)
 
         # setup VQA model with system prompt
         system = (
@@ -39,23 +36,24 @@ class SemanticStateEstimator:
             "The assistant's response should not include any additional text."
         )
         self.vqa_model = LlavaModel(
-            vqa_model_id, system=system, system_override=True, **vqa_kwargs
+            vqa_model_id, system=system, **(vqa_kwargs or {})
         )
 
         # get tokens for words of interest (yes and no)
-        self.tokens_of_interest = self.vqa_model.tokenizer.encode(['yes', 'no'])
-        self.yes_tokens = self.vqa_model.tokenizer.encode(['yes', 'YES', 'Yes'])
-        self.no_tokens = self.vqa_model.tokenizer.encode(['no', 'NO', 'No'])
+        self.yes_tokens = list(map(lambda x: x[0],
+                               self.vqa_model.tokenizer(['yes', 'YES', 'Yes'])['input_ids']))
+        self.no_tokens = list(map(lambda x: x[0],
+                               self.vqa_model.tokenizer(['no', 'NO', 'No'])['input_ids']))
 
     def estimate_state(self, images):
-        # TODO receive simulation state instead of renderings.
-
         state_sym_probs_map = {}
         for pred, query in tqdm(self.queries_dict.items()):
             probs = self.vqa_model(images, query, get_probs=True)[-1]  # get probs for next token
             yes_probs = probs[self.yes_tokens].sum()  # get yes tokens prob
             no_probs = probs[self.no_tokens].sum()  # get no tokens prob
-            state_sym_probs_map[pred] = (yes_probs / (yes_probs + no_probs)).item()  # map probability of "yes" to the predicate
+            state_sym_probs_map[pred] = (
+                yes_probs / (yes_probs + no_probs)
+            ).item()  # map probability of "yes" to the predicate
         return state_sym_probs_map
 
         # state = set()
@@ -64,11 +62,83 @@ class SemanticStateEstimator:
         #     if response.lower() == 'yes':
         #         state.add(pred)
         # return state
+
+    def estimate_state_par(self, images):
+        # TODO conform to batch size to preserve memory
+        preds, queries = zip(*self.queries_dict.items())
+        probs = self.vqa_model(images, queries, get_probs=True)[:, -1]  # get probs of next token
+        yes_probs = probs[:, self.yes_tokens].sum(dim=-1)
+        no_probs = probs[:, self.no_tokens].sum(dim=-1)
+        normalized_yes_probs = yes_probs / (yes_probs + no_probs)
+        return dict(zip(preds, normalized_yes_probs.tolist()))
+
+    def swap_queries(self, domain, problem, nl_converter_model_id, nl_converter_kwargs=None):
+        self.queries_dict = self.get_queries_dict(domain, problem, nl_converter_model_id,
+                                                  nl_converter_kwargs)
+
+    @classmethod
+    def get_queries_dict(cls, domain, problem, nl_converter_model_id, nl_converter_kwargs=None):
+        try:
+            queries_dict = cls.load_queries_dict_from_cache(
+                domain, problem, nl_converter_model_id, nl_converter_kwargs
+            )
+            print('predicate queries loaded from cache')
+        except FileNotFoundError:
+            queries_dict = cls.load_queries_dict_with_model(
+                domain, problem, nl_converter_model_id, nl_converter_kwargs
+            )
         
-        #TODO conform to batch size to preserve memory
-        # preds, queries = zip(*self.queries_dict.items())
-        # probs = self.vqa_model(images, queries, get_probs=True)[:, -1]  # get probs of next token
-        # yes_probs = probs[:, self.yes_tokens].sum(dim=-1)
-        # no_probs = probs[:, self.no_tokens].sum(dim=-1)
-        # normalized_yes_probs = yes_probs / (yes_probs + no_probs)
-        # return dict(zip(preds, normalized_yes_probs.tolist()))
+        return queries_dict
+
+    @staticmethod
+    def load_queries_dict_with_model(
+        domain, problem, nl_converter_model_id, nl_converter_kwargs=None
+    ):
+        # set kwargs to default values
+        nl_converter_kwargs = nl_converter_kwargs or {}
+
+        # create pddl predicate-to-NL converter
+        pddl2nl = PDDL2NLQueryConverter.from_uninitialized(
+            nl_converter_model_id, domain, problem, **nl_converter_kwargs
+        )
+
+        # convert predicates to NL queries
+        queries = pddl2nl.convert_to_nl(pddl2nl.all_grounded_predicates)
+        queries_dict = {
+            pred: query for pred, query in zip(pddl2nl.all_grounded_predicates, queries)
+        }
+
+        # cache qeuries dict
+        problem_name = pddl2nl.up_problem.name
+        cache_fname = (
+            model_and_kwargs_to_filename(
+                nl_converter_model_id,
+                pddl_problem=problem_name,
+                **nl_converter_kwargs
+            )
+            + ".json"
+        )
+        os.makedirs(NL_PREDICATES_CACHE_DIR, exist_ok=True)
+        with open(os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname), "w") as f:
+            json.dump(queries_dict, f)
+
+        # remove pddl predicate-to-NL converter from memory
+        del pddl2nl
+
+        return queries_dict
+
+    @staticmethod
+    def load_queries_dict_from_cache(
+        domain, problem, nl_converter_model_id, nl_converter_kwargs=None
+    ):
+        problem_name = create_up_problem(domain, problem).name
+        cache_fname = (
+            model_and_kwargs_to_filename(
+                nl_converter_model_id,
+                pddl_problem=problem_name,
+                **(nl_converter_kwargs or {})
+            )
+            + ".json"
+        )
+        with open(os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname), "r") as f:
+            return json.load(f)

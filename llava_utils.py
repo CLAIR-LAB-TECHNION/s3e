@@ -26,7 +26,7 @@ import re
 
 
 class LlavaModel:
-    def __init__(self, model_id, model_base=None, conv_mode=None, system=None, system_override=False, 
+    def __init__(self, model_id, model_base=None, conv_mode=None, system=None,
                  **inference_kwargs):
         (self.tokenizer,
          self.model,
@@ -36,7 +36,6 @@ class LlavaModel:
         self.conv_mode = get_conv_mode(model_id, conv_mode)
 
         self.system_prompt = system
-        self.system_override = system_override
 
         self.inference_kwargs = inference_kwargs
 
@@ -50,7 +49,7 @@ class LlavaModel:
             query,
             self.conv_mode,
             self.system_prompt,
-            self.system_override,
+            True,
             file_sep,
             get_logits=get_logits,
             get_probs=get_probs,

@@ -6,6 +6,7 @@ from misc import remove_from_gpu_memory
 class PDDL2NLQueryConverter:
     def __init__(self, model, up_problem, **inference_kwargs):
         self.model = model
+        self.up_problem = up_problem
         self.domain, self.problem = get_pddl_files_str(up_problem)
         self.objects = get_object_names_dict(up_problem)
         self.all_grounded_predicates = get_all_grounded_predicates_for_objects(
@@ -26,22 +27,10 @@ Respond only with this natural language query and nothing else."""
     def from_uninitialized(cls, model, domain_or_up_problem, problem=None, **inference_kwargs):
         if isinstance(model, str):
             model = load_model(model)
-
+        
         if isinstance(domain_or_up_problem, str):
-            assert (
-                problem is not None
-            ), "if domain is specified, problem must also be specified"
-            if domain_or_up_problem.lower().endswith(".pddl"):
-                assert problem.lower().endswith(
-                    ".pddl"
-                ), "if domain is a file, problem must also be a file"
-                up_problem = create_up_problem_from_pddl_files(
-                    domain_or_up_problem, problem
-                )
-            else:
-                up_problem = create_up_problem_from_ppdl_str(
-                    domain_or_up_problem, problem
-                )
+            assert (problem is not None), "if domain is specified, problem must also be specified"
+            up_problem = create_up_problem(domain_or_up_problem, problem)
         else:
             up_problem = domain_or_up_problem
 
