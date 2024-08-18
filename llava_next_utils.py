@@ -47,13 +47,24 @@ class LlavaOVModel:
         # force queries to be a list batch
         if isinstance(query, str):
             multi_prompt = False
-            query = [query]
+            queries = [query]
         else:
+            queries = query
             multi_prompt = True
 
         input_ids, image_tensor, image_sizes = self.prep_inputs(
-            query, images, using_system_cache=self.system_cache is not None
+            queries, images, using_system_cache=self.system_cache is not None
         )
+
+        # expand system cache to match batch size
+        if self.system_cache:
+            batch_size = len(queries)
+            expanded_cache = [
+                (k.repeat(batch_size, 1, 1, 1), v.repeat(batch_size, 1, 1, 1))
+                for k, v in self.system_cache
+            ]
+        else:
+            expanded_cache = None
 
         # run model feed-forward and get logits
         with torch.inference_mode():
@@ -61,7 +72,7 @@ class LlavaOVModel:
                 input_ids,
                 images=image_tensor,
                 image_sizes=image_sizes,
-                past_key_values=self.system_cache,
+                past_key_values=expanded_cache,
                 use_cache=True,
                 dpo_forward=True,
             )
@@ -180,6 +191,7 @@ class LlavaOVModel:
             **self.inference_kwargs
         )
         self.system_cache = outputs.past_key_values
+
 
     def __del__(self):
         remove_from_gpu_memory(self.tokenizer, self.model, self.image_processor)
