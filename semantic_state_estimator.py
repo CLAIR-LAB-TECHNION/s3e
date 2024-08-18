@@ -26,10 +26,9 @@ class SemanticStateEstimator:
         nl_converter_kwargs=None,
         vqa_kwargs=None,
     ):
-        self.queries_dict = self.get_queries_dict(domain,
-                                                  problem,
-                                                  nl_converter_model_id,
-                                                  nl_converter_kwargs)
+        self.queries_dict = self.get_queries_dict(
+            domain, problem, nl_converter_model_id, nl_converter_kwargs
+        )
 
         # setup VQA model with system prompt
         system = (
@@ -37,15 +36,21 @@ class SemanticStateEstimator:
             "The assistant answers with one of three responses: YES or NO. "
             "The assistant's response should not include any additional text."
         )
-        self.vqa_model = LlavaModel(
-            vqa_model_id, system=system, **(vqa_kwargs or {})
-        )
+        self.vqa_model = LlavaModel(vqa_model_id, system=system, **(vqa_kwargs or {}))
 
         # get tokens for words of interest (yes and no)
-        self.yes_tokens = list(map(lambda x: x[0],
-                               self.vqa_model.tokenizer(['yes', 'YES', 'Yes'])['input_ids']))
-        self.no_tokens = list(map(lambda x: x[0],
-                               self.vqa_model.tokenizer(['no', 'NO', 'No'])['input_ids']))
+        self.yes_tokens = list(
+            map(
+                lambda x: x[0],
+                self.vqa_model.tokenizer(["yes", "YES", "Yes"])["input_ids"],
+            )
+        )
+        self.no_tokens = list(
+            map(
+                lambda x: x[0],
+                self.vqa_model.tokenizer(["no", "NO", "No"])["input_ids"],
+            )
+        )
 
     def estimate_state(self, images):
         return self.estimate_state_par(images, batch_size=1)
@@ -66,17 +71,17 @@ class SemanticStateEstimator:
         preds, queries = zip(*self.queries_dict.items())
         for i in tqdm(range(num_batches)):
             # get next batch of queries and corresponding predicates
-            q_batch = queries[i*batch_size:(i+1)*batch_size]
-            p_batch = preds[i*batch_size:(i+1)*batch_size]
+            q_batch = queries[i * batch_size : (i + 1) * batch_size]
+            p_batch = preds[i * batch_size : (i + 1) * batch_size]
 
             # get logits of next token
             # convert to bigger float (output is 16 bits)
             logits = self.vqa_model(images, q_batch)[:, -1].float()
-            
+
             # get logits for "yes" and "no" tokens
             yes_logits = logits[:, self.yes_tokens].sum(dim=-1)
             no_logits = logits[:, self.no_tokens].sum(dim=-1)
-            
+
             # calculate normalized probability for yes and no.
             # skip softmax by directly calculating normalized exp values
             # skip operating on ENITIRE VOCAB.
@@ -85,28 +90,31 @@ class SemanticStateEstimator:
             normalized_yes_probs = exp_yes / (exp_yes + exp_no)
 
             # update with batch info
-            out.update(
-                dict(zip(p_batch, normalized_yes_probs.tolist()))
-            )
+            out.update(dict(zip(p_batch, normalized_yes_probs.tolist())))
 
         return out
 
-    def swap_queries(self, domain, problem, nl_converter_model_id, nl_converter_kwargs=None):
-        self.queries_dict = self.get_queries_dict(domain, problem, nl_converter_model_id,
-                                                  nl_converter_kwargs)
+    def swap_queries(
+        self, domain, problem, nl_converter_model_id, nl_converter_kwargs=None
+    ):
+        self.queries_dict = self.get_queries_dict(
+            domain, problem, nl_converter_model_id, nl_converter_kwargs
+        )
 
     @classmethod
-    def get_queries_dict(cls, domain, problem, nl_converter_model_id, nl_converter_kwargs=None):
+    def get_queries_dict(
+        cls, domain, problem, nl_converter_model_id, nl_converter_kwargs=None
+    ):
         try:
             queries_dict = cls.load_queries_dict_from_cache(
                 domain, problem, nl_converter_model_id, nl_converter_kwargs
             )
-            print('predicate queries loaded from cache')
+            print("predicate queries loaded from cache")
         except FileNotFoundError:
             queries_dict = cls.load_queries_dict_with_model(
                 domain, problem, nl_converter_model_id, nl_converter_kwargs
             )
-        
+
         return queries_dict
 
     @staticmethod
@@ -131,9 +139,7 @@ class SemanticStateEstimator:
         problem_name = pddl2nl.up_problem.name
         cache_fname = (
             model_and_kwargs_to_filename(
-                nl_converter_model_id,
-                pddl_problem=problem_name,
-                **nl_converter_kwargs
+                nl_converter_model_id, pddl_problem=problem_name, **nl_converter_kwargs
             )
             + ".json"
         )
