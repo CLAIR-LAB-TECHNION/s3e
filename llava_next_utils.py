@@ -36,7 +36,10 @@ class LlavaOVModel:
 
         self.inference_kwargs = inference_kwargs
 
-    def __call__(self, images, query, get_logits=False):
+        self.system_cache = None
+
+
+    def __call__(self, images, query):
         # force queries to be a list batch
         if isinstance(query, str):
             multi_prompt = False
@@ -46,29 +49,46 @@ class LlavaOVModel:
 
         input_ids, image_tensor, image_sizes = self.prep_inputs(query, images)
 
-        # run inference
-        if get_logits:
-            # run model feed-forward and get logits
-            with torch.inference_mode():
-                outputs = self.model.forward(input_ids,
-                                             images=image_tensor,
-                                             image_sizes=image_sizes,
-                                             use_cache=True,
-                                             dpo_forward=True)
+        # run model feed-forward and get logits
+        with torch.inference_mode():
+            outputs = self.model.forward(input_ids,
+                                            images=image_tensor,
+                                            image_sizes=image_sizes,
+                                            past_key_values=self.system_cache,
+                                            use_cache=True,
+                                            dpo_forward=True)
 
-            out = outputs[0]
+        out = outputs[0]
 
+        
+
+        # output according to input arity
+        if multi_prompt:
+            return out
         else:
-            # generate text output
-            cont = self.model.generate(
-                input_ids,
-                images=image_tensor,
-                image_sizes=image_sizes,
-                do_sample=False,
-                temperature=0,
-                max_new_tokens=4096,
-            )
-            out = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
+            return out[0]
+
+    def generate(self, images, query):
+         # force queries to be a list batch
+        if isinstance(query, str):
+            multi_prompt = False
+            query = [query]
+        else:
+            multi_prompt = True
+
+        input_ids, image_tensor, image_sizes = self.prep_inputs(query, images)
+
+        
+        # generate text output
+        cont = self.model.generate(
+            input_ids,
+            images=image_tensor,
+            image_sizes=image_sizes,
+            do_sample=False,
+            temperature=0,
+            max_new_tokens=4096,
+        )
+        out = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
 
         # output according to input arity
         if multi_prompt:
@@ -120,6 +140,16 @@ class LlavaOVModel:
         input_ids = torch.stack(input_ids).to(self.device)
 
         return input_ids, image_tensor, image_sizes
+
+    def generate_system_cache(self):
+        # cache system prompt attention key-values
+        input_ids, image_tensor, image_sizes = self.prep_inputs([self.system_prompt], None)
+        outputs = self.model.forward(input_ids,
+                                     images=image_tensor,
+                                     image_sizes=image_sizes,
+                                     use_cache=True,
+                                     **self.inference_kwargs)
+        self.system_cache = outputs.past_key_values
 
     def __del__(self):
         remove_from_gpu_memory(self.tokenizer, self.model, self.image_processor)

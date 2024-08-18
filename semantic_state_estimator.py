@@ -50,7 +50,7 @@ class SemanticStateEstimator:
     def estimate_state(self, images):
         state_sym_probs_map = {}
         for pred, query in tqdm(self.queries_dict.items()):
-            logits = self.vqa_model(images, query, get_logits=True)[-1].float()  # get probs for next token
+            logits = self.vqa_model(images, query)[-1].float()  # get probs for next token
             yes_logits = logits[self.yes_tokens].sum()  # get yes tokens prob
             no_logits = logits[self.no_tokens].sum()  # get no tokens prob
             exp_yes = torch.exp(yes_logits)
@@ -62,7 +62,7 @@ class SemanticStateEstimator:
 
         # state = set()
         # for pred, query in tqdm(self.queries_dict.items()):
-        #     response = self.vqa_model(images, query)
+        #     response = self.vqa_model.generate(images, query)
         #     if response.lower() == 'yes':
         #         state.add(pred)
         # return state
