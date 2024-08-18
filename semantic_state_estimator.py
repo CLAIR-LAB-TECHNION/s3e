@@ -48,17 +48,7 @@ class SemanticStateEstimator:
                                self.vqa_model.tokenizer(['no', 'NO', 'No'])['input_ids']))
 
     def estimate_state(self, images):
-        state_sym_probs_map = {}
-        for pred, query in tqdm(self.queries_dict.items()):
-            logits = self.vqa_model(images, query)[-1].float()  # get probs for next token
-            yes_logits = logits[self.yes_tokens].sum()  # get yes tokens prob
-            no_logits = logits[self.no_tokens].sum()  # get no tokens prob
-            exp_yes = torch.exp(yes_logits)
-            exp_no = torch.exp(no_logits)
-            state_sym_probs_map[pred] = (
-                exp_yes / (exp_yes + exp_no)
-            ).item()  # map probability of "yes" to the predicate
-        return state_sym_probs_map
+        return self.estimate_state_par(images, batch_size=1)
 
         # state = set()
         # for pred, query in tqdm(self.queries_dict.items()):
@@ -68,6 +58,9 @@ class SemanticStateEstimator:
         # return state
 
     def estimate_state_par(self, images, batch_size=8):
+        # cache repeated parts of the prompt, including images
+        self.vqa_model.generate_system_caceh_with_images(images)
+
         out = {}
         num_batches = int(math.ceil(len(self.queries_dict) / batch_size))
         preds, queries = zip(*self.queries_dict.items())
@@ -78,7 +71,7 @@ class SemanticStateEstimator:
 
             # get logits of next token
             # convert to bigger float (output is 16 bits)
-            logits = self.vqa_model(images, q_batch, get_logits=True)[:, -1].float()
+            logits = self.vqa_model(images, q_batch)[:, -1].float()
             
             # get logits for "yes" and "no" tokens
             yes_logits = logits[:, self.yes_tokens].sum(dim=-1)

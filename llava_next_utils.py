@@ -47,16 +47,17 @@ class LlavaOVModel:
         else:
             multi_prompt = True
 
-        input_ids, image_tensor, image_sizes = self.prep_inputs(query, images)
+        input_ids, image_tensor, image_sizes = self.prep_inputs(query, images,
+                                                                using_system_cache=self.system_cache is not None)
 
         # run model feed-forward and get logits
         with torch.inference_mode():
             outputs = self.model.forward(input_ids,
-                                            images=image_tensor,
-                                            image_sizes=image_sizes,
-                                            past_key_values=self.system_cache,
-                                            use_cache=True,
-                                            dpo_forward=True)
+                                         images=image_tensor,
+                                         image_sizes=image_sizes,
+                                         past_key_values=self.system_cache,
+                                         use_cache=True,
+                                         dpo_forward=True)
 
         out = outputs[0]
 
@@ -96,10 +97,10 @@ class LlavaOVModel:
         else:
             return out[0]
 
-    def prep_inputs(self, queries, images):
+    def prep_inputs(self, queries, images, using_system_cache=False, remove_assistant=False):
         # force images to be a list of lists, each list belongs to a corresponding query
         num_queries = len(queries)
-        if not images:
+        if not images or using_system_cache:
             images = [[]] * num_queries
             image_tensor = None
             image_sizes = None
@@ -121,7 +122,14 @@ class LlavaOVModel:
         # convert queries to prompts with image tokens
         prompts = []
         for imgs, q in zip(images, queries):
-            prompts.append(query_to_prompt(q, "qwen_2", len(imgs), self.system_prompt))
+            prompts.append(
+                query_to_prompt(q,
+                                "qwen_2",
+                                len(imgs),
+                                self.system_prompt,
+                                using_system_cache,
+                                remove_assistant)
+            )
 
         # tokenize prompts
         tokenized_prompts = tokenized_prompts = [
@@ -141,9 +149,9 @@ class LlavaOVModel:
 
         return input_ids, image_tensor, image_sizes
 
-    def generate_system_cache(self):
-        # cache system prompt attention key-values
-        input_ids, image_tensor, image_sizes = self.prep_inputs([self.system_prompt], None)
+    def generate_system_caceh_with_images(self, images):
+        # prep inputs without a user query
+        input_ids, image_tensor, image_sizes = self.prep_inputs([''], images, remove_assistant=True)
         outputs = self.model.forward(input_ids,
                                      images=image_tensor,
                                      image_sizes=image_sizes,
@@ -155,11 +163,31 @@ class LlavaOVModel:
         remove_from_gpu_memory(self.tokenizer, self.model, self.image_processor)
 
 
-def query_to_prompt(query, conv_mode, num_images, system_prompt):
+def query_to_prompt(query, conv_mode, num_images, system_prompt, using_system_cache=False,
+                    remove_assistant=False):
+    # append image tokens at the start of the query
+    # these signal the model to take the next image of the input into consideration
     image_tokens = '\n'.join([DEFAULT_IMAGE_TOKEN] * num_images)
-    question = image_tokens + "\n" + query
+    query = image_tokens + "\n" + query
+
+    # prepare conversation template
     conv = copy.deepcopy(conv_templates[conv_mode])
-    conv.append_message(conv.roles[0], question)
-    conv.append_message(conv.roles[1], None)
-    conv.system += system_prompt
-    return conv.get_prompt()
+    conv.append_message(conv.roles[0], query)  # add 
+    conv.append_message(conv.roles[1], None)  # empty assistant prompt
+    conv.system += system_prompt  # add system prompt
+
+    # convert conv template to prompt
+    prompt = conv.get_prompt()
+
+    # remove start if using system cache
+    # system cache includes the system prompt and the image prompts
+    if using_system_cache:
+        user_role = conv.roles[0]
+        user_prompt_start = prompt.find(user_role) + len(user_role)
+        prompt = prompt[user_prompt_start:]
+
+    # remove assistant prompt if required
+    if remove_assistant:
+        prompt = prompt.replace(conv.roles[1], '')
+
+    return prompt
