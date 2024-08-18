@@ -44,41 +44,7 @@ class LlavaOVModel:
         else:
             multi_prompt = True
 
-        # force images to be a list of lists, each list belongs to a corresponding query
-        if not isinstance(images[0], list):
-            images = [images] * len(query)  # image separation for image-count per query
-        assert len(images) == len(query), 'must provide an image list for each query'
-
-        # images are just called in order, flatten list
-        images_flat = [img for img_list in images for img in img_list]
-        
-        # process images
-        image_tensor = process_images(images_flat, self.image_processor, self.model.config)
-        image_tensor = [
-            img.to(dtype=torch.float16, device=self.device) for img in image_tensor
-        ]
-        image_sizes = [img.size for img in images_flat]
-
-        # convert queries to prompts with image tokens
-        prompts = []
-        for imgs, q in zip(images, query):
-            prompts.append(query_to_prompt(q, "qwen_2", len(imgs), self.system_prompt))
-
-        # tokenize prompts
-        tokenized_prompts = tokenized_prompts = [
-            tokenizer_image_token(p, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")
-            for p in prompts
-        ]
-
-        # pad and stack tokenized prompts
-        input_ids = []
-        max_len_prompt = max([len(tp) for tp in tokenized_prompts])
-        pad_token = self.tokenizer.encode(self.tokenizer.pad_token)
-        for tp in tokenized_prompts:
-            padding = torch.tensor(pad_token * (max_len_prompt - len(tp)), dtype=tp.dtype)
-            padded_tp = torch.cat((padding, tp))
-            input_ids.append(padded_tp)
-        input_ids = torch.stack(input_ids).to(self.device)
+        input_ids, image_tensor, image_sizes = self.prep_inputs(query, images)
 
         # run inference
         if get_logits:
@@ -102,15 +68,58 @@ class LlavaOVModel:
                 temperature=0,
                 max_new_tokens=4096,
             )
+            out = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
 
-        # force remove images tensors from GPU memory
-        # remove_from_gpu_memory(input_ids, image_tensor)
-
-        # output according to input
+        # output according to input arity
         if multi_prompt:
             return out
         else:
             return out[0]
+
+    def prep_inputs(self, queries, images):
+        # force images to be a list of lists, each list belongs to a corresponding query
+        num_queries = len(queries)
+        if not images:
+            images = [[]] * num_queries
+            image_tensor = None
+            image_sizes = None
+        else:
+            if not isinstance(images[0], list):
+                images = [images] * num_queries  # image separation for image-count per query
+            assert len(images) == num_queries, 'must provide an image list for each query'
+        
+            # images are just called in order, flatten list
+            images_flat = [img for img_list in images for img in img_list]
+            
+            # process images
+            image_tensor = process_images(images_flat, self.image_processor, self.model.config)
+            image_tensor = [
+                img.to(dtype=torch.float16, device=self.device) for img in image_tensor
+            ]
+            image_sizes = [img.size for img in images_flat]
+
+        # convert queries to prompts with image tokens
+        prompts = []
+        for imgs, q in zip(images, queries):
+            prompts.append(query_to_prompt(q, "qwen_2", len(imgs), self.system_prompt))
+
+        # tokenize prompts
+        tokenized_prompts = tokenized_prompts = [
+            tokenizer_image_token(p, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")
+            for p in prompts
+        ]
+
+        # pad and stack tokenized prompts
+        input_ids = []
+        max_len_prompt = max([len(tp) for tp in tokenized_prompts])
+        pad_token = self.tokenizer.encode(self.tokenizer.pad_token)
+        for tp in tokenized_prompts:
+            padding = torch.tensor(pad_token * (max_len_prompt - len(tp)), dtype=tp.dtype)
+            padded_tp = torch.cat((padding, tp))
+            input_ids.append(padded_tp)
+        input_ids = torch.stack(input_ids).to(self.device)
+
+        return input_ids, image_tensor, image_sizes
 
     def __del__(self):
         remove_from_gpu_memory(self.tokenizer, self.model, self.image_processor)
