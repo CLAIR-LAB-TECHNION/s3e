@@ -13,7 +13,7 @@ from llava.constants import (
 )
 from llava.conversation import conv_templates, SeparatorStyle
 
-from misc import remove_from_gpu_memory
+from .misc import remove_from_gpu_memory
 from PIL import Image
 import torch
 import copy
@@ -63,8 +63,10 @@ class LlavaOVModel:
                 (k.repeat(batch_size, 1, 1, 1), v.repeat(batch_size, 1, 1, 1))
                 for k, v in self.system_cache
             ]
+            modalities = ["image"] * batch_size
         else:
             expanded_cache = None
+            modalities = ["image"]
 
         # run model feed-forward and get logits
         with torch.inference_mode():
@@ -75,6 +77,7 @@ class LlavaOVModel:
                 past_key_values=expanded_cache,
                 use_cache=True,
                 dpo_forward=True,
+                modalities=modalities
             )
 
         out = outputs[0]
@@ -103,6 +106,7 @@ class LlavaOVModel:
             do_sample=False,
             temperature=0,
             max_new_tokens=4096,
+            modalities=modalities
         )
         out = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
 
@@ -178,7 +182,7 @@ class LlavaOVModel:
 
         return input_ids, image_tensor, image_sizes
 
-    def generate_system_caceh_with_images(self, images):
+    def generate_system_cache_with_images(self, images):
         # prep inputs without a user query
         input_ids, image_tensor, image_sizes = self.prep_inputs(
             [""], images, remove_assistant=True
@@ -191,7 +195,11 @@ class LlavaOVModel:
             **self.inference_kwargs
         )
         self.system_cache = outputs.past_key_values
+        remove_from_gpu_memory(input_ids, image_tensor)
 
+    def clear_system_cache(self):
+        remove_from_gpu_memory(self.system_cache)
+        self.system_cache = None
 
     def __del__(self):
         remove_from_gpu_memory(self.tokenizer, self.model, self.image_processor)

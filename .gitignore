@@ -1,5 +1,9 @@
 # custom ignores
-cache/
+semantic_state_estimator/cache/
+*.err
+*.out
+*.pkl
+litmap.json
 
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,pycharm,visualstudiocode,windows,linux,macos,jupyternotebooks

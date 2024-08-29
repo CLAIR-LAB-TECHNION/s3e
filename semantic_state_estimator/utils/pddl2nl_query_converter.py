@@ -1,6 +1,6 @@
-from up_utils import *
-from llama_utils import *
-from misc import remove_from_gpu_memory
+from .up_utils import *
+from .llama_utils import *
+from .misc import remove_from_gpu_memory
 
 
 class PDDL2NLQueryConverter:
@@ -13,11 +13,11 @@ class PDDL2NLQueryConverter:
             up_problem
         )
 
-        objects_by_type = "\n".join([f"{key} type: {list(map(str, value))}" for key, value in self.objects.items()])
+        self.objects_by_type = "\n".join([f"{key} type: {list(map(str, value))}" for key, value in self.objects.items()])
         self.system_prompt = f"""The following is a PDDL domain
 {self.domain}
 Here are the names of all the objects in the current problem, sorted by their type:
-{objects_by_type}
+{self.objects_by_type}
 Given a grounded predicate with concrete variables, write a natural language yes-no query whose answer determines the truth value of the predicate.
 Respond only with this natural language query and nothing else."""
 

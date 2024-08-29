@@ -1,5 +1,5 @@
 import torch
-from misc import remove_from_gpu_memory
+from .misc import remove_from_gpu_memory
 
 from llava.constants import (
     IMAGE_TOKEN_INDEX,

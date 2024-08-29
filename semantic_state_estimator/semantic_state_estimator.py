@@ -1,22 +1,109 @@
 import os
-from pddl2nl_query_converter import PDDL2NLQueryConverter
-from misc import model_and_kwargs_to_filename, NL_PREDICATES_CACHE_DIR
+from .utils.pddl2nl_query_converter import PDDL2NLQueryConverter
+from .utils.misc import model_and_kwargs_to_filename
+from .utils.up_utils import ground_predicate_str_to_fnode
+from .constants import NL_PREDICATES_CACHE_DIR
 from tqdm.auto import tqdm
 import json
-from up_utils import create_up_problem
+from .utils.up_utils import create_up_problem
 import transformers
 import math
 import torch
+from .state_estimator import ProbabilisticStateEstimator
 
 if transformers.__version__ == "4.37.2":
     legacy = True
-    from llava_utils import LlavaModel
+    from .utils.llava_utils import LlavaModel
 else:
     legacy = False
-    from llava_next_utils import LlavaOVModel as LlavaModel
+    from .utils.llava_next_utils import LlavaOVModel as LlavaModel
 
 
-class SemanticStateEstimator:
+class SemanticStateEstimator(ProbabilisticStateEstimator):
+    def __init__(
+        self,
+        domain,
+        problem,
+        vqa_model_id,
+        vqa_kwargs=None,
+    ):
+        super().__init__(domain, problem)
+
+        pddl2nl = PDDL2NLQueryConverter.from_uninitialized(None, domain, problem)
+        self.predicates = pddl2nl.all_grounded_predicates
+        
+        system = f"""The following is a PDDL domain
+{pddl2nl.domain}
+Here are the names of all the objects in the current problem, sorted by their type:
+{pddl2nl.objects_by_type}
+Given a grounded predicate with concrete variables, state whether the statement is true or false.
+Respond only with a "true" or "false" response and nothing else."""
+
+        self.vqa_model = LlavaModel(vqa_model_id, system=system, **(vqa_kwargs or {}))
+
+        # get tokens for words of interest (yes and no)
+        self.true_tokens = list(
+            map(
+                lambda x: x[0],
+                self.vqa_model.tokenizer(["true", "True", "TRUE"])["input_ids"],
+            )
+        )
+        self.false_tokens = list(
+            map(
+                lambda x: x[0],
+                self.vqa_model.tokenizer(["false", "False", "FALSE"])["input_ids"],
+            )
+        )
+
+    def estimate_state(self, images):
+        return self.estimate_state_par(images, batch_size=1)
+
+        # state = set()
+        # for pred, query in tqdm(self.queries_dict.items()):
+        #     response = self.vqa_model.generate(images, query)
+        #     if response.lower() == 'yes':
+        #         state.add(pred)
+        # return state
+
+    def estimate_state_par(self, images, batch_size=8):
+        # cache repeated parts of the prompt, including images
+        self.vqa_model.generate_system_cache_with_images(images)
+
+        out = {}
+        num_batches = int(math.ceil(len(self.predicates) / batch_size))
+        for i in tqdm(range(num_batches)):
+            # get next batch of queries and corresponding predicates
+            p_batch = self.predicates[i * batch_size : (i + 1) * batch_size]
+
+            # get logits of next token
+            # convert to bigger float (output is 16 bits)
+            logits = self.vqa_model(images, p_batch)[:, -1].float()
+
+            # get logits for "yes" and "no" tokens
+            true_logits = logits[:, self.true_tokens].sum(dim=-1)
+            false_logits = logits[:, self.false_tokens].sum(dim=-1)
+
+            # calculate normalized probability for yes and no.
+            # skip softmax by directly calculating normalized exp values
+            # skip operating on ENITIRE VOCAB.
+            exp_true = torch.exp(true_logits)
+            exp_false = torch.exp(false_logits)
+            normalized_true_probs = exp_true / (exp_true + exp_false)
+
+            # update with batch info
+            out.update(dict(zip(p_batch, normalized_true_probs.tolist())))
+
+        # empty GPU cache
+        self.vqa_model.clear_system_cache()
+
+        # convert string keys to UP objects
+        out = {ground_predicate_str_to_fnode(self.up_problem, k): v for k, v in out.items()}
+
+        return out
+
+    
+
+class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
     def __init__(
         self,
         domain,
@@ -26,6 +113,8 @@ class SemanticStateEstimator:
         nl_converter_kwargs=None,
         vqa_kwargs=None,
     ):
+        super().__init__(domain, problem)
+
         self.queries_dict = self.get_queries_dict(
             domain, problem, nl_converter_model_id, nl_converter_kwargs
         )
@@ -64,7 +153,7 @@ class SemanticStateEstimator:
 
     def estimate_state_par(self, images, batch_size=8):
         # cache repeated parts of the prompt, including images
-        self.vqa_model.generate_system_caceh_with_images(images)
+        self.vqa_model.generate_system_cache_with_images(images)
 
         out = {}
         num_batches = int(math.ceil(len(self.queries_dict) / batch_size))
@@ -91,6 +180,12 @@ class SemanticStateEstimator:
 
             # update with batch info
             out.update(dict(zip(p_batch, normalized_yes_probs.tolist())))
+
+        # empty GPU cache
+        self.vqa_model.clear_system_cache()
+
+        # convert string keys to UP objects
+        out = {ground_predicate_str_to_fnode(self.up_problem, k): v for k, v in out.items()}
 
         return out
 
