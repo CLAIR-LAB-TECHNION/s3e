@@ -1,7 +1,6 @@
 import os
 from .utils.pddl2nl_query_converter import PDDL2NLQueryConverter
 from .utils.misc import model_and_kwargs_to_filename
-from .utils.up_utils import ground_predicate_str_to_fnode
 from .constants import NL_PREDICATES_CACHE_DIR
 from tqdm.auto import tqdm
 import json
@@ -96,9 +95,6 @@ Respond only with a "true" or "false" response and nothing else."""
         # empty GPU cache
         self.vqa_model.clear_system_cache()
 
-        # convert string keys to UP objects
-        out = {ground_predicate_str_to_fnode(self.up_problem, k): v for k, v in out.items()}
-
         return out
 
     
@@ -183,9 +179,6 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
 
         # empty GPU cache
         self.vqa_model.clear_system_cache()
-
-        # convert string keys to UP objects
-        out = {ground_predicate_str_to_fnode(self.up_problem, k): v for k, v in out.items()}
 
         return out
 

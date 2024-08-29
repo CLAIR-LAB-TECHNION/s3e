@@ -5,11 +5,11 @@ import numpy as np
 from tqdm.auto import tqdm
 from unified_planning.shortcuts import Problem, UPState
 from unified_planning.engines.sequential_simulator import UPSequentialSimulator
-from wavedrom import render
 
 from semantic_state_estimator.skill_executer import SkillExecuter
 from semantic_state_estimator.state_estimator import StateEstimator
 from semantic_state_estimator.constants import TRUE_STATE_KEY, RENDERS_KEY
+from semantic_state_estimator.utils.up_utils import state_dict_to_up_state
 
 
 def collect_data(
@@ -37,7 +37,8 @@ def collect_data(
             action_count = 0
             failures = 0
             executer.wait(100)  # wait for simulation to stabalize
-            state = UPState(estimator(executer.env.get_state()))
+            state_dict = estimator(executer.env.get_state())
+            state = state_dict_to_up_state(problem, state_dict)
 
         action_dict = {
             j: action
@@ -75,7 +76,7 @@ def collect_data(
         with open(os.path.join(out_dir, f"data_point_{i}.pkl"), "wb") as f:
             pickle.dump(data_point, f)
 
-        state = UPState(state_dict)
+        state = state_dict_to_up_state(problem, state_dict)
         i += 1
         action_count += 1
         ppar.update()

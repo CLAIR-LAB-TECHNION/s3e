@@ -9,6 +9,7 @@ from PIL import Image
 from semantic_state_estimator.constants import (
     TRUE_STATE_KEY,
     TRUE_STATE_ARR_KEY,
+    ESTIMATED_STATE_DICT_PROB_KEY,
     ESTIMATED_STATE_ARR_PROB_KEY,
     LLAMA_70B_INSTRUCT,
     LLAVA_7B_OV,
@@ -55,17 +56,18 @@ def set_dp_true_state_arr(dp, lit_map):
         return  # skip
 
     ts = dp[TRUE_STATE_KEY]
-    ts_arr = np.zeros(len(lit_map))
-    for lit in ts.literals:
-        ts_arr[lit_map[str(lit)]] = 1
+    ts_arr = np.empty(len(lit_map))
+    for lit, v in ts.items():
+        ts_arr[lit_map[lit]] = int(v)
     dp[TRUE_STATE_ARR_KEY] = ts_arr
 
 
 def set_dp_est_state_arr(dp, se, lit_map, seed):
-    if ESTIMATED_STATE_ARR_PROB_KEY in dp and seed in dp[ESTIMATED_STATE_ARR_PROB_KEY]:
+    if ESTIMATED_STATE_DICT_PROB_KEY in dp and seed in dp[ESTIMATED_STATE_DICT_PROB_KEY]:
         return  # skip
 
     prob_map = predict_dp_state(dp, se)
+    dp.setdefault(ESTIMATED_STATE_DICT_PROB_KEY, {})[seed] = prob_map
 
     es_array = np.zeros(len(lit_map))
     for lit_str in prob_map:

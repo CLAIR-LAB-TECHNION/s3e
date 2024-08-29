@@ -11,6 +11,7 @@ LIT_MAP_FILE_NAME = "litmap.json"
 RENDERS_KEY = "renders"
 TRUE_STATE_KEY = "true_state"
 TRUE_STATE_ARR_KEY = "true_state_array"
+ESTIMATED_STATE_DICT_PROB_KEY = "estimated_state_dict_prob"
 ESTIMATED_STATE_ARR_PROB_KEY = "est_state_array_prob"
 
 # cache directories

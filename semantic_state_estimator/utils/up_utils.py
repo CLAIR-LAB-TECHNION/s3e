@@ -1,7 +1,7 @@
 from itertools import product
 
 from unified_planning.io import PDDLReader, PDDLWriter
-from unified_planning.model import Problem
+from unified_planning.shortcuts import Problem, UPState
 
 
 def create_up_problem(domain, problem):
@@ -62,3 +62,10 @@ def bool_constant_to_fnode(up_problem: Problem, constant: bool):
         return exp_mgr.true_expression
     else:
         return exp_mgr.false_expression
+
+
+def state_dict_to_up_state(up_problem: Problem, state_dict: dict[str, bool]):
+    return UPState({
+        ground_predicate_str_to_fnode(up_problem, k): bool_constant_to_fnode(up_problem, v)
+        for k, v in state_dict.items()
+    })

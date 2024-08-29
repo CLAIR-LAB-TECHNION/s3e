@@ -16,22 +16,22 @@ class StateEstimator(ABC):
         self.up_problem = create_up_problem(domain, problem)
 
     @abstractmethod
-    def __call__(self, images: list[Image]) -> dict[FNode, bool]:
+    def __call__(self, images: list[Image]) -> dict[str, bool]:
         ...
 
 
 class ProbabilisticStateEstimator(StateEstimator, ABC):
-    def __call__(self, images: list[Image], confidence=0.5) -> dict[FNode, bool]:
+    def __call__(self, images: list[Image], confidence=0.5) -> dict[str, bool]:
         fluent_prob_map = self.estimate_state(images)
         state = {
-            fluent: prob >= confidence
-            for fluent, prob in fluent_prob_map.items()
+            predicate: prob >= confidence
+            for predicate, prob in fluent_prob_map.items()
         }
 
         return state
 
     @abstractmethod
-    def estimate_state(self, images: list[Image]) -> dict[FNode, float]:
+    def estimate_state(self, images: list[Image]) -> dict[str, float]:
         ...
 
 
@@ -44,15 +44,16 @@ class PredFnStateEstimator(StateEstimator, ABC):
         out = {}
 
         for lit in self.all_ground_literals:
-            predicate_name = lit.fluent().name.replace('-', '_')
+            predicate_name = lit.fluent().name
+            pred_fn_name = predicate_name.replace('-', '_')
             predicate_args = [str(arg) for arg in lit.args]
             try:
-                pred_fn = getattr(self, predicate_name)
+                pred_fn = getattr(self, pred_fn_name)
             except AttributeError:
                 raise AttributeError(
                     f"action mapper {self.__class__.__name__} does not support predicate '{predicate_name}'"
                 )
-            out[lit] = bool_constant_to_fnode(self.up_problem, pred_fn(*predicate_args, state))
+            out[f'{predicate_name}({",".join(predicate_args)})'] = pred_fn(*predicate_args, state)
 
         return out
 
