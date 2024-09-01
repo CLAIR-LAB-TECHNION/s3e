@@ -8,7 +8,7 @@ from semantic_state_estimator.eval.collect_datapoints import collect_data
 
 DOMAIN_FILE = os.path.join(os.path.dirname(__file__), 'domain.pddl')
 PROBLEM_FILE = os.path.join(os.path.dirname(__file__), 'problem.pddl')
-OUT_DIR = 'data_dir_bw'
+OUT_DIR = 'data_dir'
 RENDER_CAMS = ['frontview', 'rightangleview', 'leftangleview', 'rightsideview', 'leftsideview', 'birdview']
 
 def main():

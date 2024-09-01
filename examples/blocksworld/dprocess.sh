@@ -19,4 +19,4 @@ fi
 
 SCRIPT_DIR=$(dirname $SCRIPT_PATH)
 
-python -u $SCRIPT_DIR/../../semantic_state_estimator/eval/process_datapoints.py --data_dir="data_dir_bw" --domain="$SCRIPT_DIR/domain.pddl" --problem="$SCRIPT_DIR/problem.pddl" $@
+python -u $SCRIPT_DIR/../../semantic_state_estimator/eval/process_datapoints.py --data_dir="data_dir" --domain="$SCRIPT_DIR/domain.pddl" --problem="$SCRIPT_DIR/problem.pddl" --seed=210

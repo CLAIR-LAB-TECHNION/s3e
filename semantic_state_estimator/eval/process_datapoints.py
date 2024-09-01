@@ -1,81 +1,27 @@
 import fire
 import glob
 import os
-import pickle
 import json
 from tqdm.auto import tqdm
 import numpy as np
 from PIL import Image
 from semantic_state_estimator.constants import (
-    TRUE_STATE_KEY,
-    TRUE_STATE_ARR_KEY,
-    ESTIMATED_STATE_DICT_PROB_KEY,
-    ESTIMATED_STATE_ARR_PROB_KEY,
     LLAMA_70B_INSTRUCT,
     LLAVA_7B_OV,
-    LIT_MAP_FILE_NAME,
+    RENDERS_DIR,
+    TRUE_STATES_DIR,
+    DP_FNAME_FORMAT,
+    PROCESSED_DIR
 )
-from semantic_state_estimator.utils.up_utils import (
-    create_up_problem,
-    get_all_grounded_predicates_for_objects,
-)
 
 
-def get_lit_map(domain, problem, data_dir):
-    lit_map_file = os.path.join(data_dir, LIT_MAP_FILE_NAME)
-
-    # load if already exists
-    if os.path.exists(lit_map_file):
-        with open(lit_map_file, "r") as f:
-            return json.load(f)
-
-    # create UP problem
-    up_problem = create_up_problem(domain, problem)
-
-    # enumerate literals and map to index
-    ground_literals = get_all_grounded_predicates_for_objects(up_problem)
-    lit_map = {str(lit): i for i, lit in enumerate(ground_literals)}
-
-    # save for reference
-    with open(lit_map_file, "w") as f:
-        json.dump(lit_map, f)
-
-    return lit_map
+PROCESSED_DATA_DIR = 'processed'
 
 
-def predict_dp_state(dp, se):
-    imgs = [Image.fromarray(img) for img in dp["renders"].values()]
+def predict_dp_state(renders, se):
+    imgs = [Image.fromarray(img) for img in renders.values()]
     prob_map = se.estimate_state(imgs)
-    for img in imgs:
-        del img
     return prob_map
-
-
-def set_dp_true_state_arr(dp, lit_map):
-    if TRUE_STATE_ARR_KEY in dp:
-        return  # skip
-
-    ts = dp[TRUE_STATE_KEY]
-    ts_arr = np.empty(len(lit_map))
-    for lit, v in ts.items():
-        ts_arr[lit_map[lit]] = int(v)
-    dp[TRUE_STATE_ARR_KEY] = ts_arr
-
-
-def set_dp_est_state_arr(dp, se, lit_map, seed):
-    if ESTIMATED_STATE_DICT_PROB_KEY in dp and seed in dp[ESTIMATED_STATE_DICT_PROB_KEY]:
-        return  # skip
-
-    prob_map = predict_dp_state(dp, se)
-    dp.setdefault(ESTIMATED_STATE_DICT_PROB_KEY, {})[seed] = prob_map
-
-    es_array = np.zeros(len(lit_map))
-    for lit_str in prob_map:
-        if lit_str not in lit_map:
-            continue
-        es_array[lit_map[lit_str]] = prob_map[lit_str]
-
-    dp.setdefault(ESTIMATED_STATE_ARR_PROB_KEY, {})[seed] = es_array
 
 
 def process_datapoints(
@@ -117,24 +63,25 @@ def process_datapoints(
     se = se_class(domain=domain, problem=problem, **se_kwargs)
 
     # get problem literals
-    lit_map = get_lit_map(domain, problem, data_dir)
+    # lit_map = get_lit_map(domain, problem, data_dir)
 
-    # load datapoints
-    datapoints = sorted(glob.glob(f"{data_dir}/*.pkl"))
+    # collect datapoint renders
+    render_files = glob.glob(os.path.join(data_dir, RENDERS_DIR, '*.npz'))
 
     # process all datapoints
-    for dp_file in tqdm(datapoints):
+    for renders_file in tqdm(render_files):
         # load datapoint
-        with open(dp_file, "rb") as f:
-            dp = pickle.load(f)
+        renders = np.load(renders_file)
 
         # process datapoint
-        set_dp_true_state_arr(dp, lit_map)
-        set_dp_est_state_arr(dp, se, lit_map, seed)
+        prob_map = predict_dp_state(renders, se)
 
         # save processed datapoint
-        with open(dp_file, "wb") as f:
-            pickle.dump(dp, f)
+        out_filename = os.path.splitext(os.path.basename(renders_file))[0] + '.json'
+        out_file = os.path.join(data_dir, PROCESSED_DATA_DIR, str(seed), out_filename)
+        os.makedirs(os.path.dirname(out_file), exist_ok=True)
+        with open(out_file, 'w') as f:
+            json.dump(prob_map, f, indent=4)
 
 
 if __name__ == "__main__":
