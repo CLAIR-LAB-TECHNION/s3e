@@ -17,6 +17,8 @@ else:
     legacy = False
     from .utils.llava_next_utils import LlavaOVModel as LlavaModel
 
+from transformers import CLIPProcessor, CLIPModel
+
 
 class SemanticStateEstimator(ProbabilisticStateEstimator):
     def __init__(
@@ -108,6 +110,8 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         vqa_model_id,
         nl_converter_kwargs=None,
         vqa_kwargs=None,
+        additional_instructions=None,
+        additional_images=None
     ):
         super().__init__(domain, problem)
 
@@ -121,7 +125,11 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
             "The assistant answers with one of three responses: YES or NO. "
             "The assistant's response should not include any additional text."
         )
-        self.vqa_model = LlavaModel(vqa_model_id, system=system, **(vqa_kwargs or {}))
+        if additional_instructions:
+            system += f'\nAdditional Instructions and clarifications:\n{additional_instructions}'
+
+        self.vqa_model = LlavaModel(vqa_model_id, system=system, system_images=additional_images,
+                                    **(vqa_kwargs or {}))
 
         # get tokens for words of interest (yes and no)
         self.yes_tokens = list(
@@ -233,7 +241,7 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         )
         os.makedirs(NL_PREDICATES_CACHE_DIR, exist_ok=True)
         with open(os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname), "w") as f:
-            json.dump(queries_dict, f)
+            json.dump(queries_dict, f, indent=4)
 
         # remove pddl predicate-to-NL converter from memory
         del pddl2nl
@@ -255,3 +263,47 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         )
         with open(os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname), "r") as f:
             return json.load(f)
+
+
+class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
+    def __init__(self, domain,
+                 problem,
+                 nl_converter_model_id,
+                 vqa_model_id="openai/clip-vit-base-patch32",
+                 nl_converter_kwargs=None,
+                 vqa_kwargs=None):
+        super(ProbabilisticStateEstimator, self).__init__(domain, problem)
+        self.queries_dict = self.get_queries_dict(
+            domain, problem, nl_converter_model_id, nl_converter_kwargs
+        )
+
+        self.vqa_model = CLIPModel.from_pretrained(
+            vqa_model_id,
+            attn_implementation="flash_attention_2",
+            device_map='auto',
+            torch_dtype=torch.float16
+        )
+        self.processor = CLIPProcessor.from_pretrained(vqa_model_id)
+    
+    def estimate_state(self, images):
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        out = {}
+        for pred, query in self.queries_dict.items():
+            inputs = self.processor(
+                text=[f"{query} Yes.", "{query} No."],
+                images=images,
+                return_tensors="pt",
+                padding=True
+            )
+            inputs.to('cuda')
+            with torch.no_grad():
+                with torch.autocast(device):
+                    outputs = self.vqa_model(**inputs)
+            
+            logits_per_image = outputs.logits_per_image
+            probs = logits_per_image.softmax(dim=1)
+
+            out[pred] = probs[0][0].item()
+        
+        return out

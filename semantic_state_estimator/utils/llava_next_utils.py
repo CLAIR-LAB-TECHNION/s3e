@@ -21,7 +21,7 @@ import warnings
 
 
 class LlavaOVModel:
-    def __init__(self, model_id, system=None, **inference_kwargs):
+    def __init__(self, model_id, system=None, system_images=None, **inference_kwargs):
         warnings.filterwarnings("ignore")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -38,6 +38,7 @@ class LlavaOVModel:
         )
 
         self.system_prompt = system
+        self.system_images = system_images
 
         self.inference_kwargs = inference_kwargs
 
@@ -185,7 +186,7 @@ class LlavaOVModel:
     def generate_system_cache_with_images(self, images):
         # prep inputs without a user query
         input_ids, image_tensor, image_sizes = self.prep_inputs(
-            [""], images, remove_assistant=True
+            [""], self.system_images + images, remove_assistant=True
         )
         outputs = self.model.forward(
             input_ids,

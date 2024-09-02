@@ -21,9 +21,11 @@ def collect_data(
         num_datapoints: int = 2000,
         max_failures_to_reset: int = 5,
         max_episode_actions: int = 20,
+        go_home_prob: float = 0.3,
 ):
     # create output directory
-    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(os.path.join(data_dir, RENDERS_DIR), exist_ok=True)
+    os.makedirs(os.path.join(data_dir, TRUE_STATES_DIR), exist_ok=True)
 
     # instantiate a simulator. this can tell us which actions are applicable from a given state
     problem_sim = UPSequentialSimulator(problem)
@@ -76,7 +78,7 @@ def collect_data(
             continue
 
         # go home with probability
-        if np.random.rand() < 0.3:
+        if np.random.rand() < go_home_prob:
             try:
                 suc, frames = executer.go_home()
             except Exception as e:

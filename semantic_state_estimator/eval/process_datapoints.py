@@ -1,3 +1,4 @@
+import datetime
 import fire
 import glob
 import os
@@ -9,13 +10,10 @@ from semantic_state_estimator.constants import (
     LLAMA_70B_INSTRUCT,
     LLAVA_7B_OV,
     RENDERS_DIR,
-    TRUE_STATES_DIR,
-    DP_FNAME_FORMAT,
-    PROCESSED_DIR
 )
 
 
-PROCESSED_DATA_DIR = 'processed'
+PROCESSED_DATA_DIR = "processed"
 
 
 def predict_dp_state(renders, se):
@@ -28,7 +26,7 @@ def process_datapoints(
     data_dir,
     domain,
     problem,
-    seed=42,
+    out_dir=None,
     se_class=None,
     **se_kwargs,
 ):
@@ -36,15 +34,14 @@ def process_datapoints(
     # import here to avoid waiting when calling with `--help`
     from semantic_state_estimator.utils.misc import (
         load_from_entrypoint,
-        set_random_seed,
     )
     from semantic_state_estimator.semantic_state_estimator import (
         SemanticStateEstimator,
         SemanticStateEstimatorWithLLaMA,
     )
 
-    # set random seed for reproducibility
-    set_random_seed(seed)
+    # set output dirname if not specified
+    out_dir = out_dir or datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     # load state estimator class
     if se_class is None:
@@ -66,7 +63,7 @@ def process_datapoints(
     # lit_map = get_lit_map(domain, problem, data_dir)
 
     # collect datapoint renders
-    render_files = glob.glob(os.path.join(data_dir, RENDERS_DIR, '*.npz'))
+    render_files = glob.glob(os.path.join(data_dir, RENDERS_DIR, "*.npz"))
 
     # process all datapoints
     for renders_file in tqdm(render_files):
@@ -77,10 +74,10 @@ def process_datapoints(
         prob_map = predict_dp_state(renders, se)
 
         # save processed datapoint
-        out_filename = os.path.splitext(os.path.basename(renders_file))[0] + '.json'
-        out_file = os.path.join(data_dir, PROCESSED_DATA_DIR, str(seed), out_filename)
+        out_filename = os.path.splitext(os.path.basename(renders_file))[0] + ".json"
+        out_file = os.path.join(data_dir, PROCESSED_DATA_DIR, out_dir, out_filename)
         os.makedirs(os.path.dirname(out_file), exist_ok=True)
-        with open(out_file, 'w') as f:
+        with open(out_file, "w") as f:
             json.dump(prob_map, f, indent=4)
 
 
