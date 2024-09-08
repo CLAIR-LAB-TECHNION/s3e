@@ -3,6 +3,7 @@ import os
 # models
 LLAMA_70B_INSTRUCT = "meta-llama/Meta-Llama-3-70B-Instruct"
 LLAVA_7B_OV = "lmms-lab/llava-onevision-qwen2-7b-ov"
+LLAVA_72B_OV = "lmms-lab/llava-onevision-qwen2-72b-ov"
 
 # literals map for processed data
 LIT_MAP_FILE_NAME = "litmap.json"

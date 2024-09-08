@@ -8,16 +8,17 @@ from .utils.up_utils import create_up_problem
 import transformers
 import math
 import torch
+import numpy as np
 from .state_estimator import ProbabilisticStateEstimator
 
 if transformers.__version__ == "4.37.2":
     legacy = True
     from .utils.llava_utils import LlavaModel
-else:
+elif transformers.__version__ == "4.40.0.dev0":
     legacy = False
     from .utils.llava_next_utils import LlavaOVModel as LlavaModel
-
-from transformers import CLIPProcessor, CLIPModel
+else:
+    from transformers import CLIPProcessor, CLIPModel
 
 
 class SemanticStateEstimator(ProbabilisticStateEstimator):
@@ -128,7 +129,7 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         if additional_instructions:
             system += f'\nAdditional Instructions and clarifications:\n{additional_instructions}'
 
-        self.vqa_model = LlavaModel(vqa_model_id, system=system, system_images=additional_images,
+        self.vqa_model = LlavaModel(vqa_model_id, system=system, system_images=additional_images or [],
                                     **(vqa_kwargs or {}))
 
         # get tokens for words of interest (yes and no)
@@ -171,16 +172,8 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
             # convert to bigger float (output is 16 bits)
             logits = self.vqa_model(images, q_batch)[:, -1].float()
 
-            # get logits for "yes" and "no" tokens
-            yes_logits = logits[:, self.yes_tokens].sum(dim=-1)
-            no_logits = logits[:, self.no_tokens].sum(dim=-1)
-
-            # calculate normalized probability for yes and no.
-            # skip softmax by directly calculating normalized exp values
-            # skip operating on ENITIRE VOCAB.
-            exp_yes = torch.exp(yes_logits)
-            exp_no = torch.exp(no_logits)
-            normalized_yes_probs = exp_yes / (exp_yes + exp_no)
+            # get probability of "yes" as opposed to "no"
+            normalized_yes_probs = self.logits_to_yes_no_probs(logits)
 
             # update with batch info
             out.update(dict(zip(p_batch, normalized_yes_probs.tolist())))
@@ -189,6 +182,20 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         self.vqa_model.clear_system_cache()
 
         return out
+
+    def logits_to_yes_no_probs(self, logits):
+        # get logits for "yes" and "no" tokens
+        yes_logits = logits[:, self.yes_tokens].sum(dim=-1)
+        no_logits = logits[:, self.no_tokens].sum(dim=-1)
+
+        # calculate normalized probability for yes and no.
+        # skip softmax by directly calculating normalized exp values
+        # skip operating on ENITIRE VOCAB.
+        exp_yes = torch.exp(yes_logits)
+        exp_no = torch.exp(no_logits)
+        normalized_yes_probs = exp_yes / (exp_yes + exp_no)
+
+        return normalized_yes_probs
 
     def swap_queries(
         self, domain, problem, nl_converter_model_id, nl_converter_kwargs=None
@@ -265,6 +272,22 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
             return json.load(f)
 
 
+class SemanticEstimatorMultiImageRun(SemanticStateEstimatorWithLLaMA):
+        def estimate_state_par(self, images, batch_size=8):
+            outputs_per_image = []
+            for img in tqdm(images):
+                out = super().estimate_state_par([img], batch_size)
+                outputs_per_image.append(out)
+            
+            out = {
+                predicate: np.mean([outputs_per_image[i][predicate] for i in range(len(images))])
+                for predicate in outputs_per_image[0]  # expected at least 1 image as input
+            }
+
+            return out
+
+
+
 class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
     def __init__(self, domain,
                  problem,
@@ -279,7 +302,7 @@ class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
 
         self.vqa_model = CLIPModel.from_pretrained(
             vqa_model_id,
-            attn_implementation="flash_attention_2",
+            # attn_implementation="flash_attention_2",
             device_map='auto',
             torch_dtype=torch.float16
         )
@@ -289,7 +312,7 @@ class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         out = {}
-        for pred, query in self.queries_dict.items():
+        for pred, query in tqdm(self.queries_dict.items()):
             inputs = self.processor(
                 text=[f"{query} Yes.", "{query} No."],
                 images=images,

@@ -107,7 +107,6 @@ class LlavaOVModel:
             do_sample=False,
             temperature=0,
             max_new_tokens=4096,
-            modalities=modalities
         )
         out = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
 

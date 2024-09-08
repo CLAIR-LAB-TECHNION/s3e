@@ -38,6 +38,7 @@ def process_datapoints(
     from semantic_state_estimator.semantic_state_estimator import (
         SemanticStateEstimator,
         SemanticStateEstimatorWithLLaMA,
+        SemanticEstimatorMultiImageRun
     )
 
     # set output dirname if not specified
@@ -50,7 +51,7 @@ def process_datapoints(
         se_class = load_from_entrypoint(se_class)
 
     # handle default state estimator class
-    if se_class == SemanticStateEstimatorWithLLaMA:
+    if se_class == SemanticStateEstimatorWithLLaMA or se_class == SemanticEstimatorMultiImageRun:
         se_kwargs.setdefault("nl_converter_model_id", LLAMA_70B_INSTRUCT)
         se_kwargs.setdefault("vqa_model_id", LLAVA_7B_OV)
     elif se_class == SemanticStateEstimator:
