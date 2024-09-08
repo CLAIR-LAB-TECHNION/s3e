@@ -2,6 +2,7 @@ import json
 import os
 
 import numpy as np
+from timeoutcontext import timeout
 from tqdm.auto import tqdm
 from unified_planning.engines.sequential_simulator import UPSequentialSimulator
 from unified_planning.shortcuts import Problem
@@ -69,7 +70,8 @@ def collect_data(
 
         # run action
         try:
-            suc, frames = executer.execute_action(action_name, params)
+            with timeout(60):  # one minute timeout
+                suc, frames = executer.execute_action(action_name, params)
         except Exception as e:
             print(f"failed to execute action {action_name}({','.join(params)}) with error: {e}")
             failures += 1
@@ -80,7 +82,8 @@ def collect_data(
         # go home with probability
         if np.random.rand() < go_home_prob:
             try:
-                suc, frames = executer.go_home()
+                with timeout(60):  # one minute timeout
+                    suc, frames = executer.go_home()
             except Exception as e:
                 print("failed to go home. maybe physics state issue. resetting")
                 failures = max_failures_to_reset  # forces reset on iter start
