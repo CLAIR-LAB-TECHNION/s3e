@@ -105,4 +105,5 @@ def collect_data(
         # indicate progress
         i += 1  # up one datapoint
         action_count += 1  # up one action
+        failures = 0  # reset failures counter
         ppar.update()  # update progress bar
