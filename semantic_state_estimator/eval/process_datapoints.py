@@ -66,8 +66,18 @@ def process_datapoints(
     # collect datapoint renders
     render_files = glob.glob(os.path.join(data_dir, RENDERS_DIR, "*.npz"))
 
+    # create output directory
+    out_dir = os.path.join(data_dir, PROCESSED_DATA_DIR, out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+
     # process all datapoints
     for renders_file in tqdm(render_files):
+        # skip if result exists
+        out_filename = os.path.splitext(os.path.basename(renders_file))[0] + ".json"
+        out_file = os.path.join(out_dir, out_filename)
+        if os.path.exists(out_file):
+            continue
+
         # load datapoint
         renders = np.load(renders_file)
 
@@ -75,9 +85,6 @@ def process_datapoints(
         prob_map = predict_dp_state(renders, se)
 
         # save processed datapoint
-        out_filename = os.path.splitext(os.path.basename(renders_file))[0] + ".json"
-        out_file = os.path.join(data_dir, PROCESSED_DATA_DIR, out_dir, out_filename)
-        os.makedirs(os.path.dirname(out_file), exist_ok=True)
         with open(out_file, "w") as f:
             json.dump(prob_map, f, indent=4)
 
