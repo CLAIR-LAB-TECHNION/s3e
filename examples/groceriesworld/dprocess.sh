@@ -2,8 +2,9 @@
 
 # processing power
 #SBATCH --partition=g48
-#SBATCH --gres=gpu:5
-#SBATCH --cpus-per-task=10
+#SBATCH --gres=gpu:8
+#SBATCH --cpus-per-task=16
+#SBATCH --constraint=ampere
 
 # output files
 #SBATCH --output=dprocess_%A_%a.out
@@ -19,4 +20,5 @@ fi
 
 SCRIPT_DIR=$(dirname $SCRIPT_PATH)
 
-python -u $SCRIPT_DIR/../../semantic_state_estimator/eval/process_datapoints.py --data_dir="data_dir" --domain="$SCRIPT_DIR/domain.pddl" --problem="$SCRIPT_DIR/problem.pddl" --seed=210
+python -u $SCRIPT_DIR/../../semantic_state_estimator/eval/process_datapoints.py --data_dir="data_dir" --domain="$SCRIPT_DIR/domain.pddl" --problem="$SCRIPT_DIR/problem.pddl" --out_dir="llama-llava-iter-images-with-grip-inst" --se_class="semantic_state_estimator.semantic_state_estimator:SemanticEstimatorMultiImageRun" --addtional_instructions="The robot's gripper is a suction gripper. If an item appears stuck to the robot end-effector, this means that the robot is currently gripping that item and that the gripper is not empty. Otherwise, the gripper is considerred empty."
+

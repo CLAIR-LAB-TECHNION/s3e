@@ -4,3 +4,5 @@ unified-planning
 flash-attn
 fire
 timeoutcontext
+natsort
+pil-video

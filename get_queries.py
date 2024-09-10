@@ -6,7 +6,7 @@ warnings.filterwarnings("ignore")
 LLAMA_ID = "meta-llama/Meta-Llama-3-70B-Instruct"
 LLAVA_ID = "lmms-lab/llava-onevision-qwen2-7b-ov"
 
-EXAMPLE = 'blocksworld'
+EXAMPLE = 'real_robot'
 
 se = SemanticStateEstimatorWithLLaMA(
     domain=f'examples/{EXAMPLE}/domain.pddl',
