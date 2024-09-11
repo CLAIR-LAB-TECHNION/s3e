@@ -2,8 +2,8 @@
 
 # processing power
 #SBATCH --partition=g48
-#SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=16
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=8
 #SBATCH --constraint=ampere
 
 # output files

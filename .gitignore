@@ -5,6 +5,7 @@ semantic_state_estimator/cache/
 *.pkl
 *.json
 *.npz
+*.mp4
 
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,pycharm,visualstudiocode,windows,linux,macos,jupyternotebooks
