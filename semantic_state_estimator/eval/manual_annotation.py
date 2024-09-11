@@ -11,7 +11,8 @@ def generate_result_files(annotation_file, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     for annotation in annotations:
         for i in range(annotation['start'], annotation['stop'] + 1):
-            with open(os.path.join(out_dir, DP_FNAME_FORMAT.format(i))) as f:
+            data_point_file = os.path.join(out_dir, DP_FNAME_FORMAT.format(i) + '.json')
+            with open(data_point_file, 'w') as f:
                 json.dump(annotation['predictions'], f, indent=4)
 
 

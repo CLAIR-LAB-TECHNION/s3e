@@ -31,7 +31,7 @@ class LlavaOVModel:
                 None,
                 "llava_qwen",
                 device_map="auto",
-                attn_implementationattn_implementation=(
+                attn_implementation=(
                     "flash_attention_2" if self.device == "cuda" else None
                 ),
             )
