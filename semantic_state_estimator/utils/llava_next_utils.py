@@ -31,11 +31,12 @@ class LlavaOVModel:
                 None,
                 "llava_qwen",
                 device_map="auto",
-                attn_implementation=(
+                attn_implementationattn_implementation=(
                     "flash_attention_2" if self.device == "cuda" else None
                 ),
             )
         )
+        self.model.eval()
 
         self.system_prompt = system
         self.system_images = system_images
@@ -187,13 +188,15 @@ class LlavaOVModel:
         input_ids, image_tensor, image_sizes = self.prep_inputs(
             [""], self.system_images + images, remove_assistant=True
         )
-        outputs = self.model.forward(
-            input_ids,
-            images=image_tensor,
-            image_sizes=image_sizes,
-            use_cache=True,
-            **self.inference_kwargs
-        )
+
+        with torch.inference_mode():
+            outputs = self.model.forward(
+                input_ids,
+                images=image_tensor,
+                image_sizes=image_sizes,
+                use_cache=True,
+                **self.inference_kwargs
+            )
         self.system_cache = outputs.past_key_values
         remove_from_gpu_memory(input_ids, image_tensor)
 
