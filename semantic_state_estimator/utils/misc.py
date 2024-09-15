@@ -62,3 +62,16 @@ def set_random_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def squash_predicate(dp_dicts):
+    out = []
+    dp_dict_keys_sorted = sorted(dp_dicts.keys())
+    predicates = sorted(next(iter(dp_dicts.values())))
+    for dp_key in dp_dict_keys_sorted:
+        dp_arr = []
+        for predicate in predicates:
+            dp_arr.append(dp_dicts[dp_key][predicate])
+        out.append(dp_arr)
+
+    return np.array(out)

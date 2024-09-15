@@ -2,7 +2,7 @@
 
 # processing power
 #SBATCH --partition=g48
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --constraint=ampere
 
@@ -20,4 +20,4 @@ fi
 
 SCRIPT_DIR=$(dirname $SCRIPT_PATH)
 
-python -u $SCRIPT_DIR/../../semantic_state_estimator/eval/process_datapoints.py --data_dir="data_dir" --domain="$SCRIPT_DIR/domain.pddl" --problem="$SCRIPT_DIR/problem.pddl" --out_dir="default-llama-llava"
+python -u $SCRIPT_DIR/../../semantic_state_estimator/eval/process_datapoints.py --data_dir="data_dir" --domain="$SCRIPT_DIR/domain.pddl" --problem="$SCRIPT_DIR/problem.pddl" --out_dir="default-llama-llava-0.5B" --vqa_model_id="lmms-lab/llava-onevision-qwen2-0.5b-ov"
