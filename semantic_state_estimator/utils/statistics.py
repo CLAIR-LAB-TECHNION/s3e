@@ -1,3 +1,4 @@
+from collections import defaultdict
 import glob
 from itertools import combinations
 import json
@@ -52,18 +53,14 @@ def threshold_with_cooc_mat(y_score, threshold, cooc_mat=None):
                 y_pred[dp, j] and y_pred[dp, k] and not cooc_mat[j, k]
             ):  # both true but do not co-occur
                 if y_score[dp, j] > y_score[dp, k]:  # j cancels out k
-                    # y_pred[dp, k] = False
                     cancel_out.setdefault(j, []).append(k)
                 else:  # k cancels out j
-                    # y_pred[dp, j] = False
                     cancel_out.setdefault(k, []).append(j)
 
         # sort canceling predicates by score
         cancelers_by_score = sorted(cancel_out.keys(), key=lambda k: y_score[dp, k], reverse=True)
         for canceler in cancelers_by_score:
             if y_pred[dp, canceler]:  # this predicate may have already been cancelled
-                if threshold == 0.5:
-                    print(f'{canceler}:{y_score[dp, canceler]}: {cancel_out[canceler]}')
                 for cancelled in cancel_out[
                     canceler
                 ]:  # cancel out all items it is supposed to cancel
