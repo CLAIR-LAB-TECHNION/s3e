@@ -59,9 +59,11 @@ def threshold_with_cooc_mat(y_score, threshold, cooc_mat=None):
                     cancel_out.setdefault(k, []).append(j)
 
         # sort canceling predicates by score
-        cancelers_by_score = sorted(cancel_out.keys(), key=lambda k: y_score[dp, k])
+        cancelers_by_score = sorted(cancel_out.keys(), key=lambda k: y_score[dp, k], reverse=True)
         for canceler in cancelers_by_score:
             if y_pred[dp, canceler]:  # this predicate may have already been cancelled
+                if threshold == 0.5:
+                    print(f'{canceler}:{y_score[dp, canceler]}: {cancel_out[canceler]}')
                 for cancelled in cancel_out[
                     canceler
                 ]:  # cancel out all items it is supposed to cancel

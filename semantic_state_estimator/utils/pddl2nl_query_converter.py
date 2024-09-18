@@ -14,7 +14,7 @@ class PDDL2NLQueryConverter:
         )
 
         self.objects_by_type = "\n".join([f"{key} type: {list(map(str, value))}" for key, value in self.objects.items()])
-        self.system_prompt = f"""The following is a PDDL domain
+        self.system_prompt = f"""The following is a PDDL domain:
 {self.domain}
 Here are the names of all the objects in the current problem, sorted by their type:
 {self.objects_by_type}
@@ -37,7 +37,7 @@ Respond only with this natural language query and nothing else."""
         return cls(model, up_problem, **inference_kwargs)
 
     def convert_to_nl(self, grounded_predicate):
-        return run_inference_on_query(
+        return run_inference_on`_query(
             self.model,
             grounded_predicate,
             self.system_prompt,
