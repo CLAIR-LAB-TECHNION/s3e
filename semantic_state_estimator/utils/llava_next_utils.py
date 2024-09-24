@@ -101,14 +101,15 @@ class LlavaOVModel:
         input_ids, image_tensor, image_sizes = self.prep_inputs(query, images)
 
         # generate text output
-        cont = self.model.generate(
-            input_ids,
-            images=image_tensor,
-            image_sizes=image_sizes,
-            do_sample=False,
-            temperature=0,
-            max_new_tokens=4096,
-        )
+        with torch.inference_mode():
+            cont = self.model.generate(
+                input_ids,
+                images=image_tensor,
+                image_sizes=image_sizes,
+                do_sample=False,
+                temperature=0,
+                max_new_tokens=4096,
+            )
         out = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
 
         # output according to input arity

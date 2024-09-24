@@ -27,6 +27,7 @@ def process_datapoints(
     domain,
     problem,
     out_dir=None,
+    separate_images=False,
     se_class=None,
     **se_kwargs,
 ):
@@ -82,7 +83,13 @@ def process_datapoints(
         renders = np.load(renders_file)
 
         # process datapoint
-        prob_map = predict_dp_state(renders, se)
+        if separate_images:
+            prob_map = {
+                k: predict_dp_state({k: rnd}, se)
+                for k, rnd in renders.items()
+            }
+        else:
+            prob_map = predict_dp_state(renders, se)
 
         # save processed datapoint
         with open(out_file, "w") as f:

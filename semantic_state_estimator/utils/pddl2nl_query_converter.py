@@ -37,7 +37,7 @@ Respond only with this natural language query and nothing else."""
         return cls(model, up_problem, **inference_kwargs)
 
     def convert_to_nl(self, grounded_predicate):
-        return run_inference_on`_query(
+        return run_inference_on_query(
             self.model,
             grounded_predicate,
             self.system_prompt,

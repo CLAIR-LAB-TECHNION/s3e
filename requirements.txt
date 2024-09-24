@@ -1,9 +1,8 @@
 ICAPS-24 @ git+https://github.com/CLAIR-LAB-TECHNION/ICAPS-24@gymjoco
 llava[train] @ git+https://github.com/LLaVA-VL/LLaVA-NeXT
-unified-planning
+unified-planning[fast-downward]
 flash-attn
 fire
 timeoutcontext
 natsort
-pil-video
 pandas

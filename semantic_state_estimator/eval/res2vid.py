@@ -14,15 +14,54 @@ from tqdm.auto import tqdm
 from semantic_state_estimator.constants import RENDERS_DIR, PROCESSED_DIR
 from semantic_state_estimator.utils.statistics import get_cooccurrence_matrix
 
+def add_image_transparent_overlay(image, overlay_rgba):
+    # Get image size
+    width, height = image.size
+
+    # Create a transparent overlay
+    overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))  # (0,0,0,0) means fully transparent
+    draw = ImageDraw.Draw(overlay)
+
+    # Draw the rectangle
+    draw.rectangle([(0, 0), (width, height)], fill=overlay_rgba)
+
+    # Convert original image to 'RGBA' to handle transparency
+    image = image.convert('RGBA')
+
+    # Blend the transparent rectangle with the original image
+    result = Image.alpha_composite(image, overlay)
+
+    return result
+
+def add_text_border(imd, x, y, text, font, color):
+    # # thin border
+    # imd.text((x-1, y), text, font=font, fill=color)
+    # imd.text((x+1, y), text, font=font, fill=color)
+    # imd.text((x, y-1), text, font=font, fill=color)
+    # imd.text((x, y+1), text, font=font, fill=color)
+
+    # thicker border
+    imd.text((x-1, y-1), text, font=font, fill=color)
+    imd.text((x+1, y-1), text, font=font, fill=color)
+    imd.text((x-1, y+1), text, font=font, fill=color)
+    imd.text((x+1, y+1), text, font=font, fill=color)
 
 def get_annotated_image(frame, predictions):
     img = Image.fromarray(frame)
+
+    # img = add_image_transparent_overlay(img, (255, 255, 255, 30))
+
     imd = ImageDraw.Draw(img)
-    fnt = ImageFont.truetype("LiberationMono-Regular.ttf", 30)
+    fnt = ImageFont.truetype("LiberationMono-Regular.ttf", 35)
+    x = 28
+    y_offset = 36
     for i, predicate in enumerate(sorted(predictions.keys())):
+        text = f"{predicate}: {predictions[predicate]}"
+        y = y_offset + 40 * i
+        add_text_border(imd, x, y, text, fnt, (0, 0, 0))
         imd.text(
-            (28, 36 + 30 * i),
-            f"{predicate}: {predictions[predicate]}",
+            (x, y),
+            text,
             font=fnt,
             fill=(0, 255, 0),
         )

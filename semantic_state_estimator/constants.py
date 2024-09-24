@@ -13,6 +13,7 @@ RENDERS_DIR = 'renders'
 TRUE_STATES_DIR = 'true_states'
 PROCESSED_DIR = 'processed'
 DP_FNAME_FORMAT = "data_point_{}"
+EPISODES_DIR = 'episodes'
 
 # cache directories
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "cache"))
