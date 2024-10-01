@@ -1,16 +1,18 @@
 import warnings
+
+import fire
+
 from semantic_state_estimator.semantic_state_estimator import SemanticStateEstimatorWithLLaMA
 
-warnings.filterwarnings("ignore")
+def get_queries(domain, problem, llama_model="meta-llama/Meta-Llama-3-70B-Instruct"):
+    warnings.filterwarnings("ignore")
 
-LLAMA_ID = "meta-llama/Meta-Llama-3-70B-Instruct"
-LLAVA_ID = "lmms-lab/llava-onevision-qwen2-7b-ov"
+    SemanticStateEstimatorWithLLaMA(
+        domain=domain,
+        problem=problem,
+        nl_converter_model_id=llama_model,
+        vqa_model_id="lmms-lab/llava-onevision-qwen2-0.5b-ov"  # smallest model possible. don't care if it loads
+    )
 
-EXAMPLE = 'real_robot'
-
-se = SemanticStateEstimatorWithLLaMA(
-    domain=f'examples/{EXAMPLE}/domain.pddl',
-    problem=f'examples/{EXAMPLE}/problem.pddl',
-    nl_converter_model_id=LLAMA_ID,
-    vqa_model_id=LLAVA_ID
-)
+if __name__ == "__main__":
+    fire.Fire(get_queries)

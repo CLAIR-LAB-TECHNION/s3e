@@ -175,3 +175,12 @@ def acc_curve_with_cooc_mat(
         )
 
     return accuracy, thresholds
+
+def acc_curve(y, y_score, num_thresholds):
+    thresholds = np.linspace(0, 1, num_thresholds + 1)
+    accuracy = []
+    for t in thresholds:
+        y_pred = y_score > t
+        accuracy.append(accuracy_score(y, y_pred))
+
+    return accuracy, thresholds

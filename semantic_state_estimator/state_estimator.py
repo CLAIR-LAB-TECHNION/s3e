@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from sre_parse import State
 
 from PIL.Image import Image
 from unified_planning.model import FNode

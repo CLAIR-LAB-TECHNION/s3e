@@ -49,7 +49,7 @@ def add_text_border(imd, x, y, text, font, color):
 def get_annotated_image(frame, predictions):
     img = Image.fromarray(frame)
 
-    # img = add_image_transparent_overlay(img, (255, 255, 255, 30))
+    img = add_image_transparent_overlay(img, (255, 255, 255, 50))
 
     imd = ImageDraw.Draw(img)
     fnt = ImageFont.truetype("LiberationMono-Regular.ttf", 35)

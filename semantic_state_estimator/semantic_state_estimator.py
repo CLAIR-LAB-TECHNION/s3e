@@ -4,7 +4,7 @@ from .utils.misc import model_and_kwargs_to_filename
 from .constants import NL_PREDICATES_CACHE_DIR
 from tqdm.auto import tqdm
 import json
-from .utils.up_utils import create_up_problem
+from .utils.up_utils import create_up_problem, get_all_grounded_predicates_for_objects
 import transformers
 import math
 import torch
@@ -28,6 +28,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         problem,
         vqa_model_id,
         vqa_kwargs=None,
+        additional_instructions=None,
     ):
         super().__init__(domain, problem)
 
@@ -40,6 +41,9 @@ Here are the names of all the objects in the current problem, sorted by their ty
 {pddl2nl.objects_by_type}
 Given a grounded predicate with concrete variables, state whether the statement is true or false.
 Respond only with a "true" or "false" response and nothing else."""
+
+        if additional_instructions:
+            system += f'\nAdditional Instructions and clarifications:\n{additional_instructions}'
 
         self.vqa_model = LlavaModel(vqa_model_id, system=system, **(vqa_kwargs or {}))
 
@@ -99,6 +103,21 @@ Respond only with a "true" or "false" response and nothing else."""
         self.vqa_model.clear_system_cache()
 
         return out
+
+
+class SemanticEstimatorMultiImageRunNoLLaMA(SemanticStateEstimator):
+        def estimate_state_par(self, images, batch_size=8):
+            outputs_per_image = []
+            for img in tqdm(images):
+                out = super().estimate_state_par([img], batch_size)
+                outputs_per_image.append(out)
+            
+            out = {
+                predicate: np.mean([outputs_per_image[i][predicate] for i in range(len(images))])
+                for predicate in outputs_per_image[0]  # expected at least 1 image as input
+            }
+
+            return out
 
     
 
@@ -213,7 +232,8 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
                 domain, problem, nl_converter_model_id, nl_converter_kwargs
             )
             print("predicate queries loaded from cache")
-        except FileNotFoundError:
+        except (FileNotFoundError, KeyError) as e:
+            print("loading predicate queries with LLM")
             queries_dict = cls.load_queries_dict_with_model(
                 domain, problem, nl_converter_model_id, nl_converter_kwargs
             )
@@ -247,7 +267,17 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
             + ".json"
         )
         os.makedirs(NL_PREDICATES_CACHE_DIR, exist_ok=True)
-        with open(os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname), "w") as f:
+        cache_file_path = os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname)
+
+        # if already exists, update the file and don't delete existing
+        # this is good in case we have the same problem with different objects
+        if os.path.exists(cache_file_path):
+            with open(cache_file_path, 'r') as f:
+                old_queries_dict = json.load(f)
+            old_queries_dict.update(queries_dict)  # update old with new
+            queries_dict = old_queries_dict
+
+        with open(cache_file_path, "w") as f:
             json.dump(queries_dict, f, indent=4)
 
         # remove pddl predicate-to-NL converter from memory
@@ -259,7 +289,8 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
     def load_queries_dict_from_cache(
         domain, problem, nl_converter_model_id, nl_converter_kwargs=None
     ):
-        problem_name = create_up_problem(domain, problem).name
+        up_problem = create_up_problem(domain, problem)
+        problem_name = up_problem.name
         cache_fname = (
             model_and_kwargs_to_filename(
                 nl_converter_model_id,
@@ -269,7 +300,13 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
             + ".json"
         )
         with open(os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname), "r") as f:
-            return json.load(f)
+            queries_dict = json.load(f)
+        
+        # filter out irrelevant predicates
+        grounded_predicates = get_all_grounded_predicates_for_objects(up_problem)
+        queries_dict = {predicate: queries_dict[predicate] for predicate in grounded_predicates}
+
+        return queries_dict
 
 
 class SemanticEstimatorMultiImageRun(SemanticStateEstimatorWithLLaMA):

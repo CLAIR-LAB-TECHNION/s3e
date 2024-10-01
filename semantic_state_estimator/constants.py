@@ -15,6 +15,9 @@ PROCESSED_DIR = 'processed'
 DP_FNAME_FORMAT = "data_point_{}"
 EPISODES_DIR = 'episodes'
 
+# directories only for PRB
+SCENES_DIR = 'scenes'
+
 # cache directories
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "cache"))
 NL_PREDICATES_CACHE_DIR = os.path.join(CACHE_DIR, "nl-predicates")

@@ -10,10 +10,8 @@ from semantic_state_estimator.constants import (
     LLAMA_70B_INSTRUCT,
     LLAVA_7B_OV,
     RENDERS_DIR,
+    PROCESSED_DIR
 )
-
-
-PROCESSED_DATA_DIR = "processed"
 
 
 def predict_dp_state(renders, se):
@@ -26,6 +24,7 @@ def process_datapoints(
     data_dir,
     domain,
     problem,
+    query_swapper=None,
     out_dir=None,
     separate_images=False,
     se_class=None,
@@ -57,7 +56,7 @@ def process_datapoints(
         se_kwargs.setdefault("vqa_model_id", LLAVA_7B_OV)
     elif se_class == SemanticStateEstimator:
         se_kwargs.setdefault("vqa_model_id", LLAVA_7B_OV)
-
+    
     # load state estimator
     se = se_class(domain=domain, problem=problem, **se_kwargs)
 
@@ -68,11 +67,11 @@ def process_datapoints(
     render_files = glob.glob(os.path.join(data_dir, RENDERS_DIR, "*.npz"))
 
     # create output directory
-    out_dir = os.path.join(data_dir, PROCESSED_DATA_DIR, out_dir)
+    out_dir = os.path.join(data_dir, PROCESSED_DIR, out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
     # process all datapoints
-    for renders_file in tqdm(render_files):
+    for renders_file in tqdm(render_files, desc="processing data points"):
         # skip if result exists
         out_filename = os.path.splitext(os.path.basename(renders_file))[0] + ".json"
         out_file = os.path.join(out_dir, out_filename)
@@ -81,6 +80,9 @@ def process_datapoints(
 
         # load datapoint
         renders = np.load(renders_file)
+
+        if query_swapper is not None:
+            se.swap_queries(*query_swapper(renders_file))
 
         # process datapoint
         if separate_images:

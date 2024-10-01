@@ -39,7 +39,7 @@ class LlavaOVModel:
         self.model.eval()
 
         self.system_prompt = system
-        self.system_images = system_images
+        self.system_images = system_images or []
 
         self.inference_kwargs = inference_kwargs
 
