@@ -74,31 +74,64 @@ def bool_constant_to_fnode(up_problem: Problem, constant: bool) -> FNode:
         return exp_mgr.false_expression
 
 
+def convert_state_dict_to_up_compatible(
+    up_problem, state_dict: dict[str, bool]
+) -> dict[FNode, FNode]:
+    return {
+        ground_predicate_str_to_fnode(up_problem, k): bool_constant_to_fnode(
+            up_problem, v
+        )
+        for k, v in state_dict.items()
+    }
+
+
 def state_dict_to_up_state(up_problem: Problem, state_dict: dict[str, bool]) -> UPState:
-    return UPState(
-        {
-            ground_predicate_str_to_fnode(up_problem, k): bool_constant_to_fnode(
-                up_problem, v
-            )
-            for k, v in state_dict.items()
-        }
-    )
+    return UPState(convert_state_dict_to_up_compatible(up_problem, state_dict))
+
 
 def up_state_to_state_dict(up_state: UPState) -> dict[str, bool]:
     current_instance = up_state
     out = {}
     while current_instance is not None:
         for k, v in current_instance._values.items():
-            out.setdefault(f'{k.fluent().name}({",".join(map(str, k.args))})', v.constant_value())
+            out.setdefault(
+                f'{k.fluent().name}({",".join(map(str, k.args))})', v.constant_value()
+            )
         current_instance = current_instance._father
 
     return out
 
 
-def collect_pddl_datapoints(up_problem: Problem, num_steps: int, out_dir: str, max_episode_steps: Optional[int] = None):
+def set_problem_init_state(up_problem: Problem, init_state_dict: dict[str, bool]):
+    # clear existing fluents
+    up_problem.explicit_initial_values.clear()
+
+    # set desired fluents
+    for k, v in convert_state_dict_to_up_compatible(up_problem, init_state_dict).items():
+        up_problem.set_initial_value(k, v)
+
+
+def set_problem_goal_state(up_problem: Problem, goal_state_dict: dict[str, bool]):
+    # clear existing goals
+    up_problem.clear_goals()
+
+    # set desired goals
+    for k, v in goal_state_dict.items():
+        if v is True:
+            up_problem.add_goal(
+                ground_predicate_str_to_fnode(up_problem, k),
+            )
+
+
+def collect_pddl_datapoints(
+    up_problem: Problem,
+    num_steps: int,
+    out_dir: str,
+    max_episode_steps: Optional[int] = None,
+):
     # create output directory
     os.makedirs(out_dir, exist_ok=True)
-    
+
     # initialize simulator
     sim = UPSequentialSimulator(up_problem)
 
@@ -113,12 +146,10 @@ def collect_pddl_datapoints(up_problem: Problem, num_steps: int, out_dir: str, m
             state = UPState(state_dict)
 
         state_dict = up_state_to_state_dict(state)
-        with open(os.path.join(out_dir, f'state_{i:06d}.json'), 'w') as f:
+        with open(os.path.join(out_dir, f"state_{i:06d}.json"), "w") as f:
             json.dump(state_dict, f, indent=4)
-        
+
         applicable_actions = list(sim.get_applicable_actions(state))
         action_idx = np.random.choice(range(len(applicable_actions)))
         action, params = applicable_actions[action_idx]
         state = sim.apply(state, action, params)
-
-
