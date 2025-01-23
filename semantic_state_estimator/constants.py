@@ -14,6 +14,7 @@ TRUE_STATES_DIR = 'true_states'
 PROCESSED_DIR = 'processed'
 DP_FNAME_FORMAT = "data_point_{}"
 EPISODES_DIR = 'episodes'
+TRAJECTORY_STEP_FNAME_FORMAT = "STEP_{}"
 
 # directories only for PRB
 SCENES_DIR = 'scenes'
