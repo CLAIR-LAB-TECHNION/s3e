@@ -5,10 +5,14 @@ from .utils.up_utils import get_all_grounded_predicates_for_objects
 
 
 class RandomStateEstimator(StateEstimator):
-    def __init__(self, domain, problem, success_rate, gt_state_estimator):
+    def __init__(self, domain, problem, success_rate, gt_state_estimator: StateEstimator):
         super().__init__(domain, problem)
         self.sr = success_rate
         self.gt = gt_state_estimator
+
+    def swap_queries(self, domain, problem, *args, **kwargs):
+        super().swap_queries(domain, problem, *args, **kwargs)
+        self.gt.swap_queries(domain, problem)
 
     def __call__(self, images):
         true_state = self.gt(self.gt.env.get_state())

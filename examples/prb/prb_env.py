@@ -104,7 +104,7 @@ class NewState(State):
                 for o2 in objects:
                     if o1.similar(o2):
                         ok = False
-                        print("duplicate object!")
+                        # print("duplicate object!")
                         break
                 if ok:
                     break

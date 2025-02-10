@@ -40,15 +40,17 @@ class PRBSkillExecuter(SkillExecuter):
             block_obj.z += block_obj.size
             trial += 1
 
+        return not fail
+
     def move_from_block_to_table(self, b1, b2):
         block_obj = self.env.state.get_object_by_name(b1)
 
         index = self.env.state.objects.index(block_obj)
         self.env.state.objects.remove(block_obj)
-        self.__change_block_location_to_table(block_obj)
+        suc = self.__change_block_location_to_table(block_obj)
         self.env.state.objects.insert(index, block_obj)
 
-        return True, []
+        return suc, []
 
     def move_from_table_to_block(self, b1, b2):
         b1_obj = self.env.state.get_object_by_name(b1)

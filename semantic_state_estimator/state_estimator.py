@@ -14,6 +14,9 @@ class StateEstimator(ABC):
     ):
         self.up_problem = create_up_problem(domain, problem)
 
+    def swap_queries(self, domain, problem, *args, **kwargs):
+        self.up_problem = create_up_problem(domain, problem)
+
     @abstractmethod
     def __call__(self, images: list[Image]) -> dict[str, bool]:
         ...
@@ -46,6 +49,10 @@ class ProbabilisticStateEstimator(StateEstimator, ABC):
 class PredFnStateEstimator(StateEstimator, ABC):
     def __init__(self, domain, problem):
         super().__init__(domain, problem)
+        self.all_ground_literals = list(self.up_problem.initial_values.keys())
+
+    def swap_queries(self, domain, problem, *args, **kwargs):
+        super().swap_queries(domain, problem, *args, **kwargs)
         self.all_ground_literals = list(self.up_problem.initial_values.keys())
 
     def __call__(self, state):

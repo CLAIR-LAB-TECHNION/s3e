@@ -33,6 +33,7 @@ class EpisodeRunner:
         max_episode_actions: int = 20,
         max_action_retries: int = 3,
         go_home_prob: float = 0.3,
+        query_swapper=None
     ):
         # create output directory
         self.episodes_dir = os.path.join(data_dir, EPISODES_DIR, run_name)
@@ -52,6 +53,7 @@ class EpisodeRunner:
         self.max_episode_actions = max_episode_actions
         self.max_action_retries = max_action_retries
         self.go_home_prob = go_home_prob
+        self.query_swapper = query_swapper
 
         self._cur_plan = None
         self._replan_count = 0
@@ -272,6 +274,14 @@ class EpisodeRunner:
         # reset env
         self.exec.reset_env()
         self.exec.wait(100)  # wait for simulation to stabalize
+
+        if self.query_swapper is not None:
+            domain_str, problem_str, model_id = self.query_swapper(self.env)
+            self.problem = create_up_problem(domain_str, problem_str)
+            self.problem_sim = UPSequentialSimulator(self.problem)
+            self.gt.up_problem = self.problem
+            self.gt.all_ground_literals = list(self.gt.up_problem.initial_values.keys())
+            self.pred.swap_queries(domain_str, problem_str, model_id)
 
         # set current state
         state_dict = self.gt_state()
