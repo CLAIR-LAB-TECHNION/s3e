@@ -8,6 +8,11 @@ from importlib import import_module
 
 ENTRYPOINT_MODULE_FUNC_SEP = ":"
 
+from semantic_state_estimator.constants import (
+    LLAMA_70B_INSTRUCT,
+    LLAVA_7B_OV,
+)
+
 
 def remove_from_gpu_memory(*items):
     # delete all items and invoke garbage collection
@@ -75,3 +80,31 @@ def squash_predicate(dp_dicts):
         out.append(dp_arr)
 
     return np.array(out)
+
+
+def load_se_from_args(se_class, se_kwargs, domain, problem):
+    # these modules import heavy packages.
+    # import here to avoid waiting when calling with `--help`
+    from semantic_state_estimator.semantic_state_estimator import (
+        SemanticStateEstimator,
+        SemanticStateEstimatorWithLLaMA,
+        SemanticEstimatorMultiImageRun
+    )
+
+    # load state estimator class
+    if se_class is None:
+        se_class = SemanticStateEstimatorWithLLaMA
+    elif isinstance(se_class, str):
+        se_class = load_from_entrypoint(se_class)
+
+    # handle default state estimator class
+    if se_class == SemanticStateEstimatorWithLLaMA or se_class == SemanticEstimatorMultiImageRun:
+        se_kwargs.setdefault("nl_converter_model_id", LLAMA_70B_INSTRUCT)
+        se_kwargs.setdefault("vqa_model_id", LLAVA_7B_OV)
+    elif se_class == SemanticStateEstimator:
+        se_kwargs.setdefault("vqa_model_id", LLAVA_7B_OV)
+    
+    # load state estimator
+    se = se_class(domain=domain, problem=problem, **se_kwargs)
+
+    return se

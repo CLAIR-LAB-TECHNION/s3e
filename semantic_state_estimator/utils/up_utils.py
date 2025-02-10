@@ -6,7 +6,7 @@ import json
 import numpy as np
 from tqdm.auto import tqdm
 from unified_planning.io import PDDLReader, PDDLWriter
-from unified_planning.shortcuts import Problem, UPState, FNode
+from unified_planning.shortcuts import Problem, UPState, FNode, Not
 from unified_planning.engines.sequential_simulator import UPSequentialSimulator
 
 
@@ -107,11 +107,15 @@ def set_problem_init_state(up_problem: Problem, init_state_dict: dict[str, bool]
     up_problem.explicit_initial_values.clear()
 
     # set desired fluents
-    for k, v in convert_state_dict_to_up_compatible(up_problem, init_state_dict).items():
+    for k, v in convert_state_dict_to_up_compatible(
+        up_problem, init_state_dict
+    ).items():
         up_problem.set_initial_value(k, v)
 
 
-def set_problem_goal_state(up_problem: Problem, goal_state_dict: dict[str, bool]):
+def set_problem_goal_state(
+    up_problem: Problem, goal_state_dict: dict[str, bool], include_negatives=False
+):
     # clear existing goals
     up_problem.clear_goals()
 
@@ -120,6 +124,10 @@ def set_problem_goal_state(up_problem: Problem, goal_state_dict: dict[str, bool]
         if v is True:
             up_problem.add_goal(
                 ground_predicate_str_to_fnode(up_problem, k),
+            )
+        elif include_negatives:
+            up_problem.add_goal(
+                Not(ground_predicate_str_to_fnode(up_problem, k)),
             )
 
 
