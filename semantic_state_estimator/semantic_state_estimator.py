@@ -29,8 +29,9 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         vqa_model_id,
         vqa_kwargs=None,
         additional_instructions=None,
+        confidence=0.5
     ):
-        super().__init__(domain, problem)
+        super().__init__(domain, problem, confidence)
 
         pddl2nl = PDDL2NLQueryConverter.from_uninitialized(None, domain, problem)
         self.predicates = pddl2nl.all_grounded_predicates
@@ -131,9 +132,10 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         nl_converter_kwargs=None,
         vqa_kwargs=None,
         additional_instructions=None,
-        additional_images=None
+        additional_images=None,
+        confidence=0.5
     ):
-        super().__init__(domain, problem)
+        super().__init__(domain, problem, confidence)
 
         self.queries_dict = self.get_queries_dict(
             domain, problem, nl_converter_model_id, nl_converter_kwargs

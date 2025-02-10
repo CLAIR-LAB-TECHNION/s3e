@@ -20,10 +20,19 @@ class StateEstimator(ABC):
 
 
 class ProbabilisticStateEstimator(StateEstimator, ABC):
-    def __call__(self, images: list[Image], confidence=0.5) -> dict[str, bool]:
+    def __init__(self, domain, problem, confidence: float = 0.5):
+        super().__init__(domain, problem)
+        self.confidence = confidence
+
+    def __call__(self, images: list[Image], confidence=None) -> dict[str, bool]:
         fluent_prob_map = self.estimate_state(images)
+
+        # set predefined confidence if not provided
+        if confidence is None:
+            confidence = self.confidence
+
         state = {
-            predicate: prob >= confidence
+            predicate: bool(prob >= confidence)  # force bool (not np.bool_)
             for predicate, prob in fluent_prob_map.items()
         }
 
