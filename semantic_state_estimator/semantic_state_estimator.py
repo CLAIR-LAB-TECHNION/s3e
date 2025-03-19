@@ -29,13 +29,13 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         vqa_model_id,
         vqa_kwargs=None,
         additional_instructions=None,
-        confidence=0.5
+        confidence=0.5,
     ):
         super().__init__(domain, problem, confidence)
 
         pddl2nl = PDDL2NLQueryConverter.from_uninitialized(None, domain, problem)
         self.predicates = pddl2nl.all_grounded_predicates
-        
+
         system = f"""The following is a PDDL domain
 {pddl2nl.domain}
 Here are the names of all the objects in the current problem, sorted by their type:
@@ -44,7 +44,7 @@ Given a grounded predicate with concrete variables, state whether the statement 
 Respond only with a "true" or "false" response and nothing else."""
 
         if additional_instructions:
-            system += f'\nAdditional Instructions and clarifications:\n{additional_instructions}'
+            system += f"\nAdditional Instructions and clarifications:\n{additional_instructions}"
 
         self.vqa_model = LlavaModel(vqa_model_id, system=system, **(vqa_kwargs or {}))
 
@@ -64,13 +64,6 @@ Respond only with a "true" or "false" response and nothing else."""
 
     def estimate_state(self, images):
         return self.estimate_state_par(images, batch_size=1)
-
-        # state = set()
-        # for pred, query in tqdm(self.queries_dict.items()):
-        #     response = self.vqa_model.generate(images, query)
-        #     if response.lower() == 'yes':
-        #         state.add(pred)
-        # return state
 
     def estimate_state_par(self, images, batch_size=8):
         # cache repeated parts of the prompt, including images
@@ -107,20 +100,21 @@ Respond only with a "true" or "false" response and nothing else."""
 
 
 class SemanticEstimatorMultiImageRunNoLLaMA(SemanticStateEstimator):
-        def estimate_state_par(self, images, batch_size=8):
-            outputs_per_image = []
-            for img in tqdm(images):
-                out = super().estimate_state_par([img], batch_size)
-                outputs_per_image.append(out)
-            
-            out = {
-                predicate: np.mean([outputs_per_image[i][predicate] for i in range(len(images))])
-                for predicate in outputs_per_image[0]  # expected at least 1 image as input
-            }
+    def estimate_state_par(self, images, batch_size=8):
+        outputs_per_image = []
+        for img in tqdm(images):
+            out = super().estimate_state_par([img], batch_size)
+            outputs_per_image.append(out)
 
-            return out
+        out = {
+            predicate: np.mean(
+                [outputs_per_image[i][predicate] for i in range(len(images))]
+            )
+            for predicate in outputs_per_image[0]  # expected at least 1 image as input
+        }
 
-    
+        return out
+
 
 class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
     def __init__(
@@ -133,7 +127,7 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         vqa_kwargs=None,
         additional_instructions=None,
         additional_images=None,
-        confidence=0.5
+        confidence=0.5,
     ):
         super().__init__(domain, problem, confidence)
 
@@ -148,10 +142,14 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
             "The assistant's response should not include any additional text."
         )
         if additional_instructions:
-            system += f'\nAdditional Instructions and clarifications:\n{additional_instructions}'
+            system += f"\nAdditional Instructions and clarifications:\n{additional_instructions}"
 
-        self.vqa_model = LlavaModel(vqa_model_id, system=system, system_images=additional_images or [],
-                                    **(vqa_kwargs or {}))
+        self.vqa_model = LlavaModel(
+            vqa_model_id,
+            system=system,
+            system_images=additional_images or [],
+            **(vqa_kwargs or {}),
+        )
 
         # get tokens for words of interest (yes and no)
         self.yes_tokens = list(
@@ -169,13 +167,6 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
 
     def estimate_state(self, images):
         return self.estimate_state_par(images, batch_size=1)
-
-        # state = set()
-        # for pred, query in tqdm(self.queries_dict.items()):
-        #     response = self.vqa_model.generate(images, query)
-        #     if response.lower() == 'yes':
-        #         state.add(pred)
-        # return state
 
     def estimate_state_par(self, images, batch_size=8):
         # cache repeated parts of the prompt, including images
@@ -274,7 +265,7 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         # if already exists, update the file and don't delete existing
         # this is good in case we have the same problem with different objects
         if os.path.exists(cache_file_path):
-            with open(cache_file_path, 'r') as f:
+            with open(cache_file_path, "r") as f:
                 old_queries_dict = json.load(f)
             old_queries_dict.update(queries_dict)  # update old with new
             queries_dict = old_queries_dict
@@ -297,43 +288,49 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
             model_and_kwargs_to_filename(
                 nl_converter_model_id,
                 pddl_problem=problem_name,
-                **(nl_converter_kwargs or {})
+                **(nl_converter_kwargs or {}),
             )
             + ".json"
         )
         with open(os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname), "r") as f:
             queries_dict = json.load(f)
-        
+
         # filter out irrelevant predicates
         grounded_predicates = get_all_grounded_predicates_for_objects(up_problem)
-        queries_dict = {predicate: queries_dict[predicate] for predicate in grounded_predicates}
+        queries_dict = {
+            predicate: queries_dict[predicate] for predicate in grounded_predicates
+        }
 
         return queries_dict
 
 
 class SemanticEstimatorMultiImageRun(SemanticStateEstimatorWithLLaMA):
-        def estimate_state_par(self, images, batch_size=8):
-            outputs_per_image = []
-            for img in tqdm(images):
-                out = super().estimate_state_par([img], batch_size)
-                outputs_per_image.append(out)
-            
-            out = {
-                predicate: np.mean([outputs_per_image[i][predicate] for i in range(len(images))])
-                for predicate in outputs_per_image[0]  # expected at least 1 image as input
-            }
+    def estimate_state_par(self, images, batch_size=8):
+        outputs_per_image = []
+        for img in tqdm(images):
+            out = super().estimate_state_par([img], batch_size)
+            outputs_per_image.append(out)
 
-            return out
+        out = {
+            predicate: np.mean(
+                [outputs_per_image[i][predicate] for i in range(len(images))]
+            )
+            for predicate in outputs_per_image[0]  # expected at least 1 image as input
+        }
 
+        return out
 
 
 class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
-    def __init__(self, domain,
-                 problem,
-                 nl_converter_model_id,
-                 vqa_model_id="openai/clip-vit-base-patch32",
-                 nl_converter_kwargs=None,
-                 vqa_kwargs=None):
+    def __init__(
+        self,
+        domain,
+        problem,
+        nl_converter_model_id,
+        vqa_model_id="openai/clip-vit-base-patch32",
+        nl_converter_kwargs=None,
+        vqa_kwargs=None,
+    ):
         super(ProbabilisticStateEstimator, self).__init__(domain, problem)
         self.queries_dict = self.get_queries_dict(
             domain, problem, nl_converter_model_id, nl_converter_kwargs
@@ -342,13 +339,13 @@ class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
         self.vqa_model = CLIPModel.from_pretrained(
             vqa_model_id,
             # attn_implementation="flash_attention_2",
-            device_map='auto',
-            torch_dtype=torch.float16
+            device_map="auto",
+            torch_dtype=torch.float16,
         )
         self.processor = CLIPProcessor.from_pretrained(vqa_model_id)
-    
+
     def estimate_state(self, images):
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
         out = {}
         for pred, query in tqdm(self.queries_dict.items()):
@@ -356,16 +353,82 @@ class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
                 text=[f"{query} Yes.", "{query} No."],
                 images=images,
                 return_tensors="pt",
-                padding=True
+                padding=True,
             )
-            inputs.to('cuda')
+            inputs.to("cuda")
             with torch.no_grad():
                 with torch.autocast(device):
                     outputs = self.vqa_model(**inputs)
-            
+
             logits_per_image = outputs.logits_per_image
             probs = logits_per_image.softmax(dim=1)
 
             out[pred] = probs[0][0].item()
-        
+
+        return out
+
+
+class SemanticStateEstimatorDetProbs(SemanticStateEstimatorWithLLaMA):
+    def estimate_state(self, images):
+        out = {}
+        for pred, query in tqdm(self.queries_dict.items()):
+            response = self.vqa_model.generate(images, query)
+            out[pred] = 1.0 if response.lower() == "yes" else 0.0
+
+        return out
+
+
+class SemanticStateEstimatorDetProbsMultiImageRun(SemanticStateEstimatorDetProbs):
+    def estimate_state(self, images):
+        outs = []
+        for img in tqdm(images):
+            outs.append(super().estimate_state([img]))
+
+        # average over all images
+        out = {
+            predicate: np.mean([outs[i][predicate] for i in range(len(images))])
+            for predicate in outs[0]  # expected at least 1 image as input
+        }
+
+        return out
+
+
+class SemanticStateEstimatorConditional(SemanticStateEstimatorWithLLaMA):
+    def __init__(
+        self,
+        domain,
+        problem,
+        vqa_model_id,
+        vqa_kwargs=None,
+        additional_instructions=None,
+        confidence=0.5,
+    ):
+        super().__init__(
+            domain,
+            problem,
+            vqa_model_id,
+            vqa_kwargs,
+            additional_instructions,
+            confidence,
+        )
+
+        system = f"""The following is a PDDL domain
+{pddl2nl.domain}
+Here are the names of all the objects in the current problem, sorted by their type:
+{pddl2nl.objects_by_type}
+Given a grounded predicate with concrete variables, state whether the statement is true or false.
+Respond only with a "true" or "false" response and nothing else."""
+
+        if additional_instructions:
+            system += f"\nAdditional Instructions and clarifications:\n{additional_instructions}"
+
+    def estimate_state(self, images):
+        out = {}
+        for pred, query in tqdm(self.queries_dict.items()):
+            if pred in self.conditional_predicates:
+                response = self.vqa_model.generate(images, query)
+                out[pred] = 1.0 if response.lower() == "yes" else 0.0
+            else:
+                out[pred] = 0.0
+
         return out

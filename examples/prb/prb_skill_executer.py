@@ -1,7 +1,7 @@
 import numpy as np
 from tamp_helpers.table_sampling import sample_free_spot_on_table_for_block
 
-from examples.prb.prb_env import PRBEnv, properties, random
+from prb_env import PRBEnv, properties, random
 from semantic_state_estimator.skill_executer import SkillExecuter, ActionReturnType
 
 

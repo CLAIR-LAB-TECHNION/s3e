@@ -1,6 +1,6 @@
 import json
 import os
-
+import sys
 import numpy as np
 from PIL import Image
 from timeoutcontext import timeout
@@ -271,10 +271,15 @@ class EpisodeRunner:
         # Episode Init #
         ################
 
+        print('env reset')
+        sys.stdout.flush()
+
         # reset env
         self.exec.reset_env()
         self.exec.wait(100)  # wait for simulation to stabalize
 
+        print('query swap')
+        sys.stdout.flush()
         if self.query_swapper is not None:
             domain_str, problem_str, model_id = self.query_swapper(self.env)
             self.problem = create_up_problem(domain_str, problem_str)
@@ -283,11 +288,15 @@ class EpisodeRunner:
             self.gt.all_ground_literals = list(self.gt.up_problem.initial_values.keys())
             self.pred.swap_queries(domain_str, problem_str, model_id)
 
+        print('get states and stuff')
+        sys.stdout.flush()
         # set current state
         state_dict = self.gt_state()
         state = state_dict_to_up_state(self.problem, state_dict)
 
         # perceive initial state
+        print('first render')
+        sys.stdout.flush()
         cur_obs_renders = self.get_env_renders()
         pred_state_dict = self.se_predict(cur_obs_renders)
         pred_state = state_dict_to_up_state(self.problem, pred_state_dict)
