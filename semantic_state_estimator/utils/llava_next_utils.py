@@ -25,6 +25,13 @@ import torch
 import copy
 import warnings
 
+try:
+    import flash_attn
+    flash_attn_installed = True
+except ImportError:
+    flash_attn_installed = False
+
+
 
 class LlavaOVModel:
     """A class for handling LLaVA model interactions with both text and image inputs.
@@ -63,7 +70,7 @@ class LlavaOVModel:
                 "llava_qwen",
                 device_map="auto",
                 attn_implementation=(
-                    "flash_attention_2" if self.device == "cuda" else None
+                    "flash_attention_2" if self.device == "cuda" and flash_attn_installed else None
                 ),
             )
         )
