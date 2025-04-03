@@ -1,3 +1,20 @@
+"""Semantic state estimation using vision-language models.
+
+This module provides implementations of semantic state estimators that use vision-language models
+to estimate the current state of an environment from images. It supports various model architectures
+including LLaVA, CLIP, and other vision-language models.
+
+Classes:
+    SemanticStateEstimator: Base class for semantic state estimation using vision-language models.
+    SemanticEstimatorMultiImageRunNoLLaMA: Multi-image state estimation without LLaMA.
+    SemanticStateEstimatorWithLLaMA: State estimation using LLaMA model.
+    SemanticEstimatorMultiImageRun: Multi-image state estimation with LLaMA.
+    SemanticEstimatorWithCLIP: State estimation using CLIP model.
+    SemanticStateEstimatorDetProbs: Deterministic probability-based state estimation.
+    SemanticStateEstimatorDetProbsMultiImageRun: Multi-image deterministic probability estimation.
+    SemanticStateEstimatorConditional: Conditional state estimation.
+"""
+
 import os
 from .utils.pddl2nl_query_converter import PDDL2NLQueryConverter
 from .utils.misc import model_and_kwargs_to_filename
@@ -22,6 +39,26 @@ else:
 
 
 class SemanticStateEstimator(ProbabilisticStateEstimator):
+    """Base class for semantic state estimation using vision-language models.
+    
+    This class implements state estimation using vision-language models to convert
+    visual observations into logical predicates.
+
+    Attributes:
+        predicates: List of all grounded predicates in the current problem.
+        vqa_model: The vision-language model instance.
+        true_tokens: Token IDs for "true" responses.
+        false_tokens: Token IDs for "false" responses.
+
+    Args:
+        domain: The PDDL domain description.
+        problem: The PDDL problem description.
+        vqa_model_id: Identifier for the vision-language model to use.
+        vqa_kwargs: Additional keyword arguments for model initialization.
+        additional_instructions: Additional instructions for the model's system prompt.
+        confidence: Confidence threshold for probability thresholding.
+    """
+
     def __init__(
         self,
         domain,
@@ -63,9 +100,26 @@ Respond only with a "true" or "false" response and nothing else."""
         )
 
     def estimate_state(self, images):
+        """Estimate state probabilities from images using sequential processing.
+        
+        Args:
+            images: List of PIL Image objects.
+
+        Returns:
+            Dictionary mapping predicate strings to probability values.
+        """
         return self.estimate_state_par(images, batch_size=1)
 
     def estimate_state_par(self, images, batch_size=8):
+        """Estimate state probabilities from images using parallel processing.
+        
+        Args:
+            images: List of PIL Image objects.
+            batch_size: Number of predicates to process in parallel.
+
+        Returns:
+            Dictionary mapping predicate strings to probability values.
+        """
         # cache repeated parts of the prompt, including images
         self.vqa_model.generate_system_cache_with_images(images)
 
@@ -100,7 +154,30 @@ Respond only with a "true" or "false" response and nothing else."""
 
 
 class SemanticEstimatorMultiImageRunNoLLaMA(SemanticStateEstimator):
+    """Multi-image state estimation without LLaMA model.
+    
+    This class extends SemanticStateEstimator to handle multiple images by averaging
+    the predictions across all images.
+
+    Args:
+        domain: The PDDL domain description.
+        problem: The PDDL problem description.
+        vqa_model_id: Identifier for the vision-language model to use.
+        vqa_kwargs: Additional keyword arguments for model initialization.
+        additional_instructions: Additional instructions for the model's system prompt.
+        confidence: Confidence threshold for probability thresholding.
+    """
+
     def estimate_state_par(self, images, batch_size=8):
+        """Estimate state probabilities by averaging across multiple images.
+        
+        Args:
+            images: List of PIL Image objects.
+            batch_size: Number of predicates to process in parallel.
+
+        Returns:
+            Dictionary mapping predicate strings to averaged probability values.
+        """
         outputs_per_image = []
         for img in tqdm(images):
             out = super().estimate_state_par([img], batch_size)
@@ -117,6 +194,29 @@ class SemanticEstimatorMultiImageRunNoLLaMA(SemanticStateEstimator):
 
 
 class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
+    """State estimation using LLaMA model.
+    
+    This class implements state estimation using the LLaMA model for natural language
+    understanding and state prediction.
+
+    Attributes:
+        queries_dict: Dictionary mapping predicates to natural language queries.
+        vqa_model: The LLaMA model instance.
+        yes_tokens: Token IDs for "yes" responses.
+        no_tokens: Token IDs for "no" responses.
+
+    Args:
+        domain: The PDDL domain description.
+        problem: The PDDL problem description.
+        nl_converter_model_id: Identifier for the natural language converter model.
+        vqa_model_id: Identifier for the vision-language model.
+        nl_converter_kwargs: Additional keyword arguments for NL converter.
+        vqa_kwargs: Additional keyword arguments for VQA model.
+        additional_instructions: Additional instructions for the model's system prompt.
+        additional_images: Additional images for system prompt.
+        confidence: Confidence threshold for probability thresholding.
+    """
+
     def __init__(
         self,
         domain,
@@ -166,9 +266,26 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         )
 
     def estimate_state(self, images):
+        """Estimate state probabilities from images using sequential processing.
+        
+        Args:
+            images: List of PIL Image objects.
+
+        Returns:
+            Dictionary mapping predicate strings to probability values.
+        """
         return self.estimate_state_par(images, batch_size=1)
 
     def estimate_state_par(self, images, batch_size=8):
+        """Estimate state probabilities from images using parallel processing.
+        
+        Args:
+            images: List of PIL Image objects.
+            batch_size: Number of predicates to process in parallel.
+
+        Returns:
+            Dictionary mapping predicate strings to probability values.
+        """
         # cache repeated parts of the prompt, including images
         self.vqa_model.generate_system_cache_with_images(images)
 
@@ -196,6 +313,14 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
         return out
 
     def logits_to_yes_no_probs(self, logits):
+        """Convert logits to yes/no probabilities.
+        
+        Args:
+            logits: Model output logits.
+
+        Returns:
+            Tensor of normalized probabilities for "yes" responses.
+        """
         # get logits for "yes" and "no" tokens
         yes_logits = logits[:, self.yes_tokens].sum(dim=-1)
         no_logits = logits[:, self.no_tokens].sum(dim=-1)
@@ -212,6 +337,14 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
     def swap_queries(
         self, domain, problem, nl_converter_model_id, nl_converter_kwargs=None
     ):
+        """Update the queries dictionary with new domain and problem.
+        
+        Args:
+            domain: New PDDL domain description.
+            problem: New PDDL problem description.
+            nl_converter_model_id: Identifier for the natural language converter model.
+            nl_converter_kwargs: Additional keyword arguments for NL converter.
+        """
         self.queries_dict = self.get_queries_dict(
             domain, problem, nl_converter_model_id, nl_converter_kwargs
         )
@@ -220,6 +353,17 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
     def get_queries_dict(
         cls, domain, problem, nl_converter_model_id, nl_converter_kwargs=None
     ):
+        """Get or create the queries dictionary for the given problem.
+        
+        Args:
+            domain: PDDL domain description.
+            problem: PDDL problem description.
+            nl_converter_model_id: Identifier for the natural language converter model.
+            nl_converter_kwargs: Additional keyword arguments for NL converter.
+
+        Returns:
+            Dictionary mapping predicates to natural language queries.
+        """
         try:
             queries_dict = cls.load_queries_dict_from_cache(
                 domain, problem, nl_converter_model_id, nl_converter_kwargs
@@ -237,6 +381,17 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
     def load_queries_dict_with_model(
         domain, problem, nl_converter_model_id, nl_converter_kwargs=None
     ):
+        """Create queries dictionary using the natural language converter model.
+        
+        Args:
+            domain: PDDL domain description.
+            problem: PDDL problem description.
+            nl_converter_model_id: Identifier for the natural language converter model.
+            nl_converter_kwargs: Additional keyword arguments for NL converter.
+
+        Returns:
+            Dictionary mapping predicates to natural language queries.
+        """
         # set kwargs to default values
         nl_converter_kwargs = nl_converter_kwargs or {}
 
@@ -282,6 +437,21 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
     def load_queries_dict_from_cache(
         domain, problem, nl_converter_model_id, nl_converter_kwargs=None
     ):
+        """Load queries dictionary from cache if available.
+        
+        Args:
+            domain: PDDL domain description.
+            problem: PDDL problem description.
+            nl_converter_model_id: Identifier for the natural language converter model.
+            nl_converter_kwargs: Additional keyword arguments for NL converter.
+
+        Returns:
+            Dictionary mapping predicates to natural language queries.
+
+        Raises:
+            FileNotFoundError: If cache file does not exist.
+            KeyError: If required keys are missing from cache.
+        """
         up_problem = create_up_problem(domain, problem)
         problem_name = up_problem.name
         cache_fname = (
@@ -305,7 +475,33 @@ class SemanticStateEstimatorWithLLaMA(ProbabilisticStateEstimator):
 
 
 class SemanticEstimatorMultiImageRun(SemanticStateEstimatorWithLLaMA):
+    """Multi-image state estimation using LLaMA model.
+    
+    This class extends SemanticStateEstimatorWithLLaMA to handle multiple images by
+    averaging the predictions across all images.
+
+    Args:
+        domain: The PDDL domain description.
+        problem: The PDDL problem description.
+        nl_converter_model_id: Identifier for the natural language converter model.
+        vqa_model_id: Identifier for the vision-language model.
+        nl_converter_kwargs: Additional keyword arguments for NL converter.
+        vqa_kwargs: Additional keyword arguments for VQA model.
+        additional_instructions: Additional instructions for the model's system prompt.
+        additional_images: Additional images for system prompt.
+        confidence: Confidence threshold for probability thresholding.
+    """
+
     def estimate_state_par(self, images, batch_size=8):
+        """Estimate state probabilities by averaging across multiple images.
+        
+        Args:
+            images: List of PIL Image objects.
+            batch_size: Number of predicates to process in parallel.
+
+        Returns:
+            Dictionary mapping predicate strings to averaged probability values.
+        """
         outputs_per_image = []
         for img in tqdm(images):
             out = super().estimate_state_par([img], batch_size)
@@ -322,6 +518,20 @@ class SemanticEstimatorMultiImageRun(SemanticStateEstimatorWithLLaMA):
 
 
 class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
+    """State estimation using CLIP model.
+    
+    This class implements state estimation using the CLIP model for vision-language
+    understanding and state prediction.
+
+    Args:
+        domain: The PDDL domain description.
+        problem: The PDDL problem description.
+        nl_converter_model_id: Identifier for the natural language converter model.
+        vqa_model_id: Identifier for the CLIP model (default: "openai/clip-vit-base-patch32").
+        nl_converter_kwargs: Additional keyword arguments for NL converter.
+        vqa_kwargs: Additional keyword arguments for VQA model.
+    """
+
     def __init__(
         self,
         domain,
@@ -345,6 +555,14 @@ class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
         self.processor = CLIPProcessor.from_pretrained(vqa_model_id)
 
     def estimate_state(self, images):
+        """Estimate state probabilities from images using CLIP model.
+        
+        Args:
+            images: List of PIL Image objects.
+
+        Returns:
+            Dictionary mapping predicate strings to probability values.
+        """
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
         out = {}
@@ -369,7 +587,32 @@ class SemanticEstimatorWithCLIP(SemanticStateEstimatorWithLLaMA):
 
 
 class SemanticStateEstimatorDetProbs(SemanticStateEstimatorWithLLaMA):
+    """Deterministic probability-based state estimation.
+    
+    This class implements state estimation using deterministic probability thresholds
+    based on model responses.
+
+    Args:
+        domain: The PDDL domain description.
+        problem: The PDDL problem description.
+        nl_converter_model_id: Identifier for the natural language converter model.
+        vqa_model_id: Identifier for the vision-language model.
+        nl_converter_kwargs: Additional keyword arguments for NL converter.
+        vqa_kwargs: Additional keyword arguments for VQA model.
+        additional_instructions: Additional instructions for the model's system prompt.
+        additional_images: Additional images for system prompt.
+        confidence: Confidence threshold for probability thresholding.
+    """
+
     def estimate_state(self, images):
+        """Estimate state probabilities using deterministic thresholds.
+        
+        Args:
+            images: List of PIL Image objects.
+
+        Returns:
+            Dictionary mapping predicate strings to probability values.
+        """
         out = {}
         for pred, query in tqdm(self.queries_dict.items()):
             response = self.vqa_model.generate(images, query)
@@ -379,7 +622,32 @@ class SemanticStateEstimatorDetProbs(SemanticStateEstimatorWithLLaMA):
 
 
 class SemanticStateEstimatorDetProbsMultiImageRun(SemanticStateEstimatorDetProbs):
+    """Multi-image deterministic probability estimation.
+    
+    This class extends SemanticStateEstimatorDetProbs to handle multiple images by
+    averaging the predictions across all images.
+
+    Args:
+        domain: The PDDL domain description.
+        problem: The PDDL problem description.
+        nl_converter_model_id: Identifier for the natural language converter model.
+        vqa_model_id: Identifier for the vision-language model.
+        nl_converter_kwargs: Additional keyword arguments for NL converter.
+        vqa_kwargs: Additional keyword arguments for VQA model.
+        additional_instructions: Additional instructions for the model's system prompt.
+        additional_images: Additional images for system prompt.
+        confidence: Confidence threshold for probability thresholding.
+    """
+
     def estimate_state(self, images):
+        """Estimate state probabilities by averaging across multiple images.
+        
+        Args:
+            images: List of PIL Image objects.
+
+        Returns:
+            Dictionary mapping predicate strings to averaged probability values.
+        """
         outs = []
         for img in tqdm(images):
             outs.append(super().estimate_state([img]))
@@ -394,6 +662,20 @@ class SemanticStateEstimatorDetProbsMultiImageRun(SemanticStateEstimatorDetProbs
 
 
 class SemanticStateEstimatorConditional(SemanticStateEstimatorWithLLaMA):
+    """Conditional state estimation.
+    
+    This class implements state estimation with conditional predicates, where some
+    predicates are only evaluated based on certain conditions.
+
+    Args:
+        domain: The PDDL domain description.
+        problem: The PDDL problem description.
+        vqa_model_id: Identifier for the vision-language model.
+        vqa_kwargs: Additional keyword arguments for VQA model.
+        additional_instructions: Additional instructions for the model's system prompt.
+        confidence: Confidence threshold for probability thresholding.
+    """
+
     def __init__(
         self,
         domain,
@@ -423,6 +705,14 @@ Respond only with a "true" or "false" response and nothing else."""
             system += f"\nAdditional Instructions and clarifications:\n{additional_instructions}"
 
     def estimate_state(self, images):
+        """Estimate state probabilities with conditional predicates.
+        
+        Args:
+            images: List of PIL Image objects.
+
+        Returns:
+            Dictionary mapping predicate strings to probability values.
+        """
         out = {}
         for pred, query in tqdm(self.queries_dict.items()):
             if pred in self.conditional_predicates:

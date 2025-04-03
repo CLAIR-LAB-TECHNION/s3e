@@ -1,8 +1,22 @@
+"""Module for handling LLaMA language model interactions.
+
+This module provides utilities for loading and running inference with LLaMA language models,
+including support for chat-style interactions and batch processing.
+"""
+
 import transformers
 import torch
 
 
 def load_model(model_id):
+    """Load a LLaMA model for text generation.
+    
+    Args:
+        model_id: The identifier of the model to load (e.g., model name or path).
+        
+    Returns:
+        A transformers pipeline configured for text generation.
+    """
     return transformers.pipeline(
         "text-generation",
         model=model_id,
@@ -13,6 +27,29 @@ def load_model(model_id):
 
 def run_inference_on_query(pipeline, query, system=None, max_new_tokens=512, do_sample=True,
                            temperature=0.6, top_p=0.9, return_as_dialog=False):
+    """Run inference on a query using the provided pipeline.
+    
+    This function supports both single queries and batch processing, with optional
+    system prompts and various generation parameters.
+    
+    Args:
+        pipeline: The transformers pipeline to use for inference.
+        query: The query or list of queries to process.
+        system: Optional system prompt or list of system prompts.
+        max_new_tokens: Maximum number of new tokens to generate.
+        do_sample: Whether to use sampling during generation.
+        temperature: Temperature parameter for generation (higher values = more random).
+        top_p: Top-p parameter for nucleus sampling.
+        return_as_dialog: Whether to return results in dialog format.
+        
+    Returns:
+        If return_as_dialog is False:
+            - For single query: The generated text response
+            - For batch queries: List of generated text responses
+        If return_as_dialog is True:
+            - For single query: List of dialog turns including the response
+            - For batch queries: List of dialog turns for each query
+    """
     is_single_query = isinstance(query, str)
     
     if is_single_query:

@@ -1,3 +1,9 @@
+"""Module for working with the Unified Planning (UP) framework and PDDL.
+
+This module provides utilities for handling PDDL (Planning Domain Definition Language)
+problems, including state management, object handling, and data collection.
+"""
+
 from itertools import product
 import os
 from typing import Optional
@@ -11,6 +17,18 @@ from unified_planning.engines.sequential_simulator import UPSequentialSimulator
 
 
 def create_up_problem(domain: str, problem: str) -> Problem:
+    """Create a Unified Planning problem from PDDL files or strings.
+    
+    Args:
+        domain: PDDL domain file path or string.
+        problem: PDDL problem file path or string.
+        
+    Returns:
+        A Unified Planning problem instance.
+        
+    Raises:
+        AssertionError: If domain is a file but problem is not.
+    """
     reader = PDDLReader()
     if domain.lower().endswith(".pddl"):
         assert problem.lower().endswith(
@@ -24,6 +42,14 @@ def create_up_problem(domain: str, problem: str) -> Problem:
 
 
 def get_object_names_dict(up_problem: Problem) -> dict[str, list[str]]:
+    """Get a dictionary mapping object types to lists of object names.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        
+    Returns:
+        Dictionary mapping type names to lists of object names.
+    """
     objects = {}
     for t in up_problem.user_types:
         objects[t.name] = list(map(str, up_problem.objects(t)))
@@ -34,6 +60,15 @@ def get_object_names_dict(up_problem: Problem) -> dict[str, list[str]]:
 def get_all_grounded_predicates_for_objects(
     up_problem: Problem, objects: Optional[dict[str, list[str]]] = None
 ) -> list[str]:
+    """Generate all possible grounded predicates for the given objects.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        objects: Optional dictionary mapping types to object names.
+        
+    Returns:
+        List of all possible grounded predicate strings.
+    """
     predicates = up_problem.fluents
     if objects is None:
         objects = get_object_names_dict(up_problem)
@@ -50,11 +85,28 @@ def get_all_grounded_predicates_for_objects(
 
 
 def get_pddl_files_str(up_problem: Problem) -> tuple[str, str]:
+    """Convert a Unified Planning problem to PDDL strings.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        
+    Returns:
+        Tuple of (domain string, problem string).
+    """
     writer = PDDLWriter(up_problem)
     return writer.get_domain(), writer.get_problem()
 
 
 def ground_predicate_str_to_fnode(up_problem: Problem, predicate_str: str) -> FNode:
+    """Convert a grounded predicate string to a Unified Planning FNode.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        predicate_str: The grounded predicate string.
+        
+    Returns:
+        A Unified Planning FNode representing the predicate.
+    """
     fluent_name, args = predicate_str.split("(")
     args = args.rstrip(")").split(",")
     args = [arg.strip() for arg in args if arg]
@@ -67,6 +119,15 @@ def ground_predicate_str_to_fnode(up_problem: Problem, predicate_str: str) -> FN
 
 
 def bool_constant_to_fnode(up_problem: Problem, constant: bool) -> FNode:
+    """Convert a boolean constant to a Unified Planning FNode.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        constant: The boolean value to convert.
+        
+    Returns:
+        A Unified Planning FNode representing the boolean constant.
+    """
     exp_mgr = up_problem.environment.expression_manager
     if constant is True:
         return exp_mgr.true_expression
@@ -77,6 +138,15 @@ def bool_constant_to_fnode(up_problem: Problem, constant: bool) -> FNode:
 def convert_state_dict_to_up_compatible(
     up_problem, state_dict: dict[str, bool]
 ) -> dict[FNode, FNode]:
+    """Convert a state dictionary to Unified Planning compatible format.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        state_dict: Dictionary mapping predicate strings to boolean values.
+        
+    Returns:
+        Dictionary mapping FNodes to boolean FNodes.
+    """
     return {
         ground_predicate_str_to_fnode(up_problem, k): bool_constant_to_fnode(
             up_problem, v
@@ -86,10 +156,27 @@ def convert_state_dict_to_up_compatible(
 
 
 def state_dict_to_up_state(up_problem: Problem, state_dict: dict[str, bool]) -> UPState:
+    """Convert a state dictionary to a Unified Planning state.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        state_dict: Dictionary mapping predicate strings to boolean values.
+        
+    Returns:
+        A Unified Planning state.
+    """
     return UPState(convert_state_dict_to_up_compatible(up_problem, state_dict))
 
 
 def up_state_to_state_dict(up_state: UPState) -> dict[str, bool]:
+    """Convert a Unified Planning state to a state dictionary.
+    
+    Args:
+        up_state: The Unified Planning state to convert.
+        
+    Returns:
+        Dictionary mapping predicate strings to boolean values.
+    """
     current_instance = up_state
     out = {}
     while current_instance is not None:
@@ -103,6 +190,12 @@ def up_state_to_state_dict(up_state: UPState) -> dict[str, bool]:
 
 
 def set_problem_init_state(up_problem: Problem, init_state_dict: dict[str, bool]):
+    """Set the initial state of a Unified Planning problem.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        init_state_dict: Dictionary mapping predicate strings to boolean values.
+    """
     # clear existing fluents
     up_problem.explicit_initial_values.clear()
 
@@ -116,6 +209,13 @@ def set_problem_init_state(up_problem: Problem, init_state_dict: dict[str, bool]
 def set_problem_goal_state(
     up_problem: Problem, goal_state_dict: dict[str, bool], include_negatives=False
 ):
+    """Set the goal state of a Unified Planning problem.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        goal_state_dict: Dictionary mapping predicate strings to boolean values.
+        include_negatives: Whether to include negative goals.
+    """
     # clear existing goals
     up_problem.clear_goals()
 
@@ -137,6 +237,17 @@ def collect_pddl_datapoints(
     out_dir: str,
     max_episode_steps: Optional[int] = None,
 ):
+    """Collect training data points from a PDDL problem.
+    
+    This function simulates random actions in the planning domain and saves
+    the resulting states as JSON files.
+    
+    Args:
+        up_problem: The Unified Planning problem instance.
+        num_steps: Number of steps to simulate.
+        out_dir: Directory to save the data points.
+        max_episode_steps: Optional maximum number of steps per episode.
+    """
     # create output directory
     os.makedirs(out_dir, exist_ok=True)
 
