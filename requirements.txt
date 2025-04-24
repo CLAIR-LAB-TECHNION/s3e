@@ -5,4 +5,9 @@ fire
 timeoutcontext
 natsort
 pandas
+
+git+https://github.com/CLAIR-LAB-TECHNION/clair-robotics-stack.git
 # flash-attn  # install this manually for faster inference
+
+numpy
+tinydb
