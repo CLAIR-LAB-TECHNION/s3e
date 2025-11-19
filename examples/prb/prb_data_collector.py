@@ -23,7 +23,7 @@ def collect_datapoints(
     max_reset_failures_to_crash: int = 50,
     max_episode_actions: int = 20,
 ):
-    env = PRBEnv(4, use_gpu=1)#, width=500, height=500)
+    env = PRBEnv(4)#, width=500, height=500)
 
     # create output directory
     os.makedirs(os.path.join(data_dir, RENDERS_DIR), exist_ok=True)

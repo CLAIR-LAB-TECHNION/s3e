@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # processing power
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
+#SABATCH --job-name=col-gwh
+#SBATCH --requeue
 #SBATCH --cpus-per-task=2
 
 # output files

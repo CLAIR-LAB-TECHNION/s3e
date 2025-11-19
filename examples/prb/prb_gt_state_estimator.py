@@ -7,16 +7,15 @@ class PRBGTStateEstimator(PredFnStateEstimator):
         assert obj is not None, "called action with non-existing object"
         return obj
 
-    def is_directly_on_table(self, b, state):
+    def is_directly_on_table(self, s, state):
+        s_obj = self.get_obj(s, state)
+        return not state.objects_below(s_obj)
+
+    def is_clear_on_top(self, s, state):
+        s_obj = self.get_obj(s, state)
+        return s_obj in state.tops()
+
+    def shape_on_top_of_block(self, s, b, state):
+        s_obj = self.get_obj(s, state)
         b_obj = self.get_obj(b, state)
-
-        return not state.objects_below(b_obj)
-
-    def is_clear_on_top(self, b, state):
-        b_obj = self.get_obj(b, state)
-        return b_obj in state.tops()
-
-    def block_on_top_of_block(self, b1, b2, state):
-        b1_obj = self.get_obj(b1, state)
-        b2_obj = self.get_obj(b2, state)
-        return state.object_just_below(b1_obj) == b2_obj
+        return state.object_just_below(s_obj) == b_obj

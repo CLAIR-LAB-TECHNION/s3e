@@ -27,7 +27,7 @@ PRB_DIR = os.path.join(os.path.dirname(__file__), "photorealistic_blocksworld")
 PROBLEM_TEMPLATE = """(define (problem shape-stacking)
     (:domain shape-stacking)
     (:objects
-        {objects} - block
+        {problem_objects}
     )
 
     (:init)
@@ -116,9 +116,6 @@ class NewState(State):
         self.shuffle()
         pass
 
-    def get_all_objects_str(self, sep=" "):
-        return sep.join(map(lambda o: o.get_block_name(), self.objects))
-
     def get_object_by_name(self, name):
         for o in self.objects:
             if o.get_block_name() == name:
@@ -150,7 +147,7 @@ class PRBEnv:
         num_objects,
         allow_duplicates=False,
         table_size=5,
-        object_jitter=0.0,
+        object_jitter=0.1,
         # scene args
         base_scene_blendfile=os.path.join(PRB_DIR, "data", "base_scene.blend"),
         properties_json=os.path.join(PRB_DIR, "data", "properties.json"),
@@ -227,7 +224,21 @@ class PRBEnv:
         return output
 
     def get_problem_file_str(self):
-        return PROBLEM_TEMPLATE.format(objects=self.state.get_all_objects_str())
+        all_objects = self.state.objects
+        spheres = []
+        blocks = []
+        for obj in all_objects:
+            obj_name = obj.get_block_name()
+            if obj.shape == "Sphere":
+                spheres.append(obj_name)
+            else:
+                blocks.append(obj_name)
+        objects_str = ""
+        if spheres:
+            objects_str += " ".join(spheres) + " - sphere\n"
+        if blocks:
+            objects_str += " ".join(blocks) + " - block"
+        return PROBLEM_TEMPLATE.format(problem_objects=objects_str)
 
     @property
     def _env(self):  # to match the use in `collect_datapoints.py`

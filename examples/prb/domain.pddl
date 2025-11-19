@@ -1,36 +1,50 @@
 (define (domain shape-stacking)
     (:requirements :strips :typing :equality)
     (:types
-        block
+        block sphere - shape
     )
     (:predicates
-        (is-directly-on-table ?b - block)
-        (is-clear-on-top ?b - block)
-        (block-on-top-of-block ?b1 ?b2 - block)
+        (is-directly-on-table ?s - shape)
+        (is-clear-on-top ?s - shape)
+        (shape-on-top-of-block ?s - shape ?b - block)
     )
 
     (:action move-from-block-to-table
-        :parameters (?b1 ?b2 - block)
-        :precondition (and (is-clear-on-top ?b1)(block-on-top-of-block ?b1 ?b2))
-        :effect (and (is-directly-on-table ?b1)
-            (not (block-on-top-of-block ?b1 ?b2))
-            (is-clear-on-top ?b2))
+        :parameters (?s - shape ?b - block)
+        :precondition (and 
+            (is-clear-on-top ?s)
+            (shape-on-top-of-block ?s ?b))
+        :effect (and 
+            (is-directly-on-table ?s)
+            (not (shape-on-top-of-block ?s ?b))
+            (is-clear-on-top ?b))
     )
 
     (:action move-from-table-to-block
-        :parameters (?b1 ?b2 - block)
-        :precondition (and (is-clear-on-top ?b1) (is-directly-on-table ?b1) (is-clear-on-top ?b2))
-        :effect (and (not (is-directly-on-table ?b1))
-            (not (is-clear-on-top ?b2))
-            (block-on-top-of-block ?b1 ?b2))
+        :parameters (?s - shape ?b - block)
+        :precondition (and 
+            (is-clear-on-top ?s) 
+            (is-directly-on-table ?s) 
+            (is-clear-on-top ?b)
+            (not (= ?s ?b)))
+        :effect (and 
+            (not (is-directly-on-table ?s))
+            (not (is-clear-on-top ?b))
+            (shape-on-top-of-block ?s ?b))
     )
 
     (:action move-from-block-to-block
-        :parameters (?b1 ?b2 ?b3 - block)
-        :precondition (and (is-clear-on-top ?b1) (block-on-top-of-block ?b1 ?b3) (is-clear-on-top ?b2))
-        :effect (and (not (block-on-top-of-block ?b1 ?b3))
+        :parameters (?s - shape ?b1 ?b2 - block)
+        :precondition (and 
+            (is-clear-on-top ?s) 
+            (shape-on-top-of-block ?s ?b1) 
+            (is-clear-on-top ?b2) 
+            (not (= ?s ?b2))
+            (not (= ?b1 ?b2)))
+        :effect (and 
+            (not (shape-on-top-of-block ?s ?b1))
             (not (is-clear-on-top ?b2))
-            (block-on-top-of-block ?b1 ?b2)
-            (is-clear-on-top ?b3))
+            (shape-on-top-of-block ?s ?b2)
+            (is-clear-on-top ?b1))
     )
 )

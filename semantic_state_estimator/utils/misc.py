@@ -87,22 +87,17 @@ def load_se_from_args(se_class, se_kwargs, domain, problem):
     # import here to avoid waiting when calling with `--help`
     from semantic_state_estimator.semantic_state_estimator import (
         SemanticStateEstimator,
-        SemanticStateEstimatorWithLLaMA,
         SemanticEstimatorMultiImageRun
     )
 
     # load state estimator class
     if se_class is None:
-        se_class = SemanticStateEstimatorWithLLaMA
+        se_class = SemanticStateEstimator
     elif isinstance(se_class, str):
         se_class = load_from_entrypoint(se_class)
 
     # handle default state estimator class
-    if se_class == SemanticStateEstimatorWithLLaMA or se_class == SemanticEstimatorMultiImageRun:
-        se_kwargs.setdefault("nl_converter_model_id", LLAMA_70B_INSTRUCT)
-        se_kwargs.setdefault("vqa_model_id", LLAVA_7B_OV)
-    elif se_class == SemanticStateEstimator:
-        se_kwargs.setdefault("vqa_model_id", LLAVA_7B_OV)
+    se_kwargs.setdefault("vqa_model_id", LLAVA_7B_OV)
     
     # load state estimator
     se = se_class(domain=domain, problem=problem, **se_kwargs)

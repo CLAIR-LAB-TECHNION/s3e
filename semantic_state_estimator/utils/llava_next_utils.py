@@ -32,8 +32,10 @@ except ImportError:
     flash_attn_installed = False
 
 
+from .vqa_utils import VQAInterface
 
-class LlavaOVModel:
+
+class LlavaOVModel(VQAInterface):
     """A class for handling LLaVA model interactions with both text and image inputs.
     
     This class provides a comprehensive interface for working with LLaVA models,
@@ -83,7 +85,9 @@ class LlavaOVModel:
 
         self.system_cache = None
 
-    def __call__(self, images, query):
+        self.tokens_of_interest = None
+
+    def __call__(self, images, query, *token_groups_of_interest):
         """Run forward pass of the model on the given inputs.
         
         Args:
@@ -130,6 +134,9 @@ class LlavaOVModel:
             )
 
         out = outputs[0]
+
+        if token_groups_of_interest:
+            out = self.extract_token_group_probs(out, *token_groups_of_interest)
 
         # output according to input arity
         if multi_prompt:
@@ -250,6 +257,36 @@ class LlavaOVModel:
         input_ids = torch.stack(input_ids).to(self.device)
 
         return input_ids, image_tensor, image_sizes
+
+    def extract_token_group_probs(self, model_output, *token_groups):
+        # get logits for the next token only
+        logits = model_output[:, -1].float()
+
+        # extract the token ids of interest
+        toekn_groups_ids = [
+             list(
+                map(
+                    lambda x: x[0],
+                    self.tokenizer(tokens)["input_ids"],
+                )
+            )
+            for tokens in token_groups
+        ]
+
+        # get the sum of exponents for each group's logits
+        # skip softmax by directly calculating normalized exp values
+        # skip operating on ENITIRE VOCAB.
+        token_groups_exps = torch.tensor([
+            torch.exp(logits[: group_ids].sum(dim=-1))
+            for group_ids in toekn_groups_ids
+        ])
+
+        # normalize each group vs all groups
+        return [exp / token_groups_exps.sum(dim=0) for exp in token_groups_exps]
+
+
+    def clear_tokens_of_interest(self):
+        self.tokens_of_interest = None
 
     def generate_system_cache_with_images(self, images):
         """Generate and cache system context with images.

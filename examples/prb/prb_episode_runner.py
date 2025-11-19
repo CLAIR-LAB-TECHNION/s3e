@@ -14,8 +14,9 @@ import numpy as np
 
 from prb_env import PRBEnv, random
 from prb_gt_state_estimator import PRBGTStateEstimator
+from prb_render_server import DEFAULT_PORT
 from prb_skill_executer import PRBSkillExecuter
-from semantic_state_estimator.constants import LLAMA_70B_INSTRUCT
+from semantic_state_estimator.constants import GPT_4O_LATEST, GPT_41_LATEST
 from semantic_state_estimator.eval.run_episodes import EpisodeRunner
 from semantic_state_estimator.utils.misc import load_se_from_args, load_from_entrypoint
 
@@ -24,25 +25,32 @@ DOMAIN_FILE = os.path.join(os.path.dirname(__file__), 'domain.pddl')
 PROBLEM_FILE = os.path.join(os.path.dirname(__file__), 'all_objects_problem.pddl')
 OUT_DIR = 'data_dir'
 RENDER_CAMS = ['frontview']
+   
+
+def find_available_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))  # Bind to a free port provided by the host.
+        port = s.getsockname()[1]
+    return port
 
 
-def start_renderer_process():
+def start_renderer_process(port):
     blender_exec = "photorealistic_blocksworld/blender-2.83.2-linux64/blender"
 
     # Start the renderer in a separate process to avoid memory leaks
     return subprocess.Popen(
-        [blender_exec, "-noaudio", "--background", "--python", 'prb_render_server.py']
+        [blender_exec, "-noaudio", "--background", "--python", 'prb_render_server.py', str(port)]
     )
 
 
-def send_render_request(data):
+def send_render_request(data, port=DEFAULT_PORT):
     num_trials = 0
 
     # Send data to the renderer process via socket
     while num_trials < 5:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.connect(('localhost', 65432))  # Ensure this matches the renderer's settings
+                s.connect(('localhost', port))  # Ensure this matches the renderer's settings
             except ConnectionRefusedError:
                 print('Connection refused. Retrying...')
                 sys.stdout.flush()
@@ -75,7 +83,8 @@ class PRBEnvWrapper(PRBEnv):
         self.num_objects_low = num_objects_low
         self.num_objects_high = num_objects_high
 
-        self.render_proc = start_renderer_process()
+        self.port = find_available_port()
+        self.render_proc = start_renderer_process(self.port)
 
     def reset(self, *args, **kwargs):
         num_objects = random.randint(self.num_objects_low, self.num_objects_high)
@@ -102,7 +111,7 @@ class PRBEnvWrapper(PRBEnv):
                 'objects': self.state.for_rendering()
             }
             print('sending request')
-            send_render_request(data)
+            send_render_request(data, self.port)
             
             img = Image.open(render_path)
             output = np.array(img)
@@ -117,10 +126,10 @@ def query_swapper(env: PRBEnvWrapper):
     with open(DOMAIN_FILE, 'r') as f:
         domain_str = f.read()
 
-    return domain_str, env.get_problem_file_str(), LLAMA_70B_INSTRUCT
+    return domain_str, env.get_problem_file_str(), GPT_41_LATEST
 
 
-def main(run_name, num_objects_low, num_objects_high, task_horizon, se_class, **se_kwargs):
+def main(run_name, num_objects_low, num_objects_high, task_horizon, set_goal_cond, se_class, **se_kwargs):
     env = PRBEnvWrapper(num_objects_low, num_objects_high)
     env.reset()
 
@@ -138,7 +147,8 @@ def main(run_name, num_objects_low, num_objects_high, task_horizon, se_class, **
     try:
         runner = EpisodeRunner(
             gt_se.up_problem, gt_se, se, exec, RENDER_CAMS, OUT_DIR, run_name + f'__({num_objects_low},{num_objects_high})',
-            query_swapper=query_swapper
+            query_swapper=query_swapper, set_goal_condition=set_goal_cond,
+            planner='aries', planner_timeout=60
         )
 
         runner.run(num_episodes=100, task_horizon=task_horizon)

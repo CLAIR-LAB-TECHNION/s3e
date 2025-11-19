@@ -6,8 +6,10 @@ of predicates in a given planning domain.
 """
 
 from .up_utils import *
-from .llama_utils import *
+from . import llama_utils
+from . import open_ai_utils
 from .misc import remove_from_gpu_memory
+from ..constants import OPENAI_MODEL_IDENTIFIER
 
 
 class PDDL2NLQueryConverter:
@@ -36,7 +38,7 @@ class PDDL2NLQueryConverter:
             up_problem: The Unified Planning problem instance.
             **inference_kwargs: Additional keyword arguments for model inference.
         """
-        self.model = model
+        self.model = model.strip(OPENAI_MODEL_IDENTIFIER) if isinstance(model, str) else model
         self.up_problem = up_problem
         self.domain, self.problem = get_pddl_files_str(up_problem)
         self.objects = get_object_names_dict(up_problem)
@@ -73,8 +75,8 @@ Respond only with this natural language query and nothing else."""
         Raises:
             AssertionError: If domain is specified as a string but problem is not provided.
         """
-        if isinstance(model, str):
-            model = load_model(model)
+        if isinstance(model, str) and not model.startswith(OPENAI_MODEL_IDENTIFIER):
+            model = llama_utils.load_model(model)
         
         if isinstance(domain_or_up_problem, str):
             assert (problem is not None), "if domain is specified, problem must also be specified"
@@ -93,13 +95,26 @@ Respond only with this natural language query and nothing else."""
         Returns:
             A natural language query that determines the truth value of the predicate.
         """
-        return run_inference_on_query(
-            self.model,
-            grounded_predicate,
-            self.system_prompt,
-            **self.inference_kwargs
-        )
+        if isinstance(self.model, str):
+            out = []
+            for predicate in tqdm(grounded_predicate):
+                nl_pred = open_ai_utils.translation_query(
+                    self.model,
+                    predicate,
+                    system=self.system_prompt,
+
+                )
+                out.append(nl_pred)
+            return out
+        else:
+            return llama_utils.run_inference_on_query(
+                self.model,
+                grounded_predicate,
+                self.system_prompt,
+                **self.inference_kwargs
+            )
 
     def __del__(self):
         """Clean up GPU memory when the instance is deleted."""
-        remove_from_gpu_memory(self.model)
+        if not isinstance(self.model, str):
+            remove_from_gpu_memory(self.model)

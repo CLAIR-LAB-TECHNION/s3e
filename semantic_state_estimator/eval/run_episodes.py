@@ -1,6 +1,9 @@
 import json
 import os
+from shutil import rmtree
+from pathlib import Path
 import sys
+import time
 import numpy as np
 from PIL import Image
 from timeoutcontext import timeout
@@ -13,9 +16,10 @@ from ..constants import (
     EPISODES_DIR,
     RENDERS_DIR,
     TRAJECTORY_STEP_FNAME_FORMAT,
+    DONEFILE_NAME
 )
 from ..skill_executer import SkillExecuter
-from ..state_estimator import StateEstimator, PredFnStateEstimator
+from ..state_estimator import StateEstimator, PredFnStateEstimator, ProbabilisticStateEstimator
 from ..utils.up_utils import *
 
 
@@ -33,7 +37,10 @@ class EpisodeRunner:
         max_episode_actions: int = 20,
         max_action_retries: int = 3,
         go_home_prob: float = 0.3,
-        query_swapper=None
+        query_swapper=None,
+        set_goal_condition=False,
+        planner="fast-downward",
+        planner_timeout=None,
     ):
         # create output directory
         self.episodes_dir = os.path.join(data_dir, EPISODES_DIR, run_name)
@@ -41,7 +48,8 @@ class EpisodeRunner:
 
         self.problem = problem
         self.problem_sim = UPSequentialSimulator(problem)
-        self.planner = OneshotPlanner(name="fast-downward")
+        self.planner = OneshotPlanner(name=planner)
+        self.planner_timeout = planner_timeout
 
         self.gt = gt_estimator
         self.pred = estimator
@@ -54,9 +62,15 @@ class EpisodeRunner:
         self.max_action_retries = max_action_retries
         self.go_home_prob = go_home_prob
         self.query_swapper = query_swapper
+        self.set_goal_condition = set_goal_condition
 
         self._cur_plan = None
         self._replan_count = 0
+        self._last_prediction_time = None
+        
+        # a patch to enable adding the predicate probs
+        self._prev_prediction_probs = None
+        self._next_prediction_probs = None
 
     def get_env_renders(self):
         return {cam: self.exec.env._env.render(cam) for cam in self.render_cams}
@@ -93,6 +107,7 @@ class EpisodeRunner:
             ) as validator:
 
                 if validator.validate(self.problem, self._cur_plan):
+                    print('plan still valid. using next action')
                     # plan still valid. get next action
                     return self._cur_plan._actions.pop(0)
 
@@ -100,7 +115,25 @@ class EpisodeRunner:
         self._replan_count += 1
 
         # get new plan
-        plan_res = self.planner.solve(self.problem)
+        from unified_planning.exceptions import UPException
+        try:
+            print('planning...')
+            start = time.time()
+            plan_res = self.planner.solve(self.problem, timeout=self.planner_timeout)
+            end = time.time()
+            print('planning complete. status:', plan_res.status)
+            print('planning time:', end - start)
+            print('full results:', plan_res)
+            sys.stdout.flush()
+        except UPException:
+            print('planning failed with UPException')
+            print('problem:')
+            print(self.problem)
+            print('predicted state')
+            print(pred_state_dict)
+            raise
+        
+        # check if plan is satisficing
         if plan_res.status != PlanGenerationResultStatus.SOLVED_SATISFICING:
             return None
         self._cur_plan = plan_res.plan
@@ -145,8 +178,19 @@ class EpisodeRunner:
 
     def se_predict(self, renders):
         imgs = [Image.fromarray(img) for img in renders.values()]
-        prob_map = self.pred(imgs)
-        return prob_map
+        start = time.time()
+        if isinstance(self.pred, ProbabilisticStateEstimator):
+            prob_map = self.pred.estimate_state(imgs)
+            state_dict = {k: bool(v >= self.pred.confidence) for k, v in prob_map.items()}
+            if self._prev_prediction_probs is None:
+                self._prev_prediction_probs = prob_map
+            else:
+                self._next_prediction_probs = prob_map
+        else:
+            state_dict = self.pred(imgs)
+        end = time.time()
+        self._last_prediction_time = end - start
+        return state_dict
 
     def save_render(self, save_dir, step_id, render):
         if render is not None:
@@ -175,6 +219,7 @@ class EpisodeRunner:
         next_pred_state=None,
         reached_goal=None,
         predicted_goal=None,
+        plan_exists=None
     ):
         # save unsaved observations
         prev_obs_fname = self.save_render(save_dir, step_id - 1, prev_obs)
@@ -195,9 +240,13 @@ class EpisodeRunner:
                     "next_state": next_state,
                     "prev_pred_state": prev_pred_state,
                     "next_pred_state": next_pred_state,
+                    "prev_pred_probs": self._prev_prediction_probs,
+                    "next_pred_probs": self._next_prediction_probs,
                     "reached_goal": reached_goal,
                     "predicted_goal": predicted_goal,
                     "replans": self._replan_count,
+                    "prediction_time": self._last_prediction_time,
+                    "plan_exists": plan_exists
                 },
                 f,
                 indent=4,
@@ -231,6 +280,9 @@ class EpisodeRunner:
         # next predicted state
         prev_pred_state_dict = pred_state_dict
         prev_pred_state = pred_state
+        if self._next_prediction_probs is not None:
+            self._prev_prediction_probs = self._next_prediction_probs
+            self._next_prediction_probs = None
         pred_state_dict = self.se_predict(cur_obs_renders)
         pred_state = state_dict_to_up_state(self.problem, pred_state_dict)
 
@@ -278,9 +330,9 @@ class EpisodeRunner:
         self.exec.reset_env()
         self.exec.wait(100)  # wait for simulation to stabalize
 
-        print('query swap')
-        sys.stdout.flush()
         if self.query_swapper is not None:
+            print('query swap')
+            sys.stdout.flush()
             domain_str, problem_str, model_id = self.query_swapper(self.env)
             self.problem = create_up_problem(domain_str, problem_str)
             self.problem_sim = UPSequentialSimulator(self.problem)
@@ -293,10 +345,14 @@ class EpisodeRunner:
         # set current state
         state_dict = self.gt_state()
         state = state_dict_to_up_state(self.problem, state_dict)
+        set_problem_init_state(self.problem, state_dict)
 
         # perceive initial state
         print('first render')
         sys.stdout.flush()
+        self._last_prediction_time = None  # reset prediction variables
+        self._prev_prediction_probs = None
+        self._next_prediction_probs = None
         cur_obs_renders = self.get_env_renders()
         pred_state_dict = self.se_predict(cur_obs_renders)
         pred_state = state_dict_to_up_state(self.problem, pred_state_dict)
@@ -304,14 +360,27 @@ class EpisodeRunner:
         # sample a goal state and set in problem object
         goal_state = self.sample_goal(state, task_horizon)
         goal_state_dict = up_state_to_state_dict(goal_state)
+        if self.set_goal_condition:
+            # leave only the changed values in the goal state as the condition.
+            goal_state_dict = {k: v for k, v in goal_state_dict.items() if state_dict[k] != v}
         set_problem_goal_state(self.problem, goal_state_dict)
 
-        # init counters
+        # save domain and problem
+        domain_str, problem_str = get_pddl_files_str(self.problem)
+        with open(os.path.join(out_dir, 'domain.pddl'), 'w') as f:
+            f.write(domain_str)
+        with open(os.path.join(out_dir, 'problem.pddl'), 'w') as f:
+            f.write(problem_str)
+
+        # init counters and containers
         action_count = 0
         failures_count = 0
+        self._replan_count = 0
+        self._cur_plan = None
 
         # check if initial state is a goal state
         if self.problem_sim.is_goal(pred_state):
+            is_true_goal = self.problem_sim.is_goal(state)
             print("initial predicted state is goal state. skipping episode")
             self.save_trajectory_data(
                 out_dir,
@@ -320,6 +389,9 @@ class EpisodeRunner:
                 cur_obs_renders,
                 state_dict,
                 pred_state_dict,
+                reached_goal=is_true_goal,
+                predicted_goal=True,
+                plan_exists=None if is_true_goal else self.get_next_action(state_dict) is not None
             )
             return
 
@@ -333,10 +405,20 @@ class EpisodeRunner:
         ):
             action_count += 1
 
+            print(
+                "attempting step\n"
+                f"action count: {action_count}, attempt: {failures_count + 1}"
+            )
+
             # get next action
+            print("getting next action")
             action = self.get_next_action(pred_state_dict)
             if action is None:
+                is_true_goal = self.problem_sim.is_goal(state)
                 print("no plan from current predicted state. resetting")
+                if self._next_prediction_probs is not None:
+                    self._prev_prediction_probs = self._next_prediction_probs  # shift is skipped
+                    self._next_prediction_probs = None
                 self.save_trajectory_data(
                     out_dir,
                     action_count,
@@ -344,17 +426,27 @@ class EpisodeRunner:
                     cur_obs_renders,
                     state_dict,
                     pred_state_dict,
+                    reached_goal=is_true_goal,
+                    predicted_goal=False,
+                    plan_exists=None if is_true_goal else self.get_next_action(state_dict) is not None
                 )
                 break
 
             # apply action
+            print("applying action")
             suc = self.apply_action(action)
 
             # check for failure
             if not suc:
+                print("action failed. retrying")
                 failures_count += 1
+            else:
+                # action succeeded. reset failures count
+                print("action completed successfully")
+                failures_count = 0
 
             # shift and save trajectory data
+            print("shifting trajectory")
             (
                 cur_obs_renders,
                 state_dict,
@@ -373,16 +465,38 @@ class EpisodeRunner:
                 pred_state,
             )
 
+            # check if goal is reached
+            print("checking goal condition")
             if predicted_goal:
                 print("predicting goal reached")
                 break
 
     def run(self, num_episodes: int, task_horizon: int):
         for i in tqdm(range(num_episodes)):
+            # This is the directory with all data for this episode
             this_episode_dir = os.path.join(self.episodes_dir, f"episode_{i:04d}")
+
+            # check if it is done
+            donefile = os.path.join(this_episode_dir, DONEFILE_NAME)
+            if os.path.exists(donefile):
+                print(f"skipping episode {i} as it is already done")
+                continue
+            elif os.path.exists(this_episode_dir):
+                print(f"removing existing episode {i} data (incomplete episode)")
+                rmtree(this_episode_dir)
+
+            print(f'logging to {os.path.abspath(this_episode_dir)}')
+
+            # create a directory for renderings
             os.makedirs(os.path.join(this_episode_dir, RENDERS_DIR), exist_ok=True)
-            self._replan_count = 0
+
+            # run episode
+            print(f'starting episode {i}')
             self.run_episode(task_horizon, this_episode_dir)
+
+            # mark episode as done
+            print(f'episode {i} completed successfully')
+            Path(donefile).touch()
 
     def __del__(self):
         self.planner.destroy()

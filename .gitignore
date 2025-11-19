@@ -1,5 +1,10 @@
+# ==================
 # custom ignores
+# ==================
+# cached translations
 semantic_state_estimator/cache/
+
+# log files
 *.err
 *.out
 *.pkl
@@ -8,6 +13,12 @@ semantic_state_estimator/cache/
 *.mp4
 *.png
 *.pdf
+
+# data files
+data_dir/
+
+# prb source code
+photorealistic_blocksworld
 
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,pycharm,visualstudiocode,windows,linux,macos,jupyternotebooks
@@ -359,11 +370,11 @@ pyrightconfig.json
 
 ### VisualStudioCode ###
 .vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-!.vscode/*.code-snippets
+# !.vscode/settings.json
+# !.vscode/tasks.json
+# !.vscode/launch.json
+# !.vscode/extensions.json
+# !.vscode/*.code-snippets
 
 # Local History for Visual Studio Code
 .history/

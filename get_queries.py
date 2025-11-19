@@ -1,8 +1,14 @@
+import os
+# os.environ["TRANSFORMERS_CACHE"] = "/datasets/huggingface"
+# os.environ["HF_HOME"] = "/home/guy.azran/.cache/huggingface"
+
 import warnings
 
 import fire
 
 from semantic_state_estimator.semantic_state_estimator import SemanticStateEstimatorWithLLaMA
+
+
 
 def get_queries(domain, problem, llama_model="meta-llama/Meta-Llama-3-70B-Instruct"):
     warnings.filterwarnings("ignore")

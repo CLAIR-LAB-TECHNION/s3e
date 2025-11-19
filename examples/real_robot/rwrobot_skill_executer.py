@@ -43,18 +43,22 @@ class RWRobotSkillExecuter(SkillExecuter):
 
         self.robot = ManipulationController2FG.build_from_robot_name_and_ip(ur5e_2["ip"], ur5e_2["name"])
 
-        #TODO: add items to the world need to thing of smart way to do this
-        """
-        items = workspace.items.all()
-        for item in items:
-            dict_item = dict(item)
-            item_id = item.get("name")
-            if item_id and item.get("board_location"):
-                robot.motion_planner.add_object_to_world(item_id, dict_item)
-                logging.info(f"Added item '{item_id}' to the robot workspace.")
-        """
+        # self.robot.move_home(speed=2, acceleration=1.5)
 
-    def pick_up(self, item_id, table_id=None):
+        #TODO: add items to the world need to thing of smart way to do this
+
+        # items = self.workspace.items.all()
+        # for item in items:
+        #     dict_item = dict(item)
+        #     item_id = item.get("name")
+        #     if item_id and item.get("board_location"):
+        #         self.robot.motion_planner.add_object_to_world(item_id, dict_item)
+        #         logging.info(f"Added item '{item_id}' to the robot workspace.")
+
+
+    def pick_up(self, item_name, table_id=None):
+        item_id = self.get_item_id_by_name(item_name)
+
         try:
             pick_up_item(self.robot, self.workspace.items.get(doc_id=item_id))
 
@@ -66,23 +70,33 @@ class RWRobotSkillExecuter(SkillExecuter):
             raise
 
 
-    def put_down(self, item_id, table_id):
+    def put_down(self, item_name, table_id):
+        item_id = self.get_item_id_by_name(item_name)
         try:
-            # Find an available zone on the specified board
-            zone_id = self.find_available_zone(table_id)
-            if not zone_id:
-                raise ValueError(f"No available zones on {table_id} board")
+            failures = 0
+            while failures < 5:
+                try:
+                    # Find an available zone on the specified board
+                    zone_id = self.find_available_zone(table_id)
+                    if not zone_id:
+                        raise ValueError(f"No available zones on {table_id} board")
 
-            # Get zone coordinates
-            zone = self.workspace.board.get(doc_id=zone_id)
-            item = self.workspace.items.get(doc_id=item_id)
+                    # Get zone coordinates
+                    zone = self.workspace.board.get(doc_id=zone_id)
+                    item = self.workspace.items.get(doc_id=item_id)
 
-            # Execute put down operation
-            put_down_item(self.robot, item, zone["coordinates"])
+                    # Execute put down operation
+                    put_down_item(self.robot, item, zone["coordinates"])
+                except ValueError:
+                    failures += 1
+                    logging.warning(f"Failed to find an available zone. Attempt {failures}/5.")
+                    if failures == 5:
+                        raise ValueError("Failed to find an available zone after 5 attempts.")
+
+                break
 
             # Update the database
             self.update_database_after_action("putdown", item_id, zone_id)
-
         except Exception as e:
             logging.error(f"Failed to put down item {item_id}: {e}")
             raise
@@ -100,10 +114,14 @@ class RWRobotSkillExecuter(SkillExecuter):
         Item = Query()
         self.workspace.items.update({'board_location': location}, Item.name == item_name)
 
-    def get_item(self, item_name):
+    def get_item_by_name(self, item_name):
         """Get item data from the database."""
         Item = Query()
         return self.workspace.items.get(Item.name == item_name)
+
+    def get_item_id_by_name(self, item_name):
+        item = self.get_item_by_name(item_name)
+        return item.doc_id
 
     def get_board_location(self, item_name):
         """Get board location from the database."""
@@ -212,9 +230,10 @@ def pick_up_item(robot, item):
     # Extract item properties
     robot_name = robot.robot_name
     item_name = item.get("name", "unknown")
+
     location = item.get("coordinates")
     height = item.get("height")  # Mandatory field
-    rz = 0.0  # Default rotation around z-axis
+    rz = 0.0 if item.doc_id == 4 else np.pi / 2  # Default rotation around z-axis
 
     try:
         # Validate mandatory fields
@@ -225,12 +244,12 @@ def pick_up_item(robot, item):
 
         # Calculate the position above the item for a safe approach
         pick_up_point = location[:]
-        pick_up_point[2] += height * 1.1  # Lift up for safety
+        pick_up_point[2] += height + 0.1  # Lift up for safety
         ee_pose = robot.gt.get_gripper_facing_downwards_6d_pose_robot_frame(robot.robot_name, pick_up_point, rz)
 
         # Find the IK solution for the above position
         logging.info(f"Calculating IK solution for position above '{item_name}' at [{pick_up_point}].")
-        pick_up_config = robot.find_ik_solution(ee_pose)
+        pick_up_config = robot.find_ik_solution(ee_pose, max_tries=20)
         if not pick_up_config:
             raise ValueError(f"Failed to find an IK solution for '{item_name}' at {pick_up_point}.")
 
@@ -240,13 +259,14 @@ def pick_up_item(robot, item):
             raise RuntimeError(f"Failed to move to the position above '{item_name}'.")
 
         # Check if the gripper is engaged and release it if necessary
-        if not robot.is_gripper_open():
-            logging.info("Gripper is colosed. Releasing it before starting the pick-up operation.")
-            robot.release_grasp()
+        # if not robot.is_gripper_open():
+        #     logging.info("Gripper is colosed. Releasing it before starting the pick-up operation.")
+        #     robot.release_grasp()
 
         # Perform the pick-up action
         logging.info(f"Executing pick-up action for '{item_name}'.")
-        robot.pick_up(x=location[0], y=location[1], rz=rz, start_height=height * 1.1)
+        robot.pick_up(x=location[0], y=location[1], rz=rz, start_height=height * 1.2)
+        robot.moveL_relative([0, 0, 0.2])
         robot.motion_planner.remove_object(item_name)
         robot_model = robot.motion_planner.robot_name_mapping[robot_name]
         robot.motion_planner.add_attachments(robot_model, [item_name], item)
@@ -273,7 +293,7 @@ def put_down_item(robot, item, goal):
     robot_name = robot.robot_name
     item_name = item.get("name", "unknown")
     height = item.get("height")  # Mandatory field
-    rz = 0.0  # Default rotation around z-axis
+    rz = 0.0 if item.doc_id == 4 else np.pi / 2  # Default rotation around z-axis
 
     try:
         # Validate mandatory fields
@@ -281,7 +301,7 @@ def put_down_item(robot, item, goal):
             raise ValueError(f"Item '{item_name}' is missing a height value. This is critical to avoid collisions.")
 
         # Calculate the position above the drop point for a safe approach
-        goal[2] = height * 1.5  # Lift up for safety
+        goal[2] = height + 0.3 # Lift up for safety
         ee_pose = robot.gt.get_gripper_facing_downwards_6d_pose_robot_frame(robot.robot_name, goal, rz)
 
         # Find the IK solution for the above position
@@ -298,6 +318,7 @@ def put_down_item(robot, item, goal):
         # Perform the drop-down action
         logging.info(f"Executing drop-down action for '{item_name}'.")
         robot.put_down(x=goal[0], y=goal[1], rz=rz, start_height=height * 1.1)
+        robot.moveL_relative([0, 0, 0.08])
 
         #update item coordinates in the database
         item["coordinates"] = goal
