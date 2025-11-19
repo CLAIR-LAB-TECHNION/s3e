@@ -9,8 +9,8 @@ from ..constants import OPENAI_MODEL_IDENTIFIER
 import openai
 import numpy as np
 
-TRANSLATION_KEY = "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"
-ESTIMATION_KEY = "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"
+TRANSLATION_KEY = "..."
+ESTIMATION_KEY = "..."
 
 translation_client = openai.OpenAI(api_key=TRANSLATION_KEY)
 estimation_client = openai.OpenAI(api_key=ESTIMATION_KEY)
