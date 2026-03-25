@@ -9,11 +9,7 @@ from ..constants import OPENAI_MODEL_IDENTIFIER
 import openai
 import numpy as np
 
-TRANSLATION_KEY = "..."
-ESTIMATION_KEY = "..."
-
-translation_client = openai.OpenAI(api_key=TRANSLATION_KEY)
-estimation_client = openai.OpenAI(api_key=ESTIMATION_KEY)
+openai_client = openai.OpenAI()
 
 
 class OpenAIVQA(VQAInterface):
@@ -85,7 +81,7 @@ def translation_query(model_id: str, query: str, system: Optional[str] = None, m
     Returns:
 
     """
-    response = translation_client.responses.create(
+    response = openai_client.responses.create(
         input=query,
         model=model_id,
         instructions=system,
@@ -108,7 +104,7 @@ def estimation_query(model_id, images, query, system=None, max_new_tokens=512, t
         if system is not None:
             input_message = [{"role": "developer", "content": system}] + input_message
 
-        response = estimation_client.chat.completions.create(
+        response = openai_client.chat.completions.create(
             messages=input_message,
             model=model_id,
             max_completion_tokens=max_new_tokens,
