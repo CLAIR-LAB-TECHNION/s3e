@@ -4,11 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]  # defines all the package metadata
 dynamic = ["dependencies"]  # metadata to be read from a file or the package itself (see [tool.setuptools.dynamic])
-name = "semantic_state_estimator"
+name = "s3e"
 version = "0.0.0"
 authors = [
-    { name = "John Smith", email = "jsmith@intel.com" },
-    { name = "Jane Doe", email = "jdoe@intel.com" },
+    { name = "Guy Azran", email = "guy.azran@campus.technion.ac.il" },
 ]
 description = "A package that uses SOTA language multimodal models as state estimators for task and motion planning"
 keywords = ["Foundation Models", "Artificial Intelligence", "Task and Motion Planning"]

@@ -8,7 +8,7 @@ from importlib import import_module
 
 ENTRYPOINT_MODULE_FUNC_SEP = ":"
 
-from semantic_state_estimator.constants import (
+from s3e.constants import (
     LLAMA_70B_INSTRUCT,
     LLAVA_7B_OV,
 )
@@ -85,7 +85,7 @@ def squash_predicate(dp_dicts):
 def load_se_from_args(se_class, se_kwargs, domain, problem):
     # these modules import heavy packages.
     # import here to avoid waiting when calling with `--help`
-    from semantic_state_estimator.semantic_state_estimator import (
+    from s3e.semantic_state_estimator import (
         SemanticStateEstimator,
         SemanticEstimatorMultiImageRun
     )
