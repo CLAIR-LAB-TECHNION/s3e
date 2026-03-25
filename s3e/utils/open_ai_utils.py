@@ -45,7 +45,7 @@ class OpenAIVQA(VQAInterface):
         # map tokens to their probabilities
         tok_to_prob = defaultdict(int)
         for item in top_logprobs:
-            tok_to_prob[item.token] = np.exp(item.logprob)
+            tok_to_prob[item.token] += np.exp(item.logprob)
 
         # get probs for tokens of interest
         token_groups_probs = [
@@ -54,7 +54,10 @@ class OpenAIVQA(VQAInterface):
         ]
 
         # normalize each group vs all groups
-        return [prob / np.sum(token_groups_probs, axis=0) for prob in token_groups_probs]
+        return [
+            np.clip(prob / np.sum(token_groups_probs, axis=0), 0, 1)
+            for prob in token_groups_probs
+        ]
 
     # Caching happens automatically in OpenAI API
     
@@ -94,7 +97,7 @@ def translation_query(model_id: str, query: str, system: Optional[str] = None, m
     return response.output_text
 
 
-def estimation_query(model_id, images, query, system=None, max_new_tokens=512, temperature=1.0, top_p=1.0):
+def estimation_query(model_id, images, query, system=None, max_new_tokens=512, temperature=0.0):
         processed_images = [_preprocess_image(image) for image in images]
         images_as_urls = [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                           for base64_image in processed_images]
@@ -110,7 +113,6 @@ def estimation_query(model_id, images, query, system=None, max_new_tokens=512, t
             model=model_id,
             max_completion_tokens=max_new_tokens,
             temperature=temperature,
-            top_p=top_p,
             logprobs=True,
             top_logprobs=20
         )
