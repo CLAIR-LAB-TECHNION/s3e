@@ -8,7 +8,7 @@ from s3e.vlm.backend import VLMOutput
 from s3e.translation.identity import IdentityTranslator
 from s3e.translation.prewritten import PrewrittenTranslator
 from s3e.translation.template import TemplateTranslator
-from tests.conftest import FakeVLM, BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM
+from conftest import FakeVLM, BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM
 
 
 class TestConstruction:
