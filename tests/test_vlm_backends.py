@@ -59,3 +59,75 @@ class TestVLMBackend:
         img = Image.new("RGB", (64, 64))
         vlm.query_batch([img], ["q1", "q2"], system_prompt="Be helpful.")
         assert vlm.received_system_prompts == ["Be helpful.", "Be helpful."]
+
+
+from unittest.mock import MagicMock, patch
+from s3e.vlm.openai import OpenAIVLM
+
+
+class TestOpenAIVLM:
+    def _make_mock_response(self, token_logprobs):
+        """Create a mock OpenAI response with given token->logprob pairs."""
+        import math
+
+        mock_top_logprobs = []
+        for token, logprob in token_logprobs:
+            item = MagicMock()
+            item.token = token
+            item.logprob = logprob
+            mock_top_logprobs.append(item)
+
+        mock_content = MagicMock()
+        mock_content.top_logprobs = mock_top_logprobs
+
+        mock_choice = MagicMock()
+        mock_choice.logprobs.content = [mock_content]
+        mock_choice.message.content = "yes"
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        return mock_response
+
+    @patch("s3e.vlm.openai.openai")
+    def test_query_returns_vlm_output(self, mock_openai_module):
+        import math
+
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+
+        # ln(0.8) ≈ -0.223
+        mock_client.chat.completions.create.return_value = self._make_mock_response(
+            [("yes", math.log(0.8)), ("no", math.log(0.2))]
+        )
+
+        vlm = OpenAIVLM("gpt-4o")
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query([img], "Is A on B?")
+
+        assert isinstance(result, VLMOutput)
+        assert "yes" in result.token_probs
+        assert "no" in result.token_probs
+        assert result.text == "yes"
+
+    @patch("s3e.vlm.openai.openai")
+    def test_strips_openai_prefix(self, mock_openai_module):
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+
+        vlm = OpenAIVLM("OpenAI/gpt-4o")
+        assert vlm.model_id == "gpt-4o"
+
+    @patch("s3e.vlm.openai.openai")
+    def test_query_batch_calls_query_per_prompt(self, mock_openai_module):
+        import math
+
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._make_mock_response(
+            [("yes", math.log(0.7)), ("no", math.log(0.3))]
+        )
+
+        vlm = OpenAIVLM("gpt-4o")
+        img = Image.new("RGB", (64, 64))
+        results = vlm.query_batch([img], ["q1", "q2"])
+        assert len(results) == 2
