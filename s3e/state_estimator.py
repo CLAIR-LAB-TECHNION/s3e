@@ -1,179 +1,110 @@
-"""Base classes for state estimation in semantic environments.
+"""Base classes for state estimation.
 
-This module provides abstract base classes for state estimation in semantic environments.
-State estimators are responsible for determining the current state of the environment
-based on observations (typically images) and converting them into a format compatible
-with planning systems.
+This module provides abstract base classes for state estimation in
+environments described by PDDL. State estimators convert visual
+observations (images) into dictionaries of boolean predicate values.
 
 Classes:
     StateEstimator: Abstract base class for state estimation.
-    ProbabilisticStateEstimator: Abstract base class for probabilistic state estimation.
-    PredFnStateEstimator: Abstract base class for predicate function-based state estimation.
+    ProbabilisticStateEstimator: Adds probability-based estimation
+        with confidence thresholding.
 """
 
 from abc import ABC, abstractmethod
 
 from PIL.Image import Image
-from unified_planning.model import FNode
 
-from .utils.up_utils import create_up_problem, bool_constant_to_fnode
+from .pddl.up_utils import create_up_problem
 
 
 class StateEstimator(ABC):
     """Abstract base class for state estimation.
-    
-    This class provides the basic interface for state estimation in semantic environments.
-    It handles the creation and management of the unified planning problem.
+
+    A state estimator takes a set of images and produces a dictionary
+    mapping grounded PDDL predicate strings to boolean truth values.
 
     Attributes:
-        up_problem: The unified planning problem instance.
+        up_problem: The Unified Planning problem instance.
 
     Args:
-        domain: The PDDL domain description.
-        problem: The PDDL problem description.
+        domain: PDDL domain as a file path or string.
+        problem: PDDL problem as a file path or string.
     """
 
-    def __init__(
-            self,
-            domain,
-            problem,
-    ):
+    def __init__(self, domain: str, problem: str):
         self.up_problem = create_up_problem(domain, problem)
 
-    def swap_queries(self, domain, problem, *args, **kwargs):
-        """Update the current planning problem with new domain and problem descriptions.
-        
+    def swap_problem(self, domain: str, problem: str) -> None:
+        """Update the planning problem with a new domain and problem.
+
         Args:
-            domain: New PDDL domain description.
-            problem: New PDDL problem description.
-            *args: Additional positional arguments.
-            **kwargs: Additional keyword arguments.
+            domain: New PDDL domain (file path or string).
+            problem: New PDDL problem (file path or string).
         """
         self.up_problem = create_up_problem(domain, problem)
 
     @abstractmethod
     def __call__(self, images: list[Image]) -> dict[str, bool]:
-        """Estimate the current state from a list of images.
-        
+        """Estimate the current state from images.
+
         Args:
-            images: List of PIL Image objects representing the current environment state.
+            images: List of PIL images representing the current
+                environment state.
 
         Returns:
-            Dictionary mapping predicate strings to boolean values representing the estimated state.
+            Dictionary mapping predicate strings (e.g. ``"on(a,b)"``)
+            to boolean values.
         """
         ...
 
 
 class ProbabilisticStateEstimator(StateEstimator, ABC):
     """Abstract base class for probabilistic state estimation.
-    
-    This class extends StateEstimator to provide probabilistic state estimation capabilities.
-    It allows for confidence-based thresholding of probabilistic estimates.
+
+    Extends :class:`StateEstimator` with probability-based estimation.
+    Subclasses implement :meth:`estimate_probabilities` which returns
+    per-predicate probabilities; the :meth:`__call__` method thresholds
+    these into booleans.
 
     Attributes:
-        confidence: Default confidence threshold for converting probabilities to boolean values.
+        confidence: Default confidence threshold for converting
+            probabilities to boolean values.
 
     Args:
-        domain: The PDDL domain description.
-        problem: The PDDL problem description.
+        domain: PDDL domain as a file path or string.
+        problem: PDDL problem as a file path or string.
         confidence: Default confidence threshold (default: 0.5).
     """
 
-    def __init__(self, domain, problem, confidence: float = 0.5):
+    def __init__(self, domain: str, problem: str, confidence: float = 0.5):
         super().__init__(domain, problem)
         self.confidence = confidence
 
-    def __call__(self, images: list[Image], confidence=None) -> dict[str, bool]:
-        """Estimate the current state from images with probabilistic confidence.
-        
+    def __call__(
+        self, images: list[Image], confidence: float | None = None
+    ) -> dict[str, bool]:
+        """Estimate state as boolean predicates via thresholded probabilities.
+
         Args:
-            images: List of PIL Image objects representing the current environment state.
-            confidence: Optional confidence threshold to override the default value.
-
-        Returns:
-            Dictionary mapping predicate strings to boolean values based on probability thresholding.
-        """
-        fluent_prob_map = self.estimate_state(images)
-
-        # set predefined confidence if not provided
-        if confidence is None:
-            confidence = self.confidence
-
-        state = {
-            predicate: bool(prob >= confidence)  # force bool (not np.bool_)
-            for predicate, prob in fluent_prob_map.items()
-        }
-
-        return state
-
-    @abstractmethod
-    def estimate_state(self, images: list[Image]) -> dict[str, float]:
-        """Estimate the current state probabilities from images.
-        
-        Args:
-            images: List of PIL Image objects representing the current environment state.
-
-        Returns:
-            Dictionary mapping predicate strings to probability values.
-        """
-        ...
-
-
-class PredFnStateEstimator(StateEstimator, ABC):
-    """Abstract base class for predicate function-based state estimation.
-    
-    This class extends StateEstimator to provide state estimation based on predicate functions.
-    It automatically maps PDDL predicates to corresponding Python functions.
-
-    Attributes:
-        all_ground_literals: List of all grounded predicates in the current problem.
-
-    Args:
-        domain: The PDDL domain description.
-        problem: The PDDL problem description.
-    """
-
-    def __init__(self, domain, problem):
-        super().__init__(domain, problem)
-        self.all_ground_literals = list(self.up_problem.initial_values.keys())
-
-    def swap_queries(self, domain, problem, *args, **kwargs):
-        """Update the current planning problem and ground literals.
-        
-        Args:
-            domain: New PDDL domain description.
-            problem: New PDDL problem description.
-            *args: Additional positional arguments.
-            **kwargs: Additional keyword arguments.
-        """
-        super().swap_queries(domain, problem, *args, **kwargs)
-        self.all_ground_literals = list(self.up_problem.initial_values.keys())
-
-    def __call__(self, state):
-        """Estimate the current state using predicate functions implemented in the class.
-        
-        Args:
-            state: Current environment state.
+            images: List of PIL images.
+            confidence: Optional confidence threshold override.
 
         Returns:
             Dictionary mapping predicate strings to boolean values.
-
-        Raises:
-            AttributeError: If a required predicate function is not implemented.
         """
-        out = {}
+        probs = self.estimate_probabilities(images)
+        threshold = confidence if confidence is not None else self.confidence
+        return {pred: bool(prob >= threshold) for pred, prob in probs.items()}
 
-        for lit in self.all_ground_literals:
-            predicate_name = lit.fluent().name
-            pred_fn_name = predicate_name.replace('-', '_')
-            predicate_args = [str(arg) for arg in lit.args]
-            try:
-                pred_fn = getattr(self, pred_fn_name)
-            except AttributeError:
-                raise AttributeError(
-                    f"action mapper {self.__class__.__name__} does not support predicate '{predicate_name}'"
-                )
-            out[f'{predicate_name}({",".join(predicate_args)})'] = pred_fn(*predicate_args, state)
+    @abstractmethod
+    def estimate_probabilities(self, images: list[Image]) -> dict[str, float]:
+        """Estimate per-predicate probabilities from images.
 
-        return out
+        Args:
+            images: List of PIL images.
 
+        Returns:
+            Dictionary mapping predicate strings to probability values
+            in ``[0, 1]``.
+        """
+        ...
