@@ -8,7 +8,7 @@ from s3e.translation.prewritten import PrewrittenTranslator
 from s3e.translation.template import TemplateTranslator
 
 
-SAMPLE_DOMAIN = "(define (domain test) (:predicates (on ?x - block ?y - block) (clear ?x - block)))"
+SAMPLE_DOMAIN = "(define (domain test) (:types block) (:predicates (on ?x - block ?y - block) (clear ?x - block)))"
 SAMPLE_PROBLEM = "(define (problem p1) (:domain test) (:objects a b - block) (:init) (:goal (on a b)))"
 
 SAMPLE_PREDICATES = ["on(a,b)", "on(b,a)", "clear(a)", "clear(b)"]
@@ -86,3 +86,77 @@ class TestTemplateTranslator:
         translator = TemplateTranslator(templates)
         result = translator.translate(["done()"], SAMPLE_DOMAIN, SAMPLE_PROBLEM)
         assert result["done()"] == "Is the task done?"
+
+
+from unittest.mock import patch, MagicMock
+from s3e.translation.llm import LLMTranslator
+
+
+class TestLLMTranslatorMocked:
+    """Test LLMTranslator with mocked model calls."""
+
+    @patch("s3e.translation.llm._openai_translate")
+    def test_openai_translation(self, mock_translate):
+        mock_translate.side_effect = lambda model_id, pred, system, **kw: f"Is {pred} true?"
+
+        translator = LLMTranslator("OpenAI/gpt-4o")
+        result = translator.translate(
+            ["on(a,b)", "clear(a)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM
+        )
+
+        assert len(result) == 2
+        assert result["on(a,b)"] == "Is on(a,b) true?"
+        assert result["clear(a)"] == "Is clear(a) true?"
+
+    @patch("s3e.translation.llm._openai_translate")
+    def test_caching_skips_known_predicates(self, mock_translate, tmp_path):
+        mock_translate.side_effect = lambda model_id, pred, system, **kw: f"Q: {pred}"
+
+        cache_dir = str(tmp_path)
+        translator = LLMTranslator("OpenAI/gpt-4o", cache_dir=cache_dir)
+
+        # First call: translates both predicates
+        result1 = translator.translate(
+            ["on(a,b)", "clear(a)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM
+        )
+        assert mock_translate.call_count == 2
+
+        # Second call: should load from cache
+        mock_translate.reset_mock()
+        result2 = translator.translate(
+            ["on(a,b)", "clear(a)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM
+        )
+        assert mock_translate.call_count == 0
+        assert result2 == result1
+
+    @patch("s3e.translation.llm._openai_translate")
+    def test_caching_translates_only_missing(self, mock_translate, tmp_path):
+        mock_translate.side_effect = lambda model_id, pred, system, **kw: f"Q: {pred}"
+
+        cache_dir = str(tmp_path)
+        translator = LLMTranslator("OpenAI/gpt-4o", cache_dir=cache_dir)
+
+        # First call: translate one predicate
+        translator.translate(["on(a,b)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM)
+        assert mock_translate.call_count == 1
+
+        # Second call: one cached, one new
+        mock_translate.reset_mock()
+        result = translator.translate(
+            ["on(a,b)", "clear(a)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM
+        )
+        assert mock_translate.call_count == 1  # only "clear(a)" is new
+        assert "on(a,b)" in result
+        assert "clear(a)" in result
+
+    @patch("s3e.translation.llm._openai_translate")
+    def test_no_cache_dir_skips_caching(self, mock_translate):
+        mock_translate.side_effect = lambda model_id, pred, system, **kw: f"Q: {pred}"
+
+        translator = LLMTranslator("OpenAI/gpt-4o", cache_dir=None)
+        translator.translate(["on(a,b)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM)
+
+        # Call again — should translate again (no cache)
+        mock_translate.reset_mock()
+        translator.translate(["on(a,b)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM)
+        assert mock_translate.call_count == 1
