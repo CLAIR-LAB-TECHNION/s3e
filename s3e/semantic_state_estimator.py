@@ -1,540 +1,240 @@
 """Semantic state estimation using vision-language models.
 
-This module provides implementations of semantic state estimators that use vision-language models
-to estimate the current state of an environment from images. It supports various model architectures
-including LLaVA, CLIP, and other vision-language models.
-
-Classes:
-    SemanticStateEstimator: Base class for semantic state estimation using vision-language models.
-    SemanticEstimatorMultiImageRunNoLLaMA: Multi-image state estimation without LLaMA.
-    SemanticStateEstimatorWithLLaMA: State estimation using LLaMA model.
-    SemanticEstimatorMultiImageRun: Multi-image state estimation with LLaMA.
-    SemanticEstimatorWithCLIP: State estimation using CLIP model.
-    SemanticStateEstimatorDetProbs: Deterministic probability-based state estimation.
-    SemanticStateEstimatorDetProbsMultiImageRun: Multi-image deterministic probability estimation.
-    SemanticStateEstimatorConditional: Conditional state estimation.
+This module provides the main :class:`SemanticStateEstimator` class that
+combines a VLM backend with a query translator to estimate environment
+state from images. The result is a dictionary of PDDL predicate truth
+values (or probabilities) compatible with planning systems.
 """
 
-import os
-from .utils.pddl2nl_query_converter import PDDL2NLQueryConverter
-from .utils.misc import model_and_kwargs_to_filename
+import math
+from typing import Union
+
+import numpy as np
+from PIL.Image import Image
+from tqdm.auto import tqdm
+
 from .constants import (
-    NL_PREDICATES_CACHE_DIR,
+    OPENAI_MODEL_IDENTIFIER,
     SYSTEM_PROMPT_NO_TRANSLATION,
     SYSTEM_PROMPT_WITH_TRANSLATION,
     SYSTEM_PROMPT_ADDITIONAL_INSTRUCTIONS,
-    OPENAI_MODEL_IDENTIFIER
+    TRUE_TOKENS_NO_TRANSLATION,
+    FALSE_TOKENS_NO_TRANSLATION,
+    TRUE_TOKENS_WITH_TRANSLATION,
+    FALSE_TOKENS_WITH_TRANSLATION,
 )
-from tqdm.auto import tqdm
-import json
-from .utils.up_utils import create_up_problem, get_all_grounded_predicates_for_objects
-from .utils.open_ai_utils import OpenAIVQA
-import transformers
-import math
-import torch
-import numpy as np
+from .pddl.up_utils import (
+    get_object_names_dict,
+    get_all_grounded_predicates_for_objects,
+    get_pddl_strings,
+)
 from .state_estimator import ProbabilisticStateEstimator
-
-if transformers.__version__ == "4.37.2":
-    legacy = True
-    from .utils.llava_utils import LlavaModel
-elif transformers.__version__ == "4.40.0.dev0":
-    legacy = False
-    from .utils.llava_next_utils import LlavaOVModel as LlavaModel
-else:
-    from transformers import CLIPProcessor, CLIPModel
+from .translation.identity import IdentityTranslator
+from .translation.translator import QueryTranslator
+from .vlm.backend import VLMBackend, VLMOutput
 
 
 class SemanticStateEstimator(ProbabilisticStateEstimator):
-    """Base class for semantic state estimation using vision-language models.
-    
-    This class implements state estimation using vision-language models to convert
-    visual observations into logical predicates.
+    """Vision-language model based state estimator.
 
-    Attributes:
-        predicates: List of all grounded predicates in the current problem.
-        vqa_model: The vision-language model instance.
-        true_tokens: Token IDs for "true" responses.
-        false_tokens: Token IDs for "false" responses.
+    Combines a :class:`VLMBackend` with a :class:`QueryTranslator` to
+    estimate the boolean truth values of PDDL predicates from images.
 
     Args:
-        domain: The PDDL domain description.
-        problem: The PDDL problem description.
-        vqa_model_id: Identifier for the vision-language model to use.
-        vqa_kwargs: Additional keyword arguments for model initialization.
-        additional_instructions: Additional instructions for the model's system prompt.
-        confidence: Confidence threshold for probability thresholding.
+        domain: PDDL domain as a file path or string.
+        problem: PDDL problem as a file path or string.
+        vlm: A :class:`VLMBackend` instance, or a model ID string.
+        query_translator: Strategy for converting predicates to queries.
+            Defaults to :class:`IdentityTranslator`.
+        system_prompt: System prompt for the VLM. If ``None``, auto-selected.
+        user_prompt_template: Format string for each query. Must contain ``{query}``.
+        true_tokens: Token strings representing "true". If ``None``, auto-selected.
+        false_tokens: Token strings representing "false". If ``None``, auto-selected.
+        confidence: Probability threshold for boolean conversion.
+        multi_image_strategy: ``"single"`` or ``"average"``.
+        probability_method: ``"logprobs"`` or ``"text_match"``.
+        batch_size: Number of queries per VLM batch call.
+        additional_instructions: Extra text appended to the system prompt.
+        vlm_kwargs: Extra kwargs for VLM construction (only when vlm is a string).
     """
 
     def __init__(
         self,
-        domain,
-        problem,
-        vqa_model_id,
-        nl_converter_model_id=None,
-        vqa_kwargs=None,
-        nl_converter_kwargs=None,
-        additional_instructions=None,
-        confidence=0.5,
+        domain: str,
+        problem: str,
+        vlm: Union[VLMBackend, str],
+        query_translator: QueryTranslator | None = None,
+        system_prompt: str | None = None,
+        user_prompt_template: str | None = None,
+        true_tokens: list[str] | None = None,
+        false_tokens: list[str] | None = None,
+        confidence: float = 0.5,
+        multi_image_strategy: str = "single",
+        probability_method: str = "logprobs",
+        batch_size: int = 8,
+        additional_instructions: str | None = None,
+        vlm_kwargs: dict | None = None,
     ):
         super().__init__(domain, problem, confidence)
 
-        self.queries_dict = self.get_queries_dict(
-            domain, problem, nl_converter_model_id, nl_converter_kwargs
-        )
-
-        if nl_converter_model_id is None:
-            pddl2nl = PDDL2NLQueryConverter.from_uninitialized(None, domain, problem)
-            system = SYSTEM_PROMPT_NO_TRANSLATION.format(domain=pddl2nl.domain, objects=pddl2nl.objects_by_type)
-
-            # set words of interest for token logits retrieval
-            self.true_tokens = ["true", "True", "TRUE"]
-            self.false_tokens = ["true", "True", "TRUE"]
+        # --- VLM backend ---
+        if isinstance(vlm, str):
+            self.vlm = self._build_vlm_from_string(vlm, vlm_kwargs or {})
         else:
-            system = SYSTEM_PROMPT_WITH_TRANSLATION
+            self.vlm = vlm
 
-            # set words of interest for token logits retrieval
-            self.true_tokens = ["yes", "YES", "Yes"]
-            self.false_tokens = ["no", "NO", "No"]
+        # --- Query translator ---
+        self.query_translator = query_translator or IdentityTranslator()
+        has_nl_translator = not isinstance(self.query_translator, IdentityTranslator)
+
+        # --- Token groups ---
+        if true_tokens is not None:
+            self.true_tokens = true_tokens
+        else:
+            self.true_tokens = (
+                list(TRUE_TOKENS_WITH_TRANSLATION)
+                if has_nl_translator
+                else list(TRUE_TOKENS_NO_TRANSLATION)
+            )
+
+        if false_tokens is not None:
+            self.false_tokens = false_tokens
+        else:
+            self.false_tokens = (
+                list(FALSE_TOKENS_WITH_TRANSLATION)
+                if has_nl_translator
+                else list(FALSE_TOKENS_NO_TRANSLATION)
+            )
+
+        # --- System prompt ---
+        if system_prompt is not None:
+            self.system_prompt = system_prompt
+        elif has_nl_translator:
+            self.system_prompt = SYSTEM_PROMPT_WITH_TRANSLATION
+        else:
+            objects = get_object_names_dict(self.up_problem)
+            objects_str = "\n".join(
+                f"{key} type: {list(map(str, value))}"
+                for key, value in objects.items()
+            )
+            domain_str, _ = get_pddl_strings(self.up_problem)
+            self.system_prompt = SYSTEM_PROMPT_NO_TRANSLATION.format(
+                domain=domain_str, objects=objects_str
+            )
 
         if additional_instructions:
-            system += SYSTEM_PROMPT_ADDITIONAL_INSTRUCTIONS.format(additional_instructions=additional_instructions)
+            self.system_prompt += SYSTEM_PROMPT_ADDITIONAL_INSTRUCTIONS.format(
+                additional_instructions=additional_instructions
+            )
 
-        if vqa_model_id.startswith(OPENAI_MODEL_IDENTIFIER):
-            self.vqa_model = OpenAIVQA(vqa_model_id, system=system, **(vqa_kwargs or {}))
+        # --- Other config ---
+        self.user_prompt_template = user_prompt_template or "{query}"
+        self.multi_image_strategy = multi_image_strategy
+        self.probability_method = probability_method
+        self.batch_size = batch_size
+
+        # --- Build queries ---
+        self._domain = domain
+        self._problem = problem
+        self._build_queries()
+
+    def _build_queries(self) -> None:
+        """Translate all grounded predicates via the query translator."""
+        predicates = get_all_grounded_predicates_for_objects(self.up_problem)
+        self.queries_dict = self.query_translator.translate(
+            predicates, self._domain, self._problem
+        )
+
+    @staticmethod
+    def _build_vlm_from_string(vlm_id: str, vlm_kwargs: dict) -> VLMBackend:
+        """Construct a VLM backend from a model ID string."""
+        if vlm_id.startswith(OPENAI_MODEL_IDENTIFIER):
+            from .vlm.openai import OpenAIVLM
+            return OpenAIVLM(vlm_id, **vlm_kwargs)
         else:
-            self.vqa_model = LlavaModel(vqa_model_id, system=system, **(vqa_kwargs or {}))
+            from .vlm.huggingface import HuggingFaceVLM
+            return HuggingFaceVLM(vlm_id, **vlm_kwargs)
 
-    def estimate_state(self, images):
-        """Estimate state probabilities from images using sequential processing.
-        
-        Args:
-            images: List of PIL Image objects.
+    def swap_problem(self, domain: str, problem: str) -> None:
+        """Update domain/problem and re-translate predicates."""
+        super().swap_problem(domain, problem)
+        self._domain = domain
+        self._problem = problem
+        self._build_queries()
 
-        Returns:
-            Dictionary mapping predicate strings to probability values.
-        """
-        return self.estimate_state_par(images, batch_size=1)
+    def estimate_probabilities(self, images: list[Image]) -> dict[str, float]:
+        """Estimate P(true) for each grounded predicate."""
+        if self.multi_image_strategy == "average":
+            return self._estimate_average(images)
+        return self._estimate_single(images)
 
-    def estimate_state_par(self, images, batch_size=8):
-        """Estimate state probabilities from images using parallel processing.
-        
-        Args:
-            images: List of PIL Image objects.
-            batch_size: Number of predicates to process in parallel.
+    def estimate_raw(self, images: list[Image]) -> dict[str, VLMOutput]:
+        """Get the full VLMOutput for each grounded predicate."""
+        prompts = [
+            self.user_prompt_template.format(query=query)
+            for query in self.queries_dict.values()
+        ]
+        predicates = list(self.queries_dict.keys())
 
-        Returns:
-            Dictionary mapping predicate strings to probability values.
-        """
-        # cache repeated parts of the prompt, including images
-        self.vqa_model.generate_system_cache_with_images(images)
-
-        out = {}
-        num_batches = int(math.ceil(len(self.queries_dict) / batch_size))
-        preds, queries = zip(*self.queries_dict.items())
-        for i in tqdm(range(num_batches)):
-            # get next batch of queries and corresponding predicates
-            q_batch = queries[i * batch_size: (i + 1) * batch_size]
-            p_batch = preds[i * batch_size: (i + 1) * batch_size]
-
-            # get probs of next token
-            true_probs, false_probs = self.vqa_model(images, q_batch, self.true_tokens, self.false_tokens)
-
-            # update with batch info
-            out.update(dict(zip(p_batch, true_probs.tolist())))
-
-        # empty GPU cache
-        self.vqa_model.clear_system_cache()
-
-        return out
-
-    def swap_queries(
-            self, domain, problem, nl_converter_model_id=None, nl_converter_kwargs=None
-    ):
-        """Update the queries dictionary with new domain and problem.
-
-        Args:
-            domain: New PDDL domain description.
-            problem: New PDDL problem description.
-            nl_converter_model_id: Identifier for the natural language converter model.
-            nl_converter_kwargs: Additional keyword arguments for NL converter.
-        """
-        self.queries_dict = self.get_queries_dict(
-            domain, problem, nl_converter_model_id, nl_converter_kwargs
-        )
-
-    @classmethod
-    def get_queries_dict(
-            cls, domain, problem, nl_converter_model_id=None, nl_converter_kwargs=None
-    ):
-        """Get or create the queries dictionary for the given problem.
-
-        Args:
-            domain: PDDL domain description.
-            problem: PDDL problem description.
-            nl_converter_model_id: Identifier for the natural language converter model.
-            nl_converter_kwargs: Additional keyword arguments for NL converter.
-
-        Returns:
-            Dictionary mapping predicates to natural language queries.
-        """
-        if nl_converter_model_id is None:
-            pddl2nl = PDDL2NLQueryConverter.from_uninitialized(nl_converter_model_id, domain, problem)
-            predicates = pddl2nl.all_grounded_predicates
-            return {pred: pred for pred in predicates}
-
-        try:
-            queries_dict = cls.load_queries_dict_from_cache(
-                domain, problem, nl_converter_model_id, nl_converter_kwargs
+        results: dict[str, VLMOutput] = {}
+        num_batches = math.ceil(len(prompts) / self.batch_size)
+        for i in range(num_batches):
+            batch_prompts = prompts[i * self.batch_size : (i + 1) * self.batch_size]
+            batch_preds = predicates[i * self.batch_size : (i + 1) * self.batch_size]
+            outputs = self.vlm.query_batch(
+                images, batch_prompts, system_prompt=self.system_prompt
             )
-            print("predicate queries loaded from cache")
-        except (FileNotFoundError, KeyError) as e:
-            print("loading predicate queries with LLM")
-            queries_dict = cls.load_queries_dict_with_model(
-                domain, problem, nl_converter_model_id, nl_converter_kwargs
-            )
+            for pred, output in zip(batch_preds, outputs):
+                results[pred] = output
 
-        return queries_dict
+        return results
 
-    @staticmethod
-    def load_queries_dict_with_model(
-            domain, problem, nl_converter_model_id, nl_converter_kwargs=None
-    ):
-        """Create queries dictionary using the natural language converter model.
-
-        Args:
-            domain: PDDL domain description.
-            problem: PDDL problem description.
-            nl_converter_model_id: Identifier for the natural language converter model.
-            nl_converter_kwargs: Additional keyword arguments for NL converter.
-
-        Returns:
-            Dictionary mapping predicates to natural language queries.
-        """
-        # set kwargs to default values
-        nl_converter_kwargs = nl_converter_kwargs or {}
-
-        # create pddl predicate-to-NL converter
-        pddl2nl = PDDL2NLQueryConverter.from_uninitialized(
-            nl_converter_model_id, domain, problem, **nl_converter_kwargs
-        )
-
-        # convert predicates to NL queries
-        queries = pddl2nl.convert_to_nl(pddl2nl.all_grounded_predicates)
-        queries_dict = {
-            pred: query for pred, query in zip(pddl2nl.all_grounded_predicates, queries)
+    def _estimate_single(self, images: list[Image]) -> dict[str, float]:
+        """Estimate probabilities with all images in a single pass."""
+        raw = self.estimate_raw(images)
+        return {
+            pred: self._extract_probability(output)
+            for pred, output in raw.items()
         }
 
-        # cache qeuries dict
-        problem_name = pddl2nl.up_problem.name
-        cache_fname = (
-                model_and_kwargs_to_filename(
-                    nl_converter_model_id, pddl_problem=problem_name, **nl_converter_kwargs
-                )
-                + ".json"
-        )
-        os.makedirs(NL_PREDICATES_CACHE_DIR, exist_ok=True)
-        cache_file_path = os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname)
+    def _estimate_average(self, images: list[Image]) -> dict[str, float]:
+        """Estimate probabilities by averaging across individual images."""
+        per_image_probs: list[dict[str, float]] = []
+        for img in images:
+            probs = self._estimate_single([img])
+            per_image_probs.append(probs)
 
-        # if already exists, update the file and don't delete existing
-        # this is good in case we have the same problem with different objects
-        if os.path.exists(cache_file_path):
-            with open(cache_file_path, "r") as f:
-                old_queries_dict = json.load(f)
-            old_queries_dict.update(queries_dict)  # update old with new
-            queries_dict = old_queries_dict
-
-        with open(cache_file_path, "w") as f:
-            json.dump(queries_dict, f, indent=4)
-
-        # remove pddl predicate-to-NL converter from memory
-        del pddl2nl
-
-        return queries_dict
-
-    @staticmethod
-    def load_queries_dict_from_cache(
-            domain, problem, nl_converter_model_id, nl_converter_kwargs=None
-    ):
-        """Load queries dictionary from cache if available.
-
-        Args:
-            domain: PDDL domain description.
-            problem: PDDL problem description.
-            nl_converter_model_id: Identifier for the natural language converter model.
-            nl_converter_kwargs: Additional keyword arguments for NL converter.
-
-        Returns:
-            Dictionary mapping predicates to natural language queries.
-
-        Raises:
-            FileNotFoundError: If cache file does not exist.
-            KeyError: If required keys are missing from cache.
-        """
-        up_problem = create_up_problem(domain, problem)
-        problem_name = up_problem.name
-        cache_fname = (
-                model_and_kwargs_to_filename(
-                    nl_converter_model_id,
-                    pddl_problem=problem_name,
-                    **(nl_converter_kwargs or {}),
-                )
-                + ".json"
-        )
-        with open(os.path.join(NL_PREDICATES_CACHE_DIR, cache_fname), "r") as f:
-            queries_dict = json.load(f)
-
-        # filter out irrelevant predicates
-        grounded_predicates = get_all_grounded_predicates_for_objects(up_problem)
-        queries_dict = {
-            predicate: queries_dict[predicate] for predicate in grounded_predicates
+        predicates = list(per_image_probs[0].keys())
+        return {
+            pred: float(np.mean([p[pred] for p in per_image_probs]))
+            for pred in predicates
         }
 
-        return queries_dict
+    def _extract_probability(self, output: VLMOutput) -> float:
+        """Extract P(true) from a VLMOutput."""
+        if self.probability_method == "text_match":
+            return self._extract_text_match(output)
+        return self._extract_logprobs(output)
 
-
-class SemanticEstimatorMultiImageRun(SemanticStateEstimator):
-    """Multi-image state estimation without LLaMA model.
-    
-    This class extends SemanticStateEstimator to handle multiple images by averaging
-    the predictions across all images.
-
-    Args:
-        domain: The PDDL domain description.
-        problem: The PDDL problem description.
-        vqa_model_id: Identifier for the vision-language model to use.
-        vqa_kwargs: Additional keyword arguments for model initialization.
-        additional_instructions: Additional instructions for the model's system prompt.
-        confidence: Confidence threshold for probability thresholding.
-    """
-
-    def estimate_state_par(self, images, batch_size=8):
-        """Estimate state probabilities by averaging across multiple images.
-        
-        Args:
-            images: List of PIL Image objects.
-            batch_size: Number of predicates to process in parallel.
-
-        Returns:
-            Dictionary mapping predicate strings to averaged probability values.
-        """
-        outputs_per_image = []
-        for img in tqdm(images):
-            out = super().estimate_state_par([img], batch_size)
-            outputs_per_image.append(out)
-
-        out = {
-            predicate: np.mean(
-                [outputs_per_image[i][predicate] for i in range(len(images))]
-            )
-            for predicate in outputs_per_image[0]  # expected at least 1 image as input
-        }
-
-        return out
-
-
-class SemanticEstimatorWithCLIP(SemanticStateEstimator):
-    """State estimation using CLIP model.
-    
-    This class implements state estimation using the CLIP model for vision-language
-    understanding and state prediction.
-
-    Args:
-        domain: The PDDL domain description.
-        problem: The PDDL problem description.
-        nl_converter_model_id: Identifier for the natural language converter model.
-        vqa_model_id: Identifier for the CLIP model (default: "openai/clip-vit-base-patch32").
-        nl_converter_kwargs: Additional keyword arguments for NL converter.
-        vqa_kwargs: Additional keyword arguments for VQA model.
-    """
-
-    def __init__(
-        self,
-        domain,
-        problem,
-        nl_converter_model_id,
-        vqa_model_id="openai/clip-vit-base-patch32",
-        nl_converter_kwargs=None,
-        vqa_kwargs=None,
-    ):
-        super(ProbabilisticStateEstimator, self).__init__(domain, problem)
-        self.queries_dict = self.get_queries_dict(
-            domain, problem, nl_converter_model_id, nl_converter_kwargs
+    def _extract_logprobs(self, output: VLMOutput) -> float:
+        """Extract P(true) by grouping and normalizing token probabilities."""
+        true_sum = sum(
+            output.token_probs.get(tok, 0.0) for tok in self.true_tokens
         )
-
-        self.vqa_model = CLIPModel.from_pretrained(
-            vqa_model_id,
-            # attn_implementation="flash_attention_2",
-            device_map="auto",
-            torch_dtype=torch.float16,
+        false_sum = sum(
+            output.token_probs.get(tok, 0.0) for tok in self.false_tokens
         )
-        self.processor = CLIPProcessor.from_pretrained(vqa_model_id)
+        total = true_sum + false_sum
+        if total == 0:
+            return 0.5  # no signal -- return uninformative prior
+        return float(np.clip(true_sum / total, 0.0, 1.0))
 
-    def estimate_state(self, images):
-        """Estimate state probabilities from images using CLIP model.
-        
-        Args:
-            images: List of PIL Image objects.
-
-        Returns:
-            Dictionary mapping predicate strings to probability values.
-        """
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        out = {}
-        for pred, query in tqdm(self.queries_dict.items()):
-            inputs = self.processor(
-                text=[f"{query} Yes.", "{query} No."],
-                images=images,
-                return_tensors="pt",
-                padding=True,
-            )
-            inputs.to("cuda")
-            with torch.no_grad():
-                with torch.autocast(device):
-                    outputs = self.vqa_model(**inputs)
-
-            logits_per_image = outputs.logits_per_image
-            probs = logits_per_image.softmax(dim=1)
-
-            out[pred] = probs[0][0].item()
-
-        return out
-
-
-class SemanticStateEstimatorDetProbs(SemanticStateEstimator):
-    """Deterministic probability-based state estimation.
-    
-    This class implements state estimation using deterministic probability thresholds
-    based on model responses.
-
-    Args:
-        domain: The PDDL domain description.
-        problem: The PDDL problem description.
-        nl_converter_model_id: Identifier for the natural language converter model.
-        vqa_model_id: Identifier for the vision-language model.
-        nl_converter_kwargs: Additional keyword arguments for NL converter.
-        vqa_kwargs: Additional keyword arguments for VQA model.
-        additional_instructions: Additional instructions for the model's system prompt.
-        additional_images: Additional images for system prompt.
-        confidence: Confidence threshold for probability thresholding.
-    """
-
-    def estimate_state(self, images):
-        """Estimate state probabilities using deterministic thresholds.
-        
-        Args:
-            images: List of PIL Image objects.
-
-        Returns:
-            Dictionary mapping predicate strings to probability values.
-        """
-        out = {}
-        for pred, query in tqdm(self.queries_dict.items()):
-            response = self.vqa_model.generate(images, query)
-            out[pred] = 1.0 if response.lower() == "yes" else 0.0
-
-        return out
-
-
-class SemanticStateEstimatorDetProbsMultiImageRun(SemanticStateEstimatorDetProbs):
-    """Multi-image deterministic probability estimation.
-    
-    This class extends SemanticStateEstimatorDetProbs to handle multiple images by
-    averaging the predictions across all images.
-
-    Args:
-        domain: The PDDL domain description.
-        problem: The PDDL problem description.
-        nl_converter_model_id: Identifier for the natural language converter model.
-        vqa_model_id: Identifier for the vision-language model.
-        nl_converter_kwargs: Additional keyword arguments for NL converter.
-        vqa_kwargs: Additional keyword arguments for VQA model.
-        additional_instructions: Additional instructions for the model's system prompt.
-        additional_images: Additional images for system prompt.
-        confidence: Confidence threshold for probability thresholding.
-    """
-
-    def estimate_state(self, images):
-        """Estimate state probabilities by averaging across multiple images.
-        
-        Args:
-            images: List of PIL Image objects.
-
-        Returns:
-            Dictionary mapping predicate strings to averaged probability values.
-        """
-        outs = []
-        for img in tqdm(images):
-            outs.append(super().estimate_state([img]))
-
-        # average over all images
-        out = {
-            predicate: np.mean([outs[i][predicate] for i in range(len(images))])
-            for predicate in outs[0]  # expected at least 1 image as input
-        }
-
-        return out
-
-
-class SemanticStateEstimatorConditional(SemanticStateEstimator):
-    """Conditional state estimation.
-    
-    This class implements state estimation with conditional predicates, where some
-    predicates are only evaluated based on certain conditions.
-
-    Args:
-        domain: The PDDL domain description.
-        problem: The PDDL problem description.
-        vqa_model_id: Identifier for the vision-language model.
-        vqa_kwargs: Additional keyword arguments for VQA model.
-        additional_instructions: Additional instructions for the model's system prompt.
-        confidence: Confidence threshold for probability thresholding.
-    """
-
-    def __init__(
-        self,
-        domain,
-        problem,
-        vqa_model_id,
-        vqa_kwargs=None,
-        additional_instructions=None,
-        confidence=0.5,
-    ):
-        super().__init__(
-            domain,
-            problem,
-            vqa_model_id,
-            vqa_kwargs,
-            additional_instructions,
-            confidence,
-        )
-
-        system = f"""The following is a PDDL domain
-{pddl2nl.domain}
-Here are the names of all the objects in the current problem, sorted by their type:
-{pddl2nl.objects_by_type}
-Given a grounded predicate with concrete variables, state whether the statement is true or false.
-Respond only with a "true" or "false" response and nothing else."""
-
-        if additional_instructions:
-            system += f"\nAdditional Instructions and clarifications:\n{additional_instructions}"
-
-    def estimate_state(self, images):
-        """Estimate state probabilities with conditional predicates.
-        
-        Args:
-            images: List of PIL Image objects.
-
-        Returns:
-            Dictionary mapping predicate strings to probability values.
-        """
-        out = {}
-        for pred, query in tqdm(self.queries_dict.items()):
-            if pred in self.conditional_predicates:
-                response = self.vqa_model.generate(images, query)
-                out[pred] = 1.0 if response.lower() == "yes" else 0.0
-            else:
-                out[pred] = 0.0
-
-        return out
+    def _extract_text_match(self, output: VLMOutput) -> float:
+        """Extract P(true) by checking if generated text matches true tokens."""
+        if output.text is None:
+            return 0.5
+        text = output.text.strip().lower()
+        true_lower = {t.lower() for t in self.true_tokens}
+        if text in true_lower:
+            return 1.0
+        return 0.0
