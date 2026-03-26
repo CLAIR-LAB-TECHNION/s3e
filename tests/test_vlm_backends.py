@@ -131,3 +131,51 @@ class TestOpenAIVLM:
         img = Image.new("RGB", (64, 64))
         results = vlm.query_batch([img], ["q1", "q2"])
         assert len(results) == 2
+
+
+import torch
+
+
+class TestHuggingFaceVLMMocked:
+    """Unit tests for HuggingFaceVLM using mocked transformers."""
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface.AutoModelForVision2Seq")
+    def test_construction(self, mock_model_cls, mock_proc_cls):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        vlm = HuggingFaceVLM("test/model")
+        mock_model_cls.from_pretrained.assert_called_once()
+        mock_proc_cls.from_pretrained.assert_called_once()
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface.AutoModelForVision2Seq")
+    def test_query_returns_vlm_output(self, mock_model_cls, mock_proc_cls):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        # Set up mock model to return logits
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+
+        # Mock processor
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+        mock_processor.return_value = {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+        mock_processor.decode.return_value = "yes"
+
+        # Mock model output: logits shape (batch=1, seq_len=1, vocab_size=100)
+        mock_output = MagicMock()
+        mock_output.logits = torch.randn(1, 1, 100)
+        mock_model.return_value = mock_output
+
+        # Mock tokenizer within processor
+        mock_processor.tokenizer.convert_tokens_to_ids.return_value = 0
+        mock_processor.tokenizer.vocab_size = 100
+
+        vlm = HuggingFaceVLM("test/model")
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query([img], "Is A on B?")
+
+        assert isinstance(result, VLMOutput)
+        assert isinstance(result.token_probs, dict)
