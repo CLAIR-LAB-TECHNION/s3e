@@ -11,7 +11,6 @@ from typing import Union
 
 import numpy as np
 from PIL.Image import Image
-from tqdm.auto import tqdm
 
 from .constants import (
     OPENAI_MODEL_IDENTIFIER,
