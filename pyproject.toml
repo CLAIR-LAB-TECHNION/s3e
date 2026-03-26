@@ -2,31 +2,38 @@
 requires = ["setuptools >= 61.0"]
 build-backend = "setuptools.build_meta"
 
-[project]  # defines all the package metadata
-dynamic = ["dependencies"]  # metadata to be read from a file or the package itself (see [tool.setuptools.dynamic])
+[project]
 name = "s3e"
-version = "0.0.0"
+version = "0.1.0"
 authors = [
     { name = "Guy Azran", email = "guy.azran@campus.technion.ac.il" },
 ]
-description = "A package that uses SOTA language multimodal models as state estimators for task and motion planning"
-keywords = ["Foundation Models", "Artificial Intelligence", "Task and Motion Planning"]
+description = "Vision-language models as state estimators for PDDL-based planning"
+keywords = ["Foundation Models", "Artificial Intelligence", "Task and Motion Planning", "PDDL", "State Estimation"]
 readme = "README.md"
 requires-python = ">= 3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
-    "Programming Language :: Python"
+    "Programming Language :: Python",
 ]
 license = { file = "LICENSE.txt" }
-
-[project.urls]
-Repository = "https://github.com/my-account/bench3d"
-
-[tool.setuptools.dynamic]
-dependencies = { file = ["requirements.txt"] }
+dependencies = [
+    "torch",
+    "torchvision",
+    "transformers",
+    "accelerate",
+    "unified-planning[fast-downward]",
+    "numpy",
+    "tqdm",
+    "Pillow",
+]
 
 [project.optional-dependencies]
+openai = ["openai"]
 dev = ["pytest"]
 
+[project.urls]
+Repository = "https://github.com/CLAIR-LAB-TECHNION/s3e"
+
 [tool.setuptools.packages.find]
-include = ['semantic_state_estimator']
+include = ["s3e*"]
