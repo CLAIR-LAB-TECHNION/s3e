@@ -241,3 +241,44 @@ class TestSwapProblem:
         se.swap_problem(blocksworld_domain, problem_3obj)
         state_3 = se(single_image)
         assert len(state_3) == 12  # 3 blocks: 9 on + 3 clear
+
+
+@pytest.mark.slow
+class TestSemanticStateEstimatorIntegration:
+    """End-to-end integration tests with a tiny real HuggingFace VLM."""
+
+    TINY_VLM_ID = "katuni4ka/tiny-random-llava"
+
+    def test_end_to_end_with_hf_vlm(self, single_image, blocksworld_domain, blocksworld_problem):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem,
+            vlm=self.TINY_VLM_ID,
+            vlm_kwargs={"device_map": "cpu"},
+        )
+        state = se(single_image)
+        assert isinstance(state, dict)
+        assert all(isinstance(v, bool) for v in state.values())
+        assert len(state) == 6  # 2 blocks: 4 on + 2 clear
+
+    def test_estimate_probabilities_with_hf_vlm(self, single_image, blocksworld_domain, blocksworld_problem):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem,
+            vlm=self.TINY_VLM_ID,
+            vlm_kwargs={"device_map": "cpu"},
+        )
+        probs = se.estimate_probabilities(single_image)
+        assert isinstance(probs, dict)
+        assert all(isinstance(v, float) and 0.0 <= v <= 1.0 for v in probs.values())
+        assert len(probs) == 6
+
+    def test_estimate_raw_with_hf_vlm(self, single_image, blocksworld_domain, blocksworld_problem):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem,
+            vlm=self.TINY_VLM_ID,
+            vlm_kwargs={"device_map": "cpu"},
+        )
+        raw = se.estimate_raw(single_image)
+        assert isinstance(raw, dict)
+        assert all(isinstance(v, VLMOutput) for v in raw.values())
+        assert all(len(v.token_probs) > 0 for v in raw.values())
+        assert len(raw) == 6

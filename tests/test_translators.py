@@ -160,3 +160,20 @@ class TestLLMTranslatorMocked:
         mock_translate.reset_mock()
         translator.translate(["on(a,b)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM)
         assert mock_translate.call_count == 1
+
+
+@pytest.mark.slow
+class TestLLMTranslatorIntegration:
+    """Integration tests with a tiny real HuggingFace causal LM."""
+
+    TINY_LLM_ID = "hf-internal-testing/tiny-random-LlamaForCausalLM"
+
+    def test_huggingface_translate(self):
+        translator = LLMTranslator(self.TINY_LLM_ID, cache_dir=None)
+        result = translator.translate(
+            ["on(a,b)", "clear(a)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM
+        )
+
+        assert isinstance(result, dict)
+        assert len(result) == 2
+        assert all(isinstance(v, str) and len(v) > 0 for v in result.values())

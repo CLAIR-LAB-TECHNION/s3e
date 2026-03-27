@@ -1,8 +1,8 @@
 """HuggingFace Transformers VLM backend.
 
 This module provides a :class:`VLMBackend` implementation that uses
-HuggingFace's ``AutoModelForVision2Seq`` and ``AutoProcessor`` to support
-any standard vision-language model (LLaVA, Qwen2-VL, InternVL, etc.).
+HuggingFace's Auto classes and ``AutoProcessor`` to support any standard
+vision-language model (LLaVA, Qwen2-VL, InternVL, etc.).
 """
 
 import torch
@@ -10,19 +10,26 @@ import numpy as np
 
 from .backend import VLMBackend, VLMOutput
 
+# transformers 5.x renamed AutoModelForVision2Seq to AutoModelForImageTextToText
+_AutoModelClass = None
+AutoProcessor = None  # type: ignore[assignment]
+
 try:
-    from transformers import AutoModelForVision2Seq, AutoProcessor
+    from transformers import AutoProcessor  # type: ignore[no-redef]
+    try:
+        from transformers import AutoModelForImageTextToText as _AutoModelClass  # type: ignore[no-redef]
+    except ImportError:
+        from transformers import AutoModelForVision2Seq as _AutoModelClass  # type: ignore[no-redef]
 except ImportError:
-    AutoModelForVision2Seq = None  # type: ignore[assignment,misc]
-    AutoProcessor = None  # type: ignore[assignment,misc]
+    pass
 
 
 def _check_hf_imports() -> None:
-    if AutoModelForVision2Seq is None or AutoProcessor is None:
+    if _AutoModelClass is None or AutoProcessor is None:
         raise ImportError(
-            "AutoModelForVision2Seq and/or AutoProcessor are not available in your "
-            "version of transformers. Install a compatible version with: "
-            "pip install 'transformers>=4.36'"
+            "Neither AutoModelForImageTextToText nor AutoModelForVision2Seq "
+            "are available in your version of transformers. "
+            "Install a compatible version with: pip install 'transformers>=4.36'"
         )
 
 
@@ -63,7 +70,7 @@ class HuggingFaceVLM(VLMBackend):
         if attn_implementation is not None:
             load_kwargs["attn_implementation"] = attn_implementation
 
-        self.model = AutoModelForVision2Seq.from_pretrained(model_id, **load_kwargs)
+        self.model = _AutoModelClass.from_pretrained(model_id, **load_kwargs)
         self.processor = AutoProcessor.from_pretrained(model_id)
         self.model.eval()
 

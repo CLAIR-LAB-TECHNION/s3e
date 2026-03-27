@@ -140,7 +140,7 @@ class TestHuggingFaceVLMMocked:
     """Unit tests for HuggingFaceVLM using mocked transformers."""
 
     @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface.AutoModelForVision2Seq")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
     def test_construction(self, mock_model_cls, mock_proc_cls):
         from s3e.vlm.huggingface import HuggingFaceVLM
 
@@ -149,7 +149,7 @@ class TestHuggingFaceVLMMocked:
         mock_proc_cls.from_pretrained.assert_called_once()
 
     @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface.AutoModelForVision2Seq")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
     def test_query_returns_vlm_output(self, mock_model_cls, mock_proc_cls):
         from s3e.vlm.huggingface import HuggingFaceVLM
 
@@ -179,3 +179,36 @@ class TestHuggingFaceVLMMocked:
 
         assert isinstance(result, VLMOutput)
         assert isinstance(result.token_probs, dict)
+
+
+@pytest.mark.slow
+class TestHuggingFaceVLMIntegration:
+    """Integration tests with a tiny real HF model.
+
+    These tests download a small model and run actual inference.
+    Skip with: pytest -m "not slow"
+    """
+
+    TINY_VLM_ID = "katuni4ka/tiny-random-llava"
+
+    def test_loads_and_queries(self):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu")
+        img = Image.new("RGB", (64, 64), color=(128, 128, 128))
+        result = vlm.query([img], "Is this a test?")
+
+        assert isinstance(result, VLMOutput)
+        assert isinstance(result.token_probs, dict)
+        assert len(result.token_probs) > 0
+        assert all(p >= 0 for p in result.token_probs.values())
+
+    def test_query_batch(self):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu")
+        img = Image.new("RGB", (64, 64), color=(128, 128, 128))
+        results = vlm.query_batch([img], ["q1?", "q2?"])
+
+        assert len(results) == 2
+        assert all(isinstance(r, VLMOutput) for r in results)
