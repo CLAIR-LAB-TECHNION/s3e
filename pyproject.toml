@@ -22,7 +22,7 @@ dependencies = [
     "torchvision",
     "transformers",
     "accelerate",
-    "unified-planning[fast-downward]",
+    "unified-planning",
     "numpy",
     "tqdm",
     "Pillow",
