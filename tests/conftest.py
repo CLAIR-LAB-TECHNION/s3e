@@ -48,11 +48,17 @@ class FakeVLM(VLMBackend):
         self.call_count = 0
         self.received_prompts: list[str] = []
         self.received_system_prompts: list[str | None] = []
+        self.received_generate_flags: list[bool] = []
+        self.received_inference_kwargs: list[dict] = []
 
-    def query(self, images, prompt, system_prompt=None):
+    def query(
+        self, images, prompt, system_prompt=None, generate=False, **inference_kwargs
+    ):
         self.call_count += 1
         self.received_prompts.append(prompt)
         self.received_system_prompts.append(system_prompt)
+        self.received_generate_flags.append(generate)
+        self.received_inference_kwargs.append(dict(inference_kwargs))
 
         # Check for per-prompt overrides
         for substring, probs in self.per_prompt_probs.items():

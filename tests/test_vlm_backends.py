@@ -16,7 +16,11 @@ class FakeVLM(VLMBackend):
         self.text = text
         self.call_count = 0
 
-    def query(self, images, prompt, system_prompt=None):
+    def query(
+        self, images, prompt, system_prompt=None, generate=False, **inference_kwargs
+    ):
+        del generate
+        del inference_kwargs
         self.call_count += 1
         return VLMOutput(token_probs=dict(self.token_probs), text=self.text)
 
@@ -53,7 +57,16 @@ class TestVLMBackend:
             def __init__(self):
                 self.received_system_prompts = []
 
-            def query(self, images, prompt, system_prompt=None):
+            def query(
+                self,
+                images,
+                prompt,
+                system_prompt=None,
+                generate=False,
+                **inference_kwargs,
+            ):
+                del generate
+                del inference_kwargs
                 self.received_system_prompts.append(system_prompt)
                 return VLMOutput(token_probs={"yes": 0.5})
 
@@ -195,8 +208,70 @@ class TestHuggingFaceVLMMocked:
 
         assert isinstance(result, VLMOutput)
         assert isinstance(result.token_probs, dict)
+        assert result.text is None
+        mock_model.assert_called_once()
+        mock_model.generate.assert_not_called()
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_generate_mode_forwards_inference_kwargs(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+        mock_processor.return_value = {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+        mock_processor.decode.return_value = "yes"
+
+        # Generate one new token after the 5-token prompt.
+        mock_model.generate.return_value = torch.ones((1, 6), dtype=torch.long)
+
+        vlm = HuggingFaceVLM("test/model")
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query(
+            [img],
+            "Is A on B?",
+            generate=True,
+            max_new_tokens=7,
+            do_sample=False,
+        )
+
+        assert isinstance(result, VLMOutput)
+        assert result.text == "yes"
+        mock_model.assert_not_called()
         mock_model.generate.assert_called_once()
-        assert mock_model.generate.call_args.kwargs["max_new_tokens"] == 100
+        assert mock_model.generate.call_args.kwargs["max_new_tokens"] == 7
+        assert mock_model.generate.call_args.kwargs["do_sample"] is False
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_generate_mode_sets_safe_defaults(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+        mock_processor.return_value = {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+        mock_processor.decode.return_value = "yes"
+        mock_model.generate.return_value = torch.ones((1, 6), dtype=torch.long)
+
+        vlm = HuggingFaceVLM("test/model")
+        img = Image.new("RGB", (64, 64))
+        _ = vlm.query([img], "Is A on B?", generate=True)
+
+        mock_model.generate.assert_called_once()
+        generate_kwargs = mock_model.generate.call_args.kwargs
+        assert "max_new_tokens" not in generate_kwargs
 
 
 @pytest.mark.slow

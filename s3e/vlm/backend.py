@@ -37,6 +37,8 @@ class VLMBackend(ABC):
         images: list[Image],
         prompt: str,
         system_prompt: str | None = None,
+        generate: bool = False,
+        **inference_kwargs,
     ) -> VLMOutput:
         """Send a single query to the VLM."""
         ...
@@ -46,9 +48,11 @@ class VLMBackend(ABC):
         images: list[Image],
         prompts: list[str],
         system_prompt: str | None = None,
+        generate: bool = False,
+        **inference_kwargs,
     ) -> list[VLMOutput]:
         """Send multiple queries against the same set of images.
 
         Default implementation calls :meth:`query` sequentially.
         """
-        return [self.query(images, p, system_prompt) for p in prompts]
+        return [self.query(images, p, system_prompt, generate, **inference_kwargs) for p in prompts]

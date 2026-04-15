@@ -79,12 +79,12 @@ class HuggingFaceVLM(VLMBackend):
         self.processor = AutoProcessor.from_pretrained(model_id)
         self.model.eval()
 
-    def query(self, images, prompt, system_prompt=None):
+    def query(self, images, prompt, system_prompt=None, generate=False, **inference_kwargs):
         """Send a single query to the HuggingFace VLM."""
-        results = self.query_batch(images, [prompt], system_prompt)
+        results = self.query_batch(images, [prompt], system_prompt, generate, **inference_kwargs)
         return results[0]
 
-    def query_batch(self, images, prompts, system_prompt=None):
+    def query_batch(self, images, prompts, system_prompt=None, generate=False, **inference_kwargs):
         """Send multiple queries against the same images."""
         results = []
         for prompt in prompts:
@@ -111,24 +111,14 @@ class HuggingFaceVLM(VLMBackend):
             )
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-
-            # Get next-token logits (last position in sequence)
-            logits = outputs.logits[:, -1, :].float()
-            probs = torch.softmax(logits, dim=-1)
-
-            # Extract top-k token probabilities
-            top_probs, top_indices = torch.topk(
-                probs[0], min(self.num_logprobs, probs.shape[-1])
-            )
-            token_probs = {}
-            for prob, idx in zip(top_probs, top_indices):
-                token_str = self.processor.decode(idx.item())
-                token_probs[token_str] = prob.item()
-
-            # Generate text response
-            generated_text = self._generate_text(inputs)
+            if generate:
+                # Generate text response
+                generated_text = self._generate_text(inputs, **inference_kwargs)
+                token_probs = None
+            else:
+                # Get next-token probabilities
+                token_probs = self._get_next_token_probs(inputs, **inference_kwargs)
+                generated_text = None
 
             results.append(VLMOutput(token_probs=token_probs, text=generated_text))
 
@@ -150,12 +140,28 @@ class HuggingFaceVLM(VLMBackend):
         messages.append({"role": "user", "content": user_content})
         return messages
 
-    def _generate_text(self, inputs) -> str | None:
+    def _get_next_token_probs(self, inputs, **inference_kwargs):
+        with torch.no_grad():
+            outputs = self.model(**inputs, **inference_kwargs)
+
+            # Get next-token logits (last position in sequence)
+        logits = outputs.logits[:, -1, :].float()
+        probs = torch.softmax(logits, dim=-1)
+
+        # Extract top-k token probabilities
+        top_probs, top_indices = torch.topk(
+            probs[0], min(self.num_logprobs, probs.shape[-1])
+        )
+        token_probs = {}
+        for prob, idx in zip(top_probs, top_indices):
+            token_str = self.processor.decode(idx.item())
+            token_probs[token_str] = prob.item()
+        return token_probs
+
+    def _generate_text(self, inputs, **inference_kwargs) -> str | None:
         """Generate a short text response for the text_match probability method."""
         try:
-            output_ids = self.model.generate(
-                **inputs, max_new_tokens=self.max_new_tokens
-            )
+            output_ids = self.model.generate(**inputs, **inference_kwargs)
             # Trim the input tokens from the output
             input_len = inputs["input_ids"].shape[-1]
             generated_ids = output_ids[0, input_len:]

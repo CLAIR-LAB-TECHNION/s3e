@@ -19,6 +19,9 @@ except ImportError:
     openai = None  # type: ignore[assignment]
 
 
+MAX_ALLOWED_OPENAI_LOGPROBS = 20
+
+
 def _check_openai_installed() -> None:
     if openai is None:
         raise ImportError(
@@ -40,20 +43,21 @@ class OpenAIVLM(VLMBackend):
     Args:
         model_id: OpenAI model identifier (e.g. ``"gpt-4o"``).
             An ``"OpenAI/"`` prefix is stripped automatically.
-        **api_kwargs: Additional keyword arguments passed to every
-            ``chat.completions.create`` call.
+        **client_kwargs: Additional keyword arguments for the OpenAI client constructor.
     """
 
-    def __init__(self, model_id: str, **api_kwargs):
+    def __init__(self, model_id: str, **client_kwargs):
         _check_openai_installed()
         self.model_id = model_id.removeprefix(OPENAI_MODEL_IDENTIFIER)
-        self.api_kwargs = api_kwargs
-        self.api_kwargs.setdefault("temperature", 0.0)
-        self.api_kwargs.setdefault("max_completion_tokens", 512)
-        self._client = openai.OpenAI()
+        self._client = openai.OpenAI(**client_kwargs)
 
-    def query(self, images, prompt, system_prompt=None):
+    def query(self, images, prompt, system_prompt=None, generate=False, **inference_kwargs):
         """Send a query to the OpenAI API."""
+        # no need to differentiate between generation and logprobs modes here since the API can return both in one call
+        del generate
+
+        self._set_inference_kwargs_defaults(inference_kwargs)
+
         # Build image content
         image_content = [
             {
@@ -72,9 +76,7 @@ class OpenAIVLM(VLMBackend):
         response = self._client.chat.completions.create(
             messages=messages,
             model=self.model_id,
-            logprobs=True,
-            top_logprobs=20,
-            **self.api_kwargs,
+            **inference_kwargs,
         )
 
         # Extract token probabilities from first generated token
@@ -82,6 +84,15 @@ class OpenAIVLM(VLMBackend):
         text = response.choices[0].message.content
 
         return VLMOutput(token_probs=token_probs, text=text)
+    
+    def _set_inference_kwargs_defaults(self, inference_kwargs):
+        # force inference loggprobs regardless of what the user passed.
+        inference_kwargs["logprobs"] = True
+        inference_kwargs["top_logprobs"] = MAX_ALLOWED_OPENAI_LOGPROBS
+
+        # by default, use deterministic outputs. enable user override
+        # Note that we do not set `max_completion_tokens` by default to enable reasoning to proceed as the model sees fit.
+        inference_kwargs.setdefault("temperature", 0.0)
 
     @staticmethod
     def _extract_token_probs(response) -> dict[str, float]:

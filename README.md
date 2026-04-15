@@ -154,6 +154,30 @@ Key arguments:
 - `user_prompt_template`: format string for each translated query; must contain `{query}`.
 - `additional_instructions`: additional text appended to the system prompt.
 - `vlm_kwargs`: keyword arguments forwarded when `vlm` is provided as a model string.
+- `inference_kwargs`: per-query inference arguments forwarded to backend `query/query_batch` calls.
+  - For OpenAI models, these are request arguments for `chat.completions.create` (for example `temperature`, `max_completion_tokens`).
+  - For HuggingFace models, these are forwarded to `model(...)` in logprobs mode and `model.generate(...)` in generation mode.
+
+`vlm_kwargs` and `inference_kwargs` are intentionally different:
+
+- `vlm_kwargs` configure backend/client construction.
+  - OpenAI backend: forwarded to `openai.OpenAI(...)` (for example `api_key`, `base_url`, `timeout`).
+  - HuggingFace backend: forwarded to backend/model construction (for example `device_map`, `torch_dtype`, `attn_implementation`).
+- `inference_kwargs` configure runtime inference and are forwarded on every query.
+
+Example:
+
+```python
+estimator = SemanticStateEstimator(
+    domain_pddl,
+    problem_pddl,
+    vlm="OpenAI/gpt-4o",
+    vlm_kwargs={"api_key": "..."},
+    inference_kwargs={"temperature": 0.2, "max_completion_tokens": 200},
+)
+```
+
+For HuggingFace generation mode (`probability_method="text_match"`), `s3e` applies a deterministic default (`do_sample=False`) unless overridden via `inference_kwargs`. No default generation cap is imposed; set `max_new_tokens` in `inference_kwargs` if you want an explicit cap.
 
 Common methods:
 

@@ -12,41 +12,61 @@ from conftest import FakeVLM, BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM
 
 
 class TestConstruction:
-    def test_with_vlm_object(self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem):
+    def test_with_vlm_object(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=fake_vlm
         )
         assert se is not None
 
-    def test_with_identity_translator_default(self, fake_vlm, blocksworld_domain, blocksworld_problem):
+    def test_with_identity_translator_default(
+        self, fake_vlm, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=fake_vlm
         )
         assert isinstance(se.query_translator, IdentityTranslator)
 
-    def test_with_explicit_translator(self, fake_vlm, blocksworld_domain, blocksworld_problem):
-        translator = TemplateTranslator({"on": "Is {0} on {1}?", "clear": "Is {0} clear?"})
+    def test_with_explicit_translator(
+        self, fake_vlm, blocksworld_domain, blocksworld_problem
+    ):
+        translator = TemplateTranslator(
+            {"on": "Is {0} on {1}?", "clear": "Is {0} clear?"}
+        )
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=fake_vlm,
             query_translator=translator,
         )
         assert se.query_translator is translator
 
-    def test_default_tokens_without_translator(self, fake_vlm, blocksworld_domain, blocksworld_problem):
+    def test_default_tokens_without_translator(
+        self, fake_vlm, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=fake_vlm
         )
         assert "true" in se.true_tokens
         assert "false" in se.false_tokens
 
-    def test_default_tokens_with_translator(self, fake_vlm, blocksworld_domain, blocksworld_problem):
-        translator = PrewrittenTranslator({
-            "on(a,a)": "q", "on(a,b)": "q", "on(b,a)": "q", "on(b,b)": "q",
-            "clear(a)": "q", "clear(b)": "q",
-        })
+    def test_default_tokens_with_translator(
+        self, fake_vlm, blocksworld_domain, blocksworld_problem
+    ):
+        translator = PrewrittenTranslator(
+            {
+                "on(a,a)": "q",
+                "on(a,b)": "q",
+                "on(b,a)": "q",
+                "on(b,b)": "q",
+                "clear(a)": "q",
+                "clear(b)": "q",
+            }
+        )
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=fake_vlm,
             query_translator=translator,
         )
@@ -55,7 +75,8 @@ class TestConstruction:
 
     def test_custom_tokens(self, fake_vlm, blocksworld_domain, blocksworld_problem):
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=fake_vlm,
             true_tokens=["correct"],
             false_tokens=["incorrect"],
@@ -65,7 +86,9 @@ class TestConstruction:
 
 
 class TestCall:
-    def test_returns_bool_dict(self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem):
+    def test_returns_bool_dict(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=fake_vlm
         )
@@ -73,7 +96,9 @@ class TestCall:
         assert isinstance(state, dict)
         assert all(isinstance(v, bool) for v in state.values())
 
-    def test_all_predicates_present(self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem):
+    def test_all_predicates_present(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=fake_vlm
         )
@@ -81,7 +106,9 @@ class TestCall:
         # on(a,a), on(a,b), on(b,a), on(b,b), clear(a), clear(b) = 6 predicates
         assert len(state) == 6
 
-    def test_confidence_threshold(self, single_image, blocksworld_domain, blocksworld_problem):
+    def test_confidence_threshold(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
         vlm = FakeVLM(token_probs={"true": 0.6, "false": 0.4})
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=vlm, confidence=0.5
@@ -93,7 +120,9 @@ class TestCall:
         state = se(single_image, confidence=0.7)
         assert all(v is False for v in state.values())
 
-    def test_confidence_zero_works(self, single_image, blocksworld_domain, blocksworld_problem):
+    def test_confidence_zero_works(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
         vlm = FakeVLM(token_probs={"true": 0.1, "false": 0.9})
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=vlm, confidence=0.5
@@ -104,7 +133,9 @@ class TestCall:
 
 
 class TestEstimateProbabilities:
-    def test_returns_float_dict(self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem):
+    def test_returns_float_dict(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=fake_vlm
         )
@@ -112,22 +143,30 @@ class TestEstimateProbabilities:
         assert isinstance(probs, dict)
         assert all(isinstance(v, float) for v in probs.values())
 
-    def test_probabilities_in_range(self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem):
+    def test_probabilities_in_range(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=fake_vlm
         )
         probs = se.estimate_probabilities(single_image)
         assert all(0.0 <= v <= 1.0 for v in probs.values())
 
-    def test_groups_and_normalizes_tokens(self, single_image, blocksworld_domain, blocksworld_problem):
-        vlm = FakeVLM(token_probs={
-            "true": 0.3, "True": 0.2, "TRUE": 0.1,
-            "false": 0.15, "False": 0.1, "FALSE": 0.05,
-            "other": 0.1,
-        })
-        se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem, vlm=vlm
+    def test_groups_and_normalizes_tokens(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(
+            token_probs={
+                "true": 0.3,
+                "True": 0.2,
+                "TRUE": 0.1,
+                "false": 0.15,
+                "False": 0.1,
+                "FALSE": 0.05,
+                "other": 0.1,
+            }
         )
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
         probs = se.estimate_probabilities(single_image)
         # true_sum = 0.6, false_sum = 0.3, normalized true = 0.6/0.9 = 0.667
         for pred, prob in probs.items():
@@ -135,7 +174,9 @@ class TestEstimateProbabilities:
 
 
 class TestEstimateRaw:
-    def test_returns_vlm_output_dict(self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem):
+    def test_returns_vlm_output_dict(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
             blocksworld_domain, blocksworld_problem, vlm=fake_vlm
         )
@@ -151,7 +192,16 @@ class TestMultiImageStrategy:
         num_predicates = 6  # 4 on + 2 clear for 2 blocks
 
         class CountingVLM(FakeVLM):
-            def query(self, images, prompt, system_prompt=None):
+            def query(
+                self,
+                images,
+                prompt,
+                system_prompt=None,
+                generate=False,
+                **inference_kwargs,
+            ):
+                del generate
+                del inference_kwargs
                 nonlocal call_count
                 call_count += 1
                 # First image batch (calls 1-6) returns high probs,
@@ -163,7 +213,8 @@ class TestMultiImageStrategy:
 
         vlm = CountingVLM()
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=vlm,
             multi_image_strategy="average",
         )
@@ -177,20 +228,73 @@ class TestMultiImageStrategy:
 
 
 class TestTextMatchMode:
-    def test_text_match_probability(self, single_image, blocksworld_domain, blocksworld_problem):
+    def test_text_match_probability(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
         vlm = FakeVLM(token_probs={"true": 0.5, "false": 0.5}, text="true")
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=vlm,
             probability_method="text_match",
         )
         probs = se.estimate_probabilities(single_image)
         assert all(v == 1.0 for v in probs.values())
 
-    def test_text_match_false(self, single_image, blocksworld_domain, blocksworld_problem):
+    def test_text_match_queries_with_generate_mode(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(text="true")
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            probability_method="text_match",
+        )
+
+        se.estimate_probabilities(single_image)
+        assert all(v is True for v in vlm.received_generate_flags)
+
+    def test_logprobs_queries_disable_generate_mode(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.7, "false": 0.3})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            probability_method="logprobs",
+        )
+
+        se.estimate_probabilities(single_image)
+        assert all(v is False for v in vlm.received_generate_flags)
+
+    def test_forwards_inference_kwargs(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            inference_kwargs={"temperature": 0.2, "max_new_tokens": 5},
+        )
+
+        se.estimate_probabilities(single_image)
+        assert all(
+            kwargs["temperature"] == 0.2 for kwargs in vlm.received_inference_kwargs
+        )
+        assert all(
+            kwargs["max_new_tokens"] == 5 for kwargs in vlm.received_inference_kwargs
+        )
+
+    def test_text_match_false(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
         vlm = FakeVLM(token_probs={"true": 0.5, "false": 0.5}, text="false")
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=vlm,
             probability_method="text_match",
         )
@@ -199,10 +303,13 @@ class TestTextMatchMode:
 
 
 class TestUserPromptTemplate:
-    def test_custom_template(self, single_image, blocksworld_domain, blocksworld_problem):
+    def test_custom_template(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
         vlm = FakeVLM()
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=vlm,
             user_prompt_template="Look carefully. {query} Answer yes or no.",
         )
@@ -232,9 +339,7 @@ class TestSwapProblem:
           (:goal (on b a))
         )
         """
-        se = SemanticStateEstimator(
-            blocksworld_domain, problem_2obj, vlm=fake_vlm
-        )
+        se = SemanticStateEstimator(blocksworld_domain, problem_2obj, vlm=fake_vlm)
         state_2 = se(single_image)
         assert len(state_2) == 6  # 2 blocks: 4 on + 2 clear
 
@@ -249,9 +354,12 @@ class TestSemanticStateEstimatorIntegration:
 
     TINY_VLM_ID = "katuni4ka/tiny-random-llava"
 
-    def test_end_to_end_with_hf_vlm(self, single_image, blocksworld_domain, blocksworld_problem):
+    def test_end_to_end_with_hf_vlm(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=self.TINY_VLM_ID,
             vlm_kwargs={"device_map": "cpu"},
         )
@@ -260,9 +368,12 @@ class TestSemanticStateEstimatorIntegration:
         assert all(isinstance(v, bool) for v in state.values())
         assert len(state) == 6  # 2 blocks: 4 on + 2 clear
 
-    def test_estimate_probabilities_with_hf_vlm(self, single_image, blocksworld_domain, blocksworld_problem):
+    def test_estimate_probabilities_with_hf_vlm(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=self.TINY_VLM_ID,
             vlm_kwargs={"device_map": "cpu"},
         )
@@ -271,9 +382,12 @@ class TestSemanticStateEstimatorIntegration:
         assert all(isinstance(v, float) and 0.0 <= v <= 1.0 for v in probs.values())
         assert len(probs) == 6
 
-    def test_estimate_raw_with_hf_vlm(self, single_image, blocksworld_domain, blocksworld_problem):
+    def test_estimate_raw_with_hf_vlm(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
         se = SemanticStateEstimator(
-            blocksworld_domain, blocksworld_problem,
+            blocksworld_domain,
+            blocksworld_problem,
             vlm=self.TINY_VLM_ID,
             vlm_kwargs={"device_map": "cpu"},
         )

@@ -73,6 +73,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         batch_size: int = 8,
         additional_instructions: str | None = None,
         vlm_kwargs: dict | None = None,
+        inference_kwargs: dict | None = None,
     ):
         super().__init__(domain, problem, confidence)
 
@@ -81,6 +82,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             self.vlm = self._build_vlm_from_string(vlm, vlm_kwargs or {})
         else:
             self.vlm = vlm
+        self.inference_kwargs = inference_kwargs or {}
 
         # --- Query translator ---
         self.query_translator = query_translator or IdentityTranslator()
@@ -130,6 +132,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         self.user_prompt_template = user_prompt_template or "{query}"
         self.multi_image_strategy = multi_image_strategy
         self.probability_method = probability_method
+        self._generate_mode = probability_method == "text_match"
         self.batch_size = batch_size
 
         # --- Build queries ---
@@ -181,7 +184,11 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             batch_prompts = prompts[i * self.batch_size : (i + 1) * self.batch_size]
             batch_preds = predicates[i * self.batch_size : (i + 1) * self.batch_size]
             outputs = self.vlm.query_batch(
-                images, batch_prompts, system_prompt=self.system_prompt
+                images,
+                batch_prompts,
+                system_prompt=self.system_prompt,
+                generate=self._generate_mode,
+                **self.inference_kwargs
             )
             for pred, output in zip(batch_preds, outputs):
                 results[pred] = output
