@@ -9,7 +9,9 @@ from s3e.vlm.backend import VLMBackend, VLMOutput
 class FakeVLM(VLMBackend):
     """A fake VLM that returns configurable token probabilities."""
 
-    def __init__(self, token_probs: dict[str, float] | None = None, text: str | None = None):
+    def __init__(
+        self, token_probs: dict[str, float] | None = None, text: str | None = None
+    ):
         self.token_probs = token_probs or {"yes": 0.8, "no": 0.2}
         self.text = text
         self.call_count = 0
@@ -147,6 +149,20 @@ class TestHuggingFaceVLMMocked:
         vlm = HuggingFaceVLM("test/model")
         mock_model_cls.from_pretrained.assert_called_once()
         mock_proc_cls.from_pretrained.assert_called_once()
+        assert vlm.max_new_tokens == 10
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_custom_max_new_tokens(self, mock_model_cls, mock_proc_cls):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_proc_cls.from_pretrained.return_value = MagicMock()
+
+        vlm = HuggingFaceVLM("test/model", max_new_tokens=42)
+
+        assert vlm.max_new_tokens == 42
 
     @patch("s3e.vlm.huggingface.AutoProcessor")
     @patch("s3e.vlm.huggingface._AutoModelClass")
@@ -173,12 +189,14 @@ class TestHuggingFaceVLMMocked:
         mock_processor.tokenizer.convert_tokens_to_ids.return_value = 0
         mock_processor.tokenizer.vocab_size = 100
 
-        vlm = HuggingFaceVLM("test/model")
+        vlm = HuggingFaceVLM("test/model", max_new_tokens=100)
         img = Image.new("RGB", (64, 64))
         result = vlm.query([img], "Is A on B?")
 
         assert isinstance(result, VLMOutput)
         assert isinstance(result.token_probs, dict)
+        mock_model.generate.assert_called_once()
+        assert mock_model.generate.call_args.kwargs["max_new_tokens"] == 100
 
 
 @pytest.mark.slow

@@ -16,6 +16,7 @@ AutoProcessor = None  # type: ignore[assignment]
 
 try:
     from transformers import AutoProcessor  # type: ignore[no-redef]
+
     try:
         from transformers import AutoModelForImageTextToText as _AutoModelClass  # type: ignore[no-redef]
     except ImportError:
@@ -43,7 +44,9 @@ class HuggingFaceVLM(VLMBackend):
         device_map: Device placement strategy. Defaults to ``"auto"``.
         attn_implementation: Attention implementation to use. ``None`` uses default.
         num_logprobs: Number of top tokens to include in token_probs. Defaults to 20.
-        **model_kwargs: Additional kwargs for from_pretrained().
+        max_new_tokens: Maximum number of new tokens to generate. Defaults to 10.
+        **model_kwargs: Additional kwargs for from_pretrained(). ``max_new_tokens``
+            is consumed from this mapping and used for text generation.
     """
 
     def __init__(
@@ -53,11 +56,13 @@ class HuggingFaceVLM(VLMBackend):
         device_map: str = "auto",
         attn_implementation: str | None = None,
         num_logprobs: int = 20,
+        max_new_tokens: int = 10,
         **model_kwargs,
     ):
         _check_hf_imports()
         self.model_id = model_id
         self.num_logprobs = num_logprobs
+        self.max_new_tokens = max_new_tokens
 
         if torch_dtype is None:
             torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
@@ -114,7 +119,9 @@ class HuggingFaceVLM(VLMBackend):
             probs = torch.softmax(logits, dim=-1)
 
             # Extract top-k token probabilities
-            top_probs, top_indices = torch.topk(probs[0], min(self.num_logprobs, probs.shape[-1]))
+            top_probs, top_indices = torch.topk(
+                probs[0], min(self.num_logprobs, probs.shape[-1])
+            )
             token_probs = {}
             for prob, idx in zip(top_probs, top_indices):
                 token_str = self.processor.decode(idx.item())
@@ -131,7 +138,9 @@ class HuggingFaceVLM(VLMBackend):
         """Build a chat-format message list."""
         messages = []
         if system_prompt is not None:
-            messages.append({"role": "system", "content": [{"type": "text", "text": system_prompt}]})
+            messages.append(
+                {"role": "system", "content": [{"type": "text", "text": system_prompt}]}
+            )
 
         user_content = []
         for _ in images:
@@ -144,7 +153,9 @@ class HuggingFaceVLM(VLMBackend):
     def _generate_text(self, inputs) -> str | None:
         """Generate a short text response for the text_match probability method."""
         try:
-            output_ids = self.model.generate(**inputs, max_new_tokens=10)
+            output_ids = self.model.generate(
+                **inputs, max_new_tokens=self.max_new_tokens
+            )
             # Trim the input tokens from the output
             input_len = inputs["input_ids"].shape[-1]
             generated_ids = output_ids[0, input_len:]
