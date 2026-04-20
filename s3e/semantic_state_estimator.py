@@ -12,6 +12,13 @@ from typing import Union
 import numpy as np
 from PIL.Image import Image
 
+from .calibration import (
+    GLOBAL_CALIBRATION_KEY,
+    PlattScalingProfile,
+    apply_platt_scaling,
+    compute_domain_fingerprint,
+    grouped_log_odds,
+)
 from .constants import (
     OPENAI_MODEL_IDENTIFIER,
     SYSTEM_PROMPT_NO_TRANSLATION,
@@ -138,6 +145,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         # --- Build queries ---
         self._domain = domain
         self._problem = problem
+        self._domain_fingerprint = compute_domain_fingerprint(self._domain)
+        self._platt_scaling_profile: PlattScalingProfile | None = None
         self._build_queries()
 
     def _build_queries(self) -> None:
@@ -164,11 +173,35 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         self._problem = problem
         self._build_queries()
 
-    def estimate_probabilities(self, images: list[Image]) -> dict[str, float]:
+    def __call__(
+        self,
+        images: list[Image],
+        confidence: float | None = None,
+        calibrated: bool | None = None,
+    ) -> dict[str, bool]:
+        probs = self.estimate_probabilities(images, calibrated=calibrated)
+        threshold = confidence if confidence is not None else self.confidence
+        return {pred: bool(prob >= threshold) for pred, prob in probs.items()}
+
+    def estimate_probabilities(
+        self,
+        images: list[Image],
+        calibrated: bool | None = None,
+    ) -> dict[str, float]:
         """Estimate P(true) for each grounded predicate."""
         if self.multi_image_strategy == "average":
-            return self._estimate_average(images)
-        return self._estimate_single(images)
+            details = self._estimate_average(images)
+        else:
+            details = self._estimate_single(images)
+
+        use_calibration = self._resolve_calibrated_flag(calibrated)
+        if not use_calibration:
+            return {pred: probability for pred, (probability, _) in details.items()}
+
+        return {
+            pred: self._apply_platt_profile(pred, score)
+            for pred, (probability, score) in details.items()
+        }
 
     def estimate_raw(self, images: list[Image]) -> dict[str, VLMOutput]:
         """Get the full VLMOutput for each grounded predicate."""
@@ -195,7 +228,25 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
 
         return results
 
-    def _estimate_single(self, images: list[Image]) -> dict[str, float]:
+    def _resolve_calibrated_flag(self, calibrated: bool | None) -> bool:
+        if calibrated is False:
+            return False
+        if self._platt_scaling_profile is None:
+            if calibrated is True:
+                raise ValueError(
+                    "No Platt scaling profile is loaded. "
+                    "Call fit_platt_scaling(...) or load_platt_scaling(...)."
+                )
+            return False
+        return True
+
+    def _apply_platt_profile(self, predicate: str, score: float) -> float:
+        del predicate
+        assert self._platt_scaling_profile is not None
+        params = self._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY]
+        return apply_platt_scaling(score, params)
+
+    def _estimate_single(self, images: list[Image]) -> dict[str, tuple[float, float]]:
         """Estimate probabilities with all images in a single pass."""
         raw = self.estimate_raw(images)
         return {
@@ -203,26 +254,26 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             for pred, output in raw.items()
         }
 
-    def _estimate_average(self, images: list[Image]) -> dict[str, float]:
+    def _estimate_average(self, images: list[Image]) -> dict[str, tuple[float, float]]:
         """Estimate probabilities by averaging across individual images."""
-        per_image_probs: list[dict[str, float]] = []
-        for img in images:
-            probs = self._estimate_single([img])
-            per_image_probs.append(probs)
-
-        predicates = list(per_image_probs[0].keys())
+        per_image_details = [self._estimate_single([img]) for img in images]
+        predicates = list(per_image_details[0].keys())
         return {
-            pred: float(np.mean([p[pred] for p in per_image_probs]))
+            pred: (
+                float(np.mean([details[pred][0] for details in per_image_details])),
+                float(np.mean([details[pred][1] for details in per_image_details])),
+            )
             for pred in predicates
         }
 
-    def _extract_probability(self, output: VLMOutput) -> float:
+    def _extract_probability(self, output: VLMOutput) -> tuple[float, float]:
         """Extract P(true) from a VLMOutput."""
         if self.probability_method == "text_match":
-            return self._extract_text_match(output)
+            probability = self._extract_text_match(output)
+            return probability, 0.0
         return self._extract_logprobs(output)
 
-    def _extract_logprobs(self, output: VLMOutput) -> float:
+    def _extract_logprobs(self, output: VLMOutput) -> tuple[float, float]:
         """Extract P(true) by grouping and normalizing token probabilities."""
         true_sum = sum(
             output.token_probs.get(tok, 0.0) for tok in self.true_tokens
@@ -232,8 +283,10 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         )
         total = true_sum + false_sum
         if total == 0:
-            return 0.5  # no signal -- return uninformative prior
-        return float(np.clip(true_sum / total, 0.0, 1.0))
+            return 0.5, 0.0
+        probability = float(np.clip(true_sum / total, 0.0, 1.0))
+        score = grouped_log_odds(output.token_probs, self.true_tokens, self.false_tokens)
+        return probability, score
 
     def _extract_text_match(self, output: VLMOutput) -> float:
         """Extract P(true) by checking if generated text matches true tokens."""

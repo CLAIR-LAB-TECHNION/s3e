@@ -3,6 +3,7 @@
 import pytest
 from PIL import Image
 
+from s3e.calibration import GLOBAL_CALIBRATION_KEY, PlattParameters, PlattScalingProfile
 from s3e.semantic_state_estimator import SemanticStateEstimator
 from s3e.vlm.backend import VLMOutput
 from s3e.translation.identity import IdentityTranslator
@@ -319,6 +320,57 @@ class TestUserPromptTemplate:
         for prompt in vlm.received_prompts:
             assert prompt.startswith("Look carefully.")
             assert prompt.endswith("Answer yes or no.")
+
+
+class TestCalibrationRuntimeModes:
+    def test_calibrated_none_preserves_raw_behavior_without_profile(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+        )
+
+        probs = se.estimate_probabilities(single_image, calibrated=None)
+        assert all(prob == pytest.approx(0.8) for prob in probs.values())
+
+    def test_calibrated_true_without_profile_raises(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+
+        with pytest.raises(ValueError, match="fit_platt_scaling"):
+            se.estimate_probabilities(single_image, calibrated=True)
+
+    def test_calibrated_false_bypasses_attached_profile(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        se._platt_scaling_profile = PlattScalingProfile(
+            scope="global",
+            probability_method="logprobs",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            domain_fingerprint="irrelevant-for-this-test",
+            score_kind="grouped_log_odds",
+            groups={
+                GLOBAL_CALIBRATION_KEY: PlattParameters(
+                    a=2.0,
+                    b=0.0,
+                    sample_count=8,
+                    positive_count=4,
+                    negative_count=4,
+                )
+            },
+        )
+
+        raw = se.estimate_probabilities(single_image, calibrated=False)
+        calibrated = se.estimate_probabilities(single_image, calibrated=None)
+        assert calibrated["on(a,b)"] != pytest.approx(raw["on(a,b)"])
 
 
 class TestSwapProblem:
