@@ -7,6 +7,7 @@ values (or probabilities) compatible with planning systems.
 """
 
 import math
+import re
 from typing import Union
 
 import numpy as np
@@ -149,8 +150,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         # --- Build queries ---
         self._domain = domain
         self._problem = problem
-        self._domain_fingerprint = compute_domain_fingerprint(self._domain)
         self._platt_scaling_profile: PlattScalingProfile | None = None
+        self._domain_fingerprint = self._current_domain_fingerprint()
         self._build_queries()
 
     def _build_queries(self) -> None:
@@ -159,6 +160,17 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         self.queries_dict = self.query_translator.translate(
             predicates, self._domain, self._problem
         )
+
+    def _current_domain_fingerprint(self) -> str:
+        """Fingerprint the canonical domain for the current parsed UP problem."""
+        domain_str, _ = get_pddl_strings(self.up_problem)
+        canonical_domain_str = re.sub(
+            r"\(domain\s+[^\s)]+\)",
+            "(domain __canonical__)",
+            domain_str,
+            count=1,
+        )
+        return compute_domain_fingerprint(canonical_domain_str)
 
     @staticmethod
     def _build_vlm_from_string(vlm_id: str, vlm_kwargs: dict) -> VLMBackend:
@@ -172,9 +184,13 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
 
     def swap_problem(self, domain: str, problem: str) -> None:
         """Update domain/problem and re-translate predicates."""
+        previous_domain_fingerprint = self._domain_fingerprint
         super().swap_problem(domain, problem)
         self._domain = domain
         self._problem = problem
+        self._domain_fingerprint = self._current_domain_fingerprint()
+        if self._domain_fingerprint != previous_domain_fingerprint:
+            self._platt_scaling_profile = None
         self._build_queries()
 
     def __call__(

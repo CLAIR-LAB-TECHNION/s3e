@@ -23,6 +23,25 @@ PROBLEM_3OBJ = """
 )
 """
 
+LIGHTS_DOMAIN = """
+(define (domain lights)
+  (:requirements :typing)
+  (:types lamp)
+  (:predicates
+    (lit ?x - lamp)
+  )
+)
+"""
+
+LIGHTS_PROBLEM = """
+(define (problem lights-1)
+  (:domain lights)
+  (:objects lamp1 - lamp)
+  (:init (lit lamp1))
+  (:goal (lit lamp1))
+)
+"""
+
 
 class CalibrationVLM(FakeVLM):
     def __init__(self, table):
@@ -1027,6 +1046,74 @@ class TestLiftedPlattScaling:
         after = se.estimate_probabilities(make_calibration_image(2), calibrated=True)
         assert after == pytest.approx(before)
 
+    def test_load_platt_scaling_accepts_equivalent_file_backed_domains(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        domain_path_a = tmp_path / "blocksworld-a.pddl"
+        domain_path_b = tmp_path / "blocksworld-b.pddl"
+        problem_path = tmp_path / "blocksworld-problem.pddl"
+        domain_path_a.write_text(blocksworld_domain)
+        domain_path_b.write_text(blocksworld_domain)
+        problem_path.write_text(blocksworld_problem)
+
+        vlm_a = CalibrationVLM(
+            {
+                (1, "on(a,a)"): 0.10,
+                (1, "on(a,b)"): 0.60,
+                (1, "on(b,a)"): 0.20,
+                (1, "on(b,b)"): 0.05,
+                (1, "clear(a)"): 0.80,
+                (1, "clear(b)"): 0.20,
+                (2, "on(a,a)"): 0.15,
+                (2, "on(a,b)"): 0.55,
+                (2, "on(b,a)"): 0.25,
+                (2, "on(b,b)"): 0.05,
+                (2, "clear(a)"): 0.75,
+                (2, "clear(b)"): 0.25,
+            }
+        )
+        se_a = SemanticStateEstimator(
+            str(domain_path_a), str(problem_path), vlm=vlm_a
+        )
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+            CalibrationExample(
+                images=make_calibration_image(2),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+        ]
+        se_a.fit_platt_scaling(examples, scope="global")
+        expected = se_a.estimate_probabilities(make_calibration_image(2), calibrated=True)
+
+        path = tmp_path / "portable-platt-profile.json"
+        se_a.save_platt_scaling(path)
+
+        vlm_b = CalibrationVLM(vlm_a.table)
+        se_b = SemanticStateEstimator(
+            str(domain_path_b), str(problem_path), vlm=vlm_b
+        )
+        se_b.load_platt_scaling(path)
+
+        actual = se_b.estimate_probabilities(make_calibration_image(2), calibrated=True)
+        assert actual == pytest.approx(expected)
+
     def test_load_platt_scaling_rejects_incompatible_probability_method(
         self, tmp_path, blocksworld_domain, blocksworld_problem
     ):
@@ -1180,6 +1267,45 @@ class TestSwapProblem:
         se.swap_problem(blocksworld_domain, problem_3obj)
         state_3 = se(single_image)
         assert len(state_3) == 12  # 3 blocks: 9 on + 3 clear
+
+    def test_swap_to_different_domain_invalidates_platt_scaling(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+            CalibrationExample(
+                images=make_calibration_image(2),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+        ]
+        se.fit_platt_scaling(examples, scope="global")
+
+        se.swap_problem(LIGHTS_DOMAIN, LIGHTS_PROBLEM)
+
+        with pytest.raises(ValueError, match="No Platt scaling profile is loaded"):
+            se.estimate_probabilities(make_calibration_image(1), calibrated=True)
+
+        raw = se.estimate_probabilities(make_calibration_image(1), calibrated=False)
+        assert raw == {"lit(lamp1)": pytest.approx(0.8)}
 
 
 @pytest.mark.slow
