@@ -619,6 +619,93 @@ class TestCalibrationRuntimeModes:
         assert actual == pytest.approx(expected)
 
 
+class TestPlattScalingErrors:
+    def test_fit_platt_scaling_rejects_text_match_mode(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(text="true"),
+            probability_method="text_match",
+        )
+        example = CalibrationExample(images=make_calibration_image(1), state_dict={})
+
+        with pytest.raises(ValueError, match="logprobs"):
+            se.fit_platt_scaling([example], scope="global")
+
+    def test_fit_platt_scaling_rejects_empty_datasets(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=FakeVLM()
+        )
+
+        with pytest.raises(ValueError, match="at least one calibration example"):
+            se.fit_platt_scaling([], scope="global")
+
+    def test_fit_platt_scaling_rejects_one_class_groups(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = CalibrationVLM(
+            {
+                (1, "on(a,a)"): 0.10,
+                (1, "on(a,b)"): 0.60,
+                (1, "on(b,a)"): 0.20,
+                (1, "on(b,b)"): 0.05,
+                (1, "clear(a)"): 0.80,
+                (1, "clear(b)"): 0.20,
+            }
+        )
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        example = CalibrationExample(
+            images=make_calibration_image(1),
+            state_dict={
+                "on(a,a)": False,
+                "on(a,b)": False,
+                "on(b,a)": False,
+                "on(b,b)": False,
+                "clear(a)": False,
+                "clear(b)": False,
+            },
+        )
+
+        with pytest.raises(
+            ValueError, match="requires both positive and negative labels"
+        ):
+            se.fit_platt_scaling([example], scope="global")
+
+    def test_fit_platt_scaling_requires_complete_state_labels(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = CalibrationVLM(
+            {
+                (1, "on(a,a)"): 0.10,
+                (1, "on(a,b)"): 0.60,
+                (1, "on(b,a)"): 0.20,
+                (1, "on(b,b)"): 0.05,
+                (1, "clear(a)"): 0.80,
+                (1, "clear(b)"): 0.20,
+            }
+        )
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        example = CalibrationExample(
+            images=make_calibration_image(1),
+            state_dict={
+                "on(a,a)": False,
+                "on(a,b)": True,
+                "on(b,a)": False,
+                "on(b,b)": False,
+                "clear(a)": True,
+            },
+        )
+
+        with pytest.raises(
+            ValueError, match="Missing calibration label for predicate clear\\(b\\)"
+        ):
+            se.fit_platt_scaling([example], scope="global")
+
+
 class TestGlobalPlattScaling:
     def test_fit_platt_scaling_global_changes_probability_values(
         self, blocksworld_domain, blocksworld_problem
