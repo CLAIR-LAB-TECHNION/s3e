@@ -3,6 +3,7 @@
 import pytest
 from PIL import Image
 
+from s3e import CalibrationExample
 from s3e.calibration import GLOBAL_CALIBRATION_KEY, PlattParameters, PlattScalingProfile
 from s3e.semantic_state_estimator import SemanticStateEstimator
 from s3e.vlm.backend import VLMOutput
@@ -10,6 +11,29 @@ from s3e.translation.identity import IdentityTranslator
 from s3e.translation.prewritten import PrewrittenTranslator
 from s3e.translation.template import TemplateTranslator
 from conftest import FakeVLM, BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM
+
+
+class CalibrationVLM(FakeVLM):
+    def __init__(self, table):
+        super().__init__(token_probs={"true": 0.5, "false": 0.5})
+        self.table = table
+
+    def query(
+        self, images, prompt, system_prompt=None, generate=False, **inference_kwargs
+    ):
+        del system_prompt
+        del generate
+        del inference_kwargs
+        example_id = images[0].getpixel((0, 0))[0]
+        yes_prob = self.table[(example_id, prompt)]
+        return VLMOutput(
+            token_probs={"true": yes_prob, "false": 1.0 - yes_prob},
+            text="true" if yes_prob >= 0.5 else "false",
+        )
+
+
+def make_calibration_image(example_id: int) -> list[Image.Image]:
+    return [Image.new("RGB", (2, 2), color=(example_id, 0, 0))]
 
 
 class TestConstruction:
@@ -466,6 +490,89 @@ class TestCalibrationRuntimeModes:
             "on(a,b)"
         ]
         assert actual == pytest.approx(expected)
+
+
+class TestGlobalPlattScaling:
+    def test_fit_platt_scaling_global_changes_probability_values(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = CalibrationVLM(
+            {
+                (1, "on(a,a)"): 0.10,
+                (1, "on(a,b)"): 0.40,
+                (1, "on(b,a)"): 0.35,
+                (1, "on(b,b)"): 0.05,
+                (1, "clear(a)"): 0.75,
+                (1, "clear(b)"): 0.25,
+                (2, "on(a,a)"): 0.15,
+                (2, "on(a,b)"): 0.55,
+                (2, "on(b,a)"): 0.30,
+                (2, "on(b,b)"): 0.05,
+                (2, "clear(a)"): 0.80,
+                (2, "clear(b)"): 0.20,
+                (3, "on(a,a)"): 0.10,
+                (3, "on(a,b)"): 0.60,
+                (3, "on(b,a)"): 0.25,
+                (3, "on(b,b)"): 0.05,
+                (3, "clear(a)"): 0.70,
+                (3, "clear(b)"): 0.35,
+            }
+        )
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+            CalibrationExample(
+                images=make_calibration_image(2),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+        ]
+
+        raw = se.estimate_probabilities(make_calibration_image(3), calibrated=False)
+        se.fit_platt_scaling(examples, scope="global")
+        calibrated = se.estimate_probabilities(make_calibration_image(3), calibrated=True)
+
+        assert calibrated["on(a,b)"] != pytest.approx(raw["on(a,b)"])
+        assert all(0.0 <= value <= 1.0 for value in calibrated.values())
+
+    def test_fit_platt_scaling_requires_sklearn(
+        self, blocksworld_domain, blocksworld_problem, monkeypatch
+    ):
+        import s3e.calibration as calibration
+
+        vlm = CalibrationVLM({(1, "on(a,a)"): 0.5, (1, "on(a,b)"): 0.5, (1, "on(b,a)"): 0.5, (1, "on(b,b)"): 0.5, (1, "clear(a)"): 0.5, (1, "clear(b)"): 0.5})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        example = CalibrationExample(
+            images=make_calibration_image(1),
+            state_dict={
+                "on(a,a)": False,
+                "on(a,b)": True,
+                "on(b,a)": False,
+                "on(b,b)": False,
+                "clear(a)": True,
+                "clear(b)": False,
+            },
+        )
+
+        monkeypatch.setattr(calibration, "LogisticRegression", None)
+        with pytest.raises(ImportError, match="s3e\\[calibration\\]"):
+            se.fit_platt_scaling([example], scope="global")
 
 
 class TestSwapProblem:

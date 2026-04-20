@@ -119,3 +119,35 @@ def grouped_log_odds(
 
 def apply_platt_scaling(score: float, params: PlattParameters) -> float:
     return 1.0 / (1.0 + math.exp(params.a * score + params.b))
+
+
+def require_sklearn() -> None:
+    if LogisticRegression is None:
+        raise ImportError(
+            "Platt scaling fitting requires scikit-learn. "
+            "Install it with: pip install 's3e[calibration]'"
+        )
+
+
+def fit_platt_parameters(scores: list[float], labels: list[bool]) -> PlattParameters:
+    require_sklearn()
+    if not scores:
+        raise ValueError("Expected at least one calibration sample.")
+
+    positives = sum(bool(label) for label in labels)
+    negatives = len(labels) - positives
+    if positives == 0 or negatives == 0:
+        raise ValueError("Platt scaling requires both positive and negative labels.")
+
+    model = LogisticRegression(random_state=0)
+    model.fit([[score] for score in scores], labels)
+
+    coef = float(model.coef_[0][0])
+    intercept = float(model.intercept_[0])
+    return PlattParameters(
+        a=-coef,
+        b=-intercept,
+        sample_count=len(scores),
+        positive_count=positives,
+        negative_count=negatives,
+    )

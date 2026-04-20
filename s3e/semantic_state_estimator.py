@@ -13,10 +13,12 @@ import numpy as np
 from PIL.Image import Image
 
 from .calibration import (
+    CalibrationExample,
     GLOBAL_CALIBRATION_KEY,
     PlattScalingProfile,
     apply_platt_scaling,
     compute_domain_fingerprint,
+    fit_platt_parameters,
     grouped_log_odds,
 )
 from .constants import (
@@ -237,6 +239,49 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
 
         return results
 
+    def fit_platt_scaling(
+        self,
+        examples: list[CalibrationExample],
+        scope: str = "global",
+    ) -> None:
+        if self.probability_method != "logprobs":
+            raise ValueError(
+                "Platt scaling is only supported for probability_method='logprobs'."
+            )
+        if not examples:
+            raise ValueError("Expected at least one calibration example.")
+        if scope not in {"global", "lifted"}:
+            raise ValueError("scope must be either 'global' or 'lifted'.")
+
+        grouped_scores: dict[str, list[float]] = {GLOBAL_CALIBRATION_KEY: []}
+        grouped_labels: dict[str, list[bool]] = {GLOBAL_CALIBRATION_KEY: []}
+
+        for example in examples:
+            details = self._estimate_calibration_example(example)
+            for predicate, (_, score) in details.items():
+                if predicate not in example.state_dict:
+                    raise ValueError(
+                        f"Missing calibration label for predicate {predicate}."
+                    )
+                grouped_scores[GLOBAL_CALIBRATION_KEY].append(score)
+                grouped_labels[GLOBAL_CALIBRATION_KEY].append(
+                    example.state_dict[predicate]
+                )
+
+        params = fit_platt_parameters(
+            grouped_scores[GLOBAL_CALIBRATION_KEY],
+            grouped_labels[GLOBAL_CALIBRATION_KEY],
+        )
+        self._platt_scaling_profile = PlattScalingProfile(
+            scope="global",
+            probability_method=self.probability_method,
+            true_tokens=list(self.true_tokens),
+            false_tokens=list(self.false_tokens),
+            domain_fingerprint=self._domain_fingerprint,
+            score_kind="grouped_log_odds",
+            groups={GLOBAL_CALIBRATION_KEY: params},
+        )
+
     def _resolve_calibrated_flag(self, calibrated: bool | None) -> bool:
         if calibrated is False:
             return False
@@ -266,6 +311,20 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             pred: self._apply_platt_profile(pred, score)
             for pred, (_, score) in details.items()
         }
+
+    def _estimate_calibration_example(
+        self,
+        example: CalibrationExample,
+    ) -> dict[str, tuple[float, float]]:
+        original_problem = self._problem
+        if example.problem is None:
+            return self._estimate_single(example.images)
+
+        try:
+            self.swap_problem(self._domain, example.problem)
+            return self._estimate_single(example.images)
+        finally:
+            self.swap_problem(self._domain, original_problem)
 
     def _estimate_single(self, images: list[Image]) -> dict[str, tuple[float, float]]:
         """Estimate probabilities with all images in a single pass."""
