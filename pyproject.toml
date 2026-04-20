@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openai = ["openai"]
+calibration = ["scikit-learn"]
 dev = ["pytest"]
 
 [project.urls]
