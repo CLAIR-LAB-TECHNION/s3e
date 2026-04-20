@@ -66,6 +66,12 @@ def ground_predicate_str_to_fnode(up_problem: Problem, predicate_str: str) -> FN
     return pred_obj()
 
 
+def get_lifted_predicate_key(up_problem: Problem, predicate_str: str) -> str:
+    """Return the lifted fluent key for a grounded predicate string."""
+    fnode = ground_predicate_str_to_fnode(up_problem, predicate_str)
+    return fnode.fluent().name
+
+
 def bool_constant_to_fnode(up_problem: Problem, constant: bool) -> FNode:
     """Convert a boolean constant to a Unified Planning FNode."""
     exp_mgr = up_problem.environment.expression_manager

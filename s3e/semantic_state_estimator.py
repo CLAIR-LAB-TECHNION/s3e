@@ -32,9 +32,11 @@ from .constants import (
     FALSE_TOKENS_WITH_TRANSLATION,
 )
 from .pddl.up_utils import (
+    create_up_problem,
     get_object_names_dict,
     get_all_grounded_predicates_for_objects,
     get_pddl_strings,
+    get_lifted_predicate_key,
 )
 from .state_estimator import ProbabilisticStateEstimator
 from .translation.identity import IdentityTranslator
@@ -250,13 +252,15 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             )
         if not examples:
             raise ValueError("Expected at least one calibration example.")
-        if scope != "global":
-            raise ValueError("Only global Platt scaling is supported in this version.")
+        if scope not in {"global", "lifted"}:
+            raise ValueError(f"Unsupported Platt scaling scope: {scope}")
 
-        grouped_scores: dict[str, list[float]] = {GLOBAL_CALIBRATION_KEY: []}
-        grouped_labels: dict[str, list[bool]] = {GLOBAL_CALIBRATION_KEY: []}
+        grouped_scores: dict[str, list[float]] = {}
+        grouped_labels: dict[str, list[bool]] = {}
 
         for example in examples:
+            example_problem = example.problem or self._problem
+            example_up_problem = create_up_problem(self._domain, example_problem)
             per_sample_details = self._estimate_calibration_example(example)
             for details in per_sample_details:
                 for predicate, (_, score) in details.items():
@@ -264,24 +268,39 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                         raise ValueError(
                             f"Missing calibration label for predicate {predicate}."
                         )
-                    grouped_scores[GLOBAL_CALIBRATION_KEY].append(score)
-                    grouped_labels[GLOBAL_CALIBRATION_KEY].append(
-                        example.state_dict[predicate]
-                    )
+                    if scope == "global":
+                        key = GLOBAL_CALIBRATION_KEY
+                    else:
+                        key = get_lifted_predicate_key(example_up_problem, predicate)
+                    grouped_scores.setdefault(key, []).append(score)
+                    grouped_labels.setdefault(key, []).append(example.state_dict[predicate])
 
-        params = fit_platt_parameters(
-            grouped_scores[GLOBAL_CALIBRATION_KEY],
-            grouped_labels[GLOBAL_CALIBRATION_KEY],
-        )
+        params_by_group = {
+            key: fit_platt_parameters(scores, grouped_labels[key])
+            for key, scores in grouped_scores.items()
+        }
         self._platt_scaling_profile = PlattScalingProfile(
-            scope="global",
+            scope=scope,
             probability_method=self.probability_method,
             true_tokens=list(self.true_tokens),
             false_tokens=list(self.false_tokens),
             domain_fingerprint=self._domain_fingerprint,
             score_kind="grouped_log_odds",
-            groups={GLOBAL_CALIBRATION_KEY: params},
+            groups=params_by_group,
         )
+
+    def save_platt_scaling(self, path: str) -> None:
+        if self._platt_scaling_profile is None:
+            raise ValueError("No Platt scaling profile is loaded.")
+        self._platt_scaling_profile.save(path)
+
+    def load_platt_scaling(self, path: str) -> None:
+        profile = PlattScalingProfile.load(path)
+        self._validate_platt_profile(profile)
+        self._platt_scaling_profile = profile
+
+    def clear_platt_scaling(self) -> None:
+        self._platt_scaling_profile = None
 
     def _resolve_calibrated_flag(self, calibrated: bool | None) -> bool:
         if calibrated is False:
@@ -300,10 +319,36 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         return True
 
     def _apply_platt_profile(self, predicate: str, score: float) -> float:
-        del predicate
         assert self._platt_scaling_profile is not None
-        params = self._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY]
+        if self._platt_scaling_profile.scope == "global":
+            params = self._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY]
+        else:
+            key = get_lifted_predicate_key(self.up_problem, predicate)
+            if key not in self._platt_scaling_profile.groups:
+                raise ValueError(
+                    f"No Platt scaling parameters available for lifted fluent '{key}'."
+                )
+            params = self._platt_scaling_profile.groups[key]
         return apply_platt_scaling(score, params)
+
+    def _validate_platt_profile(self, profile: PlattScalingProfile) -> None:
+        if (
+            profile.probability_method != "logprobs"
+            or self.probability_method != "logprobs"
+        ):
+            raise ValueError(
+                "Platt scaling profiles are only compatible with logprobs mode."
+            )
+        if profile.true_tokens != list(self.true_tokens) or profile.false_tokens != list(
+            self.false_tokens
+        ):
+            raise ValueError(
+                "Loaded Platt scaling profile does not match the estimator token groups."
+            )
+        if profile.domain_fingerprint != self._domain_fingerprint:
+            raise ValueError(
+                "Loaded Platt scaling profile was fit for a different domain."
+            )
 
     def _calibrate_prediction_details(
         self, details: dict[str, tuple[float, float]]

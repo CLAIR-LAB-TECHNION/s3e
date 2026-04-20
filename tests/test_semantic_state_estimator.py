@@ -12,6 +12,15 @@ from s3e.translation.prewritten import PrewrittenTranslator
 from s3e.translation.template import TemplateTranslator
 from conftest import FakeVLM, BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM
 
+PROBLEM_3OBJ = """
+(define (problem bw-3)
+  (:domain blocksworld)
+  (:objects a b c - block)
+  (:init (on a b) (clear a) (clear c))
+  (:goal (on b a))
+)
+"""
+
 
 class CalibrationVLM(FakeVLM):
     def __init__(self, table):
@@ -596,8 +605,8 @@ class TestGlobalPlattScaling:
             },
         )
 
-        with pytest.raises(ValueError, match="Only global Platt scaling is supported"):
-            se.fit_platt_scaling([example], scope="lifted")
+        with pytest.raises(ValueError, match="Unsupported Platt scaling scope"):
+            se.fit_platt_scaling([example], scope="unsupported")
 
     def test_fit_platt_scaling_average_mode_uses_per_image_score_samples(
         self, blocksworld_domain, blocksworld_problem
@@ -667,6 +676,145 @@ class TestGlobalPlattScaling:
         assert (
             se._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY].sample_count == 24
         )
+
+
+class TestLiftedPlattScaling:
+    def test_fit_platt_scaling_lifted_handles_multiple_problem_instances(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = CalibrationVLM(
+            {
+                (1, "on(a,a)"): 0.05,
+                (1, "on(a,b)"): 0.70,
+                (1, "on(b,a)"): 0.20,
+                (1, "on(b,b)"): 0.05,
+                (1, "clear(a)"): 0.80,
+                (1, "clear(b)"): 0.20,
+                (2, "on(a,a)"): 0.05,
+                (2, "on(a,b)"): 0.65,
+                (2, "on(a,c)"): 0.25,
+                (2, "on(b,a)"): 0.15,
+                (2, "on(b,b)"): 0.05,
+                (2, "on(b,c)"): 0.10,
+                (2, "on(c,a)"): 0.10,
+                (2, "on(c,b)"): 0.15,
+                (2, "on(c,c)"): 0.05,
+                (2, "clear(a)"): 0.75,
+                (2, "clear(b)"): 0.25,
+                (2, "clear(c)"): 0.70,
+                (3, "on(a,a)"): 0.05,
+                (3, "on(a,b)"): 0.60,
+                (3, "on(a,c)"): 0.20,
+                (3, "on(b,a)"): 0.20,
+                (3, "on(b,b)"): 0.05,
+                (3, "on(b,c)"): 0.15,
+                (3, "on(c,a)"): 0.15,
+                (3, "on(c,b)"): 0.20,
+                (3, "on(c,c)"): 0.05,
+                (3, "clear(a)"): 0.70,
+                (3, "clear(b)"): 0.30,
+                (3, "clear(c)"): 0.65,
+            }
+        )
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+                problem=blocksworld_problem,
+            ),
+            CalibrationExample(
+                images=make_calibration_image(2),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(a,c)": False,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "on(b,c)": False,
+                    "on(c,a)": False,
+                    "on(c,b)": False,
+                    "on(c,c)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                    "clear(c)": True,
+                },
+                problem=PROBLEM_3OBJ,
+            ),
+        ]
+
+        se.fit_platt_scaling(examples, scope="lifted")
+        se.swap_problem(blocksworld_domain, PROBLEM_3OBJ)
+        calibrated = se.estimate_probabilities(make_calibration_image(3), calibrated=True)
+
+        assert "on(c,a)" in calibrated
+        assert "clear(c)" in calibrated
+        assert all(0.0 <= value <= 1.0 for value in calibrated.values())
+
+    def test_save_and_load_platt_scaling_round_trip(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = CalibrationVLM(
+            {
+                (1, "on(a,a)"): 0.10,
+                (1, "on(a,b)"): 0.60,
+                (1, "on(b,a)"): 0.20,
+                (1, "on(b,b)"): 0.05,
+                (1, "clear(a)"): 0.80,
+                (1, "clear(b)"): 0.20,
+                (2, "on(a,a)"): 0.15,
+                (2, "on(a,b)"): 0.55,
+                (2, "on(b,a)"): 0.25,
+                (2, "on(b,b)"): 0.05,
+                (2, "clear(a)"): 0.75,
+                (2, "clear(b)"): 0.25,
+            }
+        )
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+            CalibrationExample(
+                images=make_calibration_image(2),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+        ]
+
+        se.fit_platt_scaling(examples, scope="global")
+        before = se.estimate_probabilities(make_calibration_image(2), calibrated=True)
+        path = tmp_path / "platt-profile.json"
+
+        se.save_platt_scaling(path)
+        se.clear_platt_scaling()
+        with pytest.raises(ValueError, match="fit_platt_scaling"):
+            se.estimate_probabilities(make_calibration_image(2), calibrated=True)
+
+        se.load_platt_scaling(path)
+        after = se.estimate_probabilities(make_calibration_image(2), calibrated=True)
+        assert after == pytest.approx(before)
 
 
 class TestSwapProblem:
