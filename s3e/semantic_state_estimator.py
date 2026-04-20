@@ -257,16 +257,17 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         grouped_labels: dict[str, list[bool]] = {GLOBAL_CALIBRATION_KEY: []}
 
         for example in examples:
-            details = self._estimate_calibration_example(example)
-            for predicate, (_, score) in details.items():
-                if predicate not in example.state_dict:
-                    raise ValueError(
-                        f"Missing calibration label for predicate {predicate}."
+            per_sample_details = self._estimate_calibration_example(example)
+            for details in per_sample_details:
+                for predicate, (_, score) in details.items():
+                    if predicate not in example.state_dict:
+                        raise ValueError(
+                            f"Missing calibration label for predicate {predicate}."
+                        )
+                    grouped_scores[GLOBAL_CALIBRATION_KEY].append(score)
+                    grouped_labels[GLOBAL_CALIBRATION_KEY].append(
+                        example.state_dict[predicate]
                     )
-                grouped_scores[GLOBAL_CALIBRATION_KEY].append(score)
-                grouped_labels[GLOBAL_CALIBRATION_KEY].append(
-                    example.state_dict[predicate]
-                )
 
         params = fit_platt_parameters(
             grouped_scores[GLOBAL_CALIBRATION_KEY],
@@ -315,16 +316,17 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
     def _estimate_calibration_example(
         self,
         example: CalibrationExample,
-    ) -> dict[str, tuple[float, float]]:
+    ) -> list[dict[str, tuple[float, float]]]:
         original_problem = self._problem
-        if example.problem is None:
-            return self._estimate_single(example.images)
-
         try:
-            self.swap_problem(self._domain, example.problem)
-            return self._estimate_single(example.images)
+            if example.problem is not None:
+                self.swap_problem(self._domain, example.problem)
+            if self.multi_image_strategy == "average":
+                return [self._estimate_single([image]) for image in example.images]
+            return [self._estimate_single(example.images)]
         finally:
-            self.swap_problem(self._domain, original_problem)
+            if example.problem is not None:
+                self.swap_problem(self._domain, original_problem)
 
     def _estimate_single(self, images: list[Image]) -> dict[str, tuple[float, float]]:
         """Estimate probabilities with all images in a single pass."""

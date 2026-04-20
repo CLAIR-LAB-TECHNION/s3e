@@ -547,9 +547,14 @@ class TestGlobalPlattScaling:
         raw = se.estimate_probabilities(make_calibration_image(3), calibrated=False)
         se.fit_platt_scaling(examples, scope="global")
         calibrated = se.estimate_probabilities(make_calibration_image(3), calibrated=True)
+        profile = se._platt_scaling_profile
 
         assert calibrated["on(a,b)"] != pytest.approx(raw["on(a,b)"])
         assert all(0.0 <= value <= 1.0 for value in calibrated.values())
+        assert profile is not None
+        assert profile.scope == "global"
+        assert set(profile.groups) == {GLOBAL_CALIBRATION_KEY}
+        assert profile.groups[GLOBAL_CALIBRATION_KEY].sample_count == 12
 
     def test_fit_platt_scaling_requires_sklearn(
         self, blocksworld_domain, blocksworld_problem, monkeypatch
@@ -593,6 +598,75 @@ class TestGlobalPlattScaling:
 
         with pytest.raises(ValueError, match="Only global Platt scaling is supported"):
             se.fit_platt_scaling([example], scope="lifted")
+
+    def test_fit_platt_scaling_average_mode_uses_per_image_score_samples(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = CalibrationVLM(
+            {
+                (1, "on(a,a)"): 0.10,
+                (1, "on(a,b)"): 0.45,
+                (1, "on(b,a)"): 0.35,
+                (1, "on(b,b)"): 0.05,
+                (1, "clear(a)"): 0.75,
+                (1, "clear(b)"): 0.25,
+                (2, "on(a,a)"): 0.15,
+                (2, "on(a,b)"): 0.55,
+                (2, "on(b,a)"): 0.30,
+                (2, "on(b,b)"): 0.05,
+                (2, "clear(a)"): 0.80,
+                (2, "clear(b)"): 0.20,
+                (3, "on(a,a)"): 0.10,
+                (3, "on(a,b)"): 0.60,
+                (3, "on(b,a)"): 0.25,
+                (3, "on(b,b)"): 0.05,
+                (3, "clear(a)"): 0.70,
+                (3, "clear(b)"): 0.35,
+                (4, "on(a,a)"): 0.20,
+                (4, "on(a,b)"): 0.65,
+                (4, "on(b,a)"): 0.20,
+                (4, "on(b,b)"): 0.05,
+                (4, "clear(a)"): 0.85,
+                (4, "clear(b)"): 0.15,
+            }
+        )
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            multi_image_strategy="average",
+        )
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1) + make_calibration_image(2),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+            CalibrationExample(
+                images=make_calibration_image(3) + make_calibration_image(4),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+        ]
+
+        se.fit_platt_scaling(examples, scope="global")
+
+        assert se._platt_scaling_profile is not None
+        assert (
+            se._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY].sample_count == 24
+        )
 
 
 class TestSwapProblem:
