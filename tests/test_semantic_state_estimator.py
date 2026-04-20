@@ -1,5 +1,7 @@
 """Tests for SemanticStateEstimator."""
 
+import json
+
 import pytest
 from PIL import Image
 
@@ -43,6 +45,57 @@ class CalibrationVLM(FakeVLM):
 
 def make_calibration_image(example_id: int) -> list[Image.Image]:
     return [Image.new("RGB", (2, 2), color=(example_id, 0, 0))]
+
+
+def save_global_platt_profile(
+    tmp_path, blocksworld_domain: str, blocksworld_problem: str
+):
+    vlm = CalibrationVLM(
+        {
+            (1, "on(a,a)"): 0.10,
+            (1, "on(a,b)"): 0.60,
+            (1, "on(b,a)"): 0.20,
+            (1, "on(b,b)"): 0.05,
+            (1, "clear(a)"): 0.80,
+            (1, "clear(b)"): 0.20,
+            (2, "on(a,a)"): 0.15,
+            (2, "on(a,b)"): 0.55,
+            (2, "on(b,a)"): 0.25,
+            (2, "on(b,b)"): 0.05,
+            (2, "clear(a)"): 0.75,
+            (2, "clear(b)"): 0.25,
+        }
+    )
+    se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+    examples = [
+        CalibrationExample(
+            images=make_calibration_image(1),
+            state_dict={
+                "on(a,a)": False,
+                "on(a,b)": True,
+                "on(b,a)": False,
+                "on(b,b)": False,
+                "clear(a)": True,
+                "clear(b)": False,
+            },
+        ),
+        CalibrationExample(
+            images=make_calibration_image(2),
+            state_dict={
+                "on(a,a)": False,
+                "on(a,b)": True,
+                "on(b,a)": False,
+                "on(b,b)": False,
+                "clear(a)": True,
+                "clear(b)": False,
+            },
+        ),
+    ]
+
+    se.fit_platt_scaling(examples, scope="global")
+    path = tmp_path / "platt-profile.json"
+    se.save_platt_scaling(path)
+    return path
 
 
 class TestConstruction:
@@ -815,6 +868,70 @@ class TestLiftedPlattScaling:
         se.load_platt_scaling(path)
         after = se.estimate_probabilities(make_calibration_image(2), calibrated=True)
         assert after == pytest.approx(before)
+
+    def test_load_platt_scaling_rejects_incompatible_probability_method(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        path = save_global_platt_profile(
+            tmp_path, blocksworld_domain, blocksworld_problem
+        )
+        data = json.loads(path.read_text())
+        data["probability_method"] = "text_match"
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(text="true"),
+        )
+
+        with pytest.raises(ValueError, match="logprobs mode"):
+            se.load_platt_scaling(path)
+        with pytest.raises(ValueError, match="fit_platt_scaling"):
+            se.estimate_probabilities(make_calibration_image(1), calibrated=True)
+
+    def test_load_platt_scaling_rejects_token_group_mismatch(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        path = save_global_platt_profile(
+            tmp_path, blocksworld_domain, blocksworld_problem
+        )
+        data = json.loads(path.read_text())
+        data["true_tokens"] = ["correct"]
+        data["false_tokens"] = ["incorrect"]
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(),
+        )
+
+        with pytest.raises(ValueError, match="token groups"):
+            se.load_platt_scaling(path)
+        with pytest.raises(ValueError, match="fit_platt_scaling"):
+            se.estimate_probabilities(make_calibration_image(1), calibrated=True)
+
+    def test_load_platt_scaling_rejects_domain_fingerprint_mismatch(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        path = save_global_platt_profile(
+            tmp_path, blocksworld_domain, blocksworld_problem
+        )
+        data = json.loads(path.read_text())
+        data["domain_fingerprint"] = "wrong-domain-fingerprint"
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(),
+        )
+
+        with pytest.raises(ValueError, match="different domain"):
+            se.load_platt_scaling(path)
+        with pytest.raises(ValueError, match="fit_platt_scaling"):
+            se.estimate_probabilities(make_calibration_image(1), calibrated=True)
 
 
 class TestSwapProblem:
