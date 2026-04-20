@@ -372,6 +372,101 @@ class TestCalibrationRuntimeModes:
         calibrated = se.estimate_probabilities(single_image, calibrated=None)
         assert calibrated["on(a,b)"] != pytest.approx(raw["on(a,b)"])
 
+    def test_text_match_rejects_calibration_with_attached_profile(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(text="true")
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            probability_method="text_match",
+        )
+        se._platt_scaling_profile = PlattScalingProfile(
+            scope="global",
+            probability_method="text_match",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            domain_fingerprint="irrelevant-for-this-test",
+            score_kind="grouped_log_odds",
+            groups={
+                GLOBAL_CALIBRATION_KEY: PlattParameters(
+                    a=1.0,
+                    b=0.0,
+                    sample_count=8,
+                    positive_count=4,
+                    negative_count=4,
+                )
+            },
+        )
+
+        with pytest.raises(ValueError, match="logprobs"):
+            se.estimate_probabilities(single_image)
+
+    def test_average_strategy_calibrates_each_image_before_averaging(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        image_one = Image.new("RGB", (64, 64))
+        image_two = Image.new("RGB", (64, 64))
+
+        class ImageAwareVLM(FakeVLM):
+            def __init__(self):
+                super().__init__()
+                self.token_probs_by_image_id = {}
+
+            def query(
+                self,
+                images,
+                prompt,
+                system_prompt=None,
+                generate=False,
+                **inference_kwargs,
+            ):
+                del prompt
+                del system_prompt
+                del generate
+                del inference_kwargs
+                return VLMOutput(
+                    token_probs=self.token_probs_by_image_id[id(images[0])]
+                )
+
+        vlm = ImageAwareVLM()
+        vlm.token_probs_by_image_id[id(image_one)] = {"true": 0.9, "false": 0.1}
+        vlm.token_probs_by_image_id[id(image_two)] = {"true": 0.6, "false": 0.4}
+
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            multi_image_strategy="average",
+        )
+        se._platt_scaling_profile = PlattScalingProfile(
+            scope="global",
+            probability_method="logprobs",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            domain_fingerprint="irrelevant-for-this-test",
+            score_kind="grouped_log_odds",
+            groups={
+                GLOBAL_CALIBRATION_KEY: PlattParameters(
+                    a=1.0,
+                    b=0.0,
+                    sample_count=8,
+                    positive_count=4,
+                    negative_count=4,
+                )
+            },
+        )
+
+        expected = (
+            se.estimate_probabilities([image_one], calibrated=None)["on(a,b)"]
+            + se.estimate_probabilities([image_two], calibrated=None)["on(a,b)"]
+        ) / 2.0
+        actual = se.estimate_probabilities([image_one, image_two], calibrated=None)[
+            "on(a,b)"
+        ]
+        assert actual == pytest.approx(expected)
+
 
 class TestSwapProblem:
     def test_swap_updates_predicates(self, fake_vlm, single_image, blocksworld_domain):

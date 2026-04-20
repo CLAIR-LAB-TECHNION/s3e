@@ -189,19 +189,28 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         calibrated: bool | None = None,
     ) -> dict[str, float]:
         """Estimate P(true) for each grounded predicate."""
-        if self.multi_image_strategy == "average":
-            details = self._estimate_average(images)
-        else:
-            details = self._estimate_single(images)
-
         use_calibration = self._resolve_calibrated_flag(calibrated)
+        if self.multi_image_strategy == "average":
+            if not use_calibration:
+                details = self._estimate_average(images)
+                return {
+                    pred: probability for pred, (probability, _) in details.items()
+                }
+            per_image_calibrated = [
+                self._calibrate_prediction_details(self._estimate_single([img]))
+                for img in images
+            ]
+            predicates = list(per_image_calibrated[0].keys())
+            return {
+                pred: float(np.mean([details[pred] for details in per_image_calibrated]))
+                for pred in predicates
+            }
+
+        details = self._estimate_single(images)
         if not use_calibration:
             return {pred: probability for pred, (probability, _) in details.items()}
 
-        return {
-            pred: self._apply_platt_profile(pred, score)
-            for pred, (probability, score) in details.items()
-        }
+        return self._calibrate_prediction_details(details)
 
     def estimate_raw(self, images: list[Image]) -> dict[str, VLMOutput]:
         """Get the full VLMOutput for each grounded predicate."""
@@ -231,6 +240,10 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
     def _resolve_calibrated_flag(self, calibrated: bool | None) -> bool:
         if calibrated is False:
             return False
+        if self._platt_scaling_profile is not None and self.probability_method != "logprobs":
+            raise ValueError(
+                "Platt scaling calibration is only supported when probability_method='logprobs'."
+            )
         if self._platt_scaling_profile is None:
             if calibrated is True:
                 raise ValueError(
@@ -245,6 +258,14 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         assert self._platt_scaling_profile is not None
         params = self._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY]
         return apply_platt_scaling(score, params)
+
+    def _calibrate_prediction_details(
+        self, details: dict[str, tuple[float, float]]
+    ) -> dict[str, float]:
+        return {
+            pred: self._apply_platt_profile(pred, score)
+            for pred, (_, score) in details.items()
+        }
 
     def _estimate_single(self, images: list[Image]) -> dict[str, tuple[float, float]]:
         """Estimate probabilities with all images in a single pass."""
