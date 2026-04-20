@@ -98,6 +98,71 @@ def save_global_platt_profile(
     return path
 
 
+def save_lifted_platt_profile(
+    tmp_path, blocksworld_domain: str, blocksworld_problem: str
+):
+    vlm = CalibrationVLM(
+        {
+            (1, "on(a,a)"): 0.05,
+            (1, "on(a,b)"): 0.70,
+            (1, "on(b,a)"): 0.20,
+            (1, "on(b,b)"): 0.05,
+            (1, "clear(a)"): 0.80,
+            (1, "clear(b)"): 0.20,
+            (2, "on(a,a)"): 0.05,
+            (2, "on(a,b)"): 0.65,
+            (2, "on(a,c)"): 0.25,
+            (2, "on(b,a)"): 0.15,
+            (2, "on(b,b)"): 0.05,
+            (2, "on(b,c)"): 0.10,
+            (2, "on(c,a)"): 0.10,
+            (2, "on(c,b)"): 0.15,
+            (2, "on(c,c)"): 0.05,
+            (2, "clear(a)"): 0.75,
+            (2, "clear(b)"): 0.25,
+            (2, "clear(c)"): 0.70,
+        }
+    )
+    se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+    examples = [
+        CalibrationExample(
+            images=make_calibration_image(1),
+            state_dict={
+                "on(a,a)": False,
+                "on(a,b)": True,
+                "on(b,a)": False,
+                "on(b,b)": False,
+                "clear(a)": True,
+                "clear(b)": False,
+            },
+            problem=blocksworld_problem,
+        ),
+        CalibrationExample(
+            images=make_calibration_image(2),
+            state_dict={
+                "on(a,a)": False,
+                "on(a,b)": True,
+                "on(a,c)": False,
+                "on(b,a)": False,
+                "on(b,b)": False,
+                "on(b,c)": False,
+                "on(c,a)": False,
+                "on(c,b)": False,
+                "on(c,c)": False,
+                "clear(a)": True,
+                "clear(b)": False,
+                "clear(c)": True,
+            },
+            problem=PROBLEM_3OBJ,
+        ),
+    ]
+
+    se.fit_platt_scaling(examples, scope="lifted")
+    path = tmp_path / "lifted-platt-profile.json"
+    se.save_platt_scaling(path)
+    return path
+
+
 class TestConstruction:
     def test_with_vlm_object(
         self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
@@ -804,9 +869,15 @@ class TestLiftedPlattScaling:
         ]
 
         se.fit_platt_scaling(examples, scope="lifted")
+        profile = se._platt_scaling_profile
         se.swap_problem(blocksworld_domain, PROBLEM_3OBJ)
         calibrated = se.estimate_probabilities(make_calibration_image(3), calibrated=True)
 
+        assert profile is not None
+        assert profile.scope == "lifted"
+        assert set(profile.groups) == {"on", "clear"}
+        assert profile.groups["on"].sample_count == 13
+        assert profile.groups["clear"].sample_count == 5
         assert "on(c,a)" in calibrated
         assert "clear(c)" in calibrated
         assert all(0.0 <= value <= 1.0 for value in calibrated.values())
@@ -929,6 +1000,69 @@ class TestLiftedPlattScaling:
         )
 
         with pytest.raises(ValueError, match="different domain"):
+            se.load_platt_scaling(path)
+        with pytest.raises(ValueError, match="fit_platt_scaling"):
+            se.estimate_probabilities(make_calibration_image(1), calibrated=True)
+
+    def test_load_platt_scaling_rejects_unsupported_scope(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        path = save_global_platt_profile(
+            tmp_path, blocksworld_domain, blocksworld_problem
+        )
+        data = json.loads(path.read_text())
+        data["scope"] = "predicate"
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(),
+        )
+
+        with pytest.raises(ValueError, match="Unsupported Platt scaling scope"):
+            se.load_platt_scaling(path)
+        with pytest.raises(ValueError, match="fit_platt_scaling"):
+            se.estimate_probabilities(make_calibration_image(1), calibrated=True)
+
+    def test_load_platt_scaling_rejects_wrong_score_kind(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        path = save_global_platt_profile(
+            tmp_path, blocksworld_domain, blocksworld_problem
+        )
+        data = json.loads(path.read_text())
+        data["score_kind"] = "raw_probability"
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(),
+        )
+
+        with pytest.raises(ValueError, match="score_kind"):
+            se.load_platt_scaling(path)
+        with pytest.raises(ValueError, match="fit_platt_scaling"):
+            se.estimate_probabilities(make_calibration_image(1), calibrated=True)
+
+    def test_load_platt_scaling_rejects_lifted_profile_missing_required_groups(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        path = save_lifted_platt_profile(
+            tmp_path, blocksworld_domain, blocksworld_problem
+        )
+        data = json.loads(path.read_text())
+        del data["groups"]["clear"]
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(),
+        )
+
+        with pytest.raises(ValueError, match="missing parameters for lifted fluent"):
             se.load_platt_scaling(path)
         with pytest.raises(ValueError, match="fit_platt_scaling"):
             se.estimate_probabilities(make_calibration_image(1), calibrated=True)

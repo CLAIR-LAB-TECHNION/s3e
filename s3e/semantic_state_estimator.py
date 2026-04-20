@@ -349,6 +349,27 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             raise ValueError(
                 "Loaded Platt scaling profile was fit for a different domain."
             )
+        if profile.scope not in {"global", "lifted"}:
+            raise ValueError(f"Unsupported Platt scaling scope: {profile.scope}")
+        if profile.score_kind != "grouped_log_odds":
+            raise ValueError(
+                f"Loaded Platt scaling profile has unsupported score_kind: {profile.score_kind}."
+            )
+        if profile.scope == "global":
+            if GLOBAL_CALIBRATION_KEY not in profile.groups:
+                raise ValueError(
+                    "Loaded global Platt scaling profile is missing global parameters."
+                )
+            return
+
+        required_groups = {fluent.name for fluent in self.up_problem.fluents}
+        missing_groups = sorted(required_groups - set(profile.groups))
+        if missing_groups:
+            missing = ", ".join(missing_groups)
+            raise ValueError(
+                "Loaded lifted Platt scaling profile is missing parameters "
+                f"for lifted fluent(s): {missing}."
+            )
 
     def _calibrate_prediction_details(
         self, details: dict[str, tuple[float, float]]
