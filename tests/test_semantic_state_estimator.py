@@ -574,6 +574,26 @@ class TestGlobalPlattScaling:
         with pytest.raises(ImportError, match="s3e\\[calibration\\]"):
             se.fit_platt_scaling([example], scope="global")
 
+    def test_fit_platt_scaling_rejects_non_global_scope(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = CalibrationVLM({(1, "on(a,a)"): 0.5, (1, "on(a,b)"): 0.5, (1, "on(b,a)"): 0.5, (1, "on(b,b)"): 0.5, (1, "clear(a)"): 0.5, (1, "clear(b)"): 0.5})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        example = CalibrationExample(
+            images=make_calibration_image(1),
+            state_dict={
+                "on(a,a)": False,
+                "on(a,b)": True,
+                "on(b,a)": False,
+                "on(b,b)": False,
+                "clear(a)": True,
+                "clear(b)": False,
+            },
+        )
+
+        with pytest.raises(ValueError, match="Only global Platt scaling is supported"):
+            se.fit_platt_scaling([example], scope="lifted")
+
 
 class TestSwapProblem:
     def test_swap_updates_predicates(self, fake_vlm, single_image, blocksworld_domain):

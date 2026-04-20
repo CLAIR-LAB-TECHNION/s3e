@@ -250,8 +250,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             )
         if not examples:
             raise ValueError("Expected at least one calibration example.")
-        if scope not in {"global", "lifted"}:
-            raise ValueError("scope must be either 'global' or 'lifted'.")
+        if scope != "global":
+            raise ValueError("Only global Platt scaling is supported in this version.")
 
         grouped_scores: dict[str, list[float]] = {GLOBAL_CALIBRATION_KEY: []}
         grouped_labels: dict[str, list[bool]] = {GLOBAL_CALIBRATION_KEY: []}
