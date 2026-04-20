@@ -71,8 +71,11 @@ class PlattScalingProfile:
 
     @classmethod
     def from_dict(cls, data: dict) -> "PlattScalingProfile":
+        schema_version = int(data["schema_version"])
+        if schema_version != CALIBRATION_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported calibration schema version: {schema_version}")
         return cls(
-            schema_version=int(data["schema_version"]),
+            schema_version=schema_version,
             scope=data["scope"],
             probability_method=data["probability_method"],
             true_tokens=list(data["true_tokens"]),

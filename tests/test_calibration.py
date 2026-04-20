@@ -62,6 +62,22 @@ class TestProfileSerialization:
         restored = PlattScalingProfile.from_dict(profile.to_dict())
         assert restored == profile
 
+    def test_rejects_unsupported_schema_version(self):
+        profile = PlattScalingProfile(
+            scope="global",
+            probability_method="logprobs",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            domain_fingerprint=compute_domain_fingerprint("(define (domain blocksworld) ...)"),
+            score_kind="grouped_log_odds",
+            groups={},
+        )
+        payload = profile.to_dict()
+        payload["schema_version"] = 99
+
+        with pytest.raises(ValueError, match="Unsupported calibration schema version: 99"):
+            PlattScalingProfile.from_dict(payload)
+
 
 class TestCalibrationExample:
     def test_problem_defaults_to_none(self):
