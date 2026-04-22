@@ -12,6 +12,7 @@ from typing import Union
 
 import numpy as np
 from PIL.Image import Image
+from tqdm.auto import tqdm
 
 from .calibration import (
     CalibrationExample,
@@ -260,6 +261,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         self,
         examples: list[CalibrationExample],
         scope: str = "global",
+        progress_bar: bool = False,
     ) -> None:
         if self.probability_method != "logprobs":
             raise ValueError(
@@ -273,7 +275,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         grouped_scores: dict[str, list[float]] = {}
         grouped_labels: dict[str, list[bool]] = {}
 
-        for example in examples:
+        for example in tqdm(examples, disable=not progress_bar, desc="Fitting Platt scaling"):
             example_problem = example.problem or self._problem
             example_up_problem = create_up_problem(self._domain, example_problem)
             per_sample_details = self._estimate_calibration_example(example)
