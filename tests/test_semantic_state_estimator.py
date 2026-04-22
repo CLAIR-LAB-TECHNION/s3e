@@ -638,6 +638,97 @@ class TestCalibrationRuntimeModes:
         assert actual == pytest.approx(expected)
 
 
+class TestProbabilitiesFromRaw:
+    def test_uncalibrated_matches_estimate_probabilities(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+
+        raw = se.estimate_raw(single_image)
+        from_raw = se.probabilities_from_raw(raw)
+        direct = se.estimate_probabilities(single_image, calibrated=False)
+        assert from_raw == direct
+
+    def test_calibrated_matches_estimate_probabilities(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        se._platt_scaling_profile = PlattScalingProfile(
+            scope="global",
+            probability_method="logprobs",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            domain_fingerprint="irrelevant-for-this-test",
+            score_kind="grouped_log_odds",
+            groups={
+                GLOBAL_CALIBRATION_KEY: PlattParameters(
+                    a=2.0,
+                    b=0.0,
+                    sample_count=8,
+                    positive_count=4,
+                    negative_count=4,
+                )
+            },
+        )
+
+        raw = se.estimate_raw(single_image)
+        from_raw = se.probabilities_from_raw(raw, calibrated=True)
+        direct = se.estimate_probabilities(single_image, calibrated=True)
+        assert from_raw == direct
+
+    def test_both_from_single_raw_call(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        se._platt_scaling_profile = PlattScalingProfile(
+            scope="global",
+            probability_method="logprobs",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            domain_fingerprint="irrelevant-for-this-test",
+            score_kind="grouped_log_odds",
+            groups={
+                GLOBAL_CALIBRATION_KEY: PlattParameters(
+                    a=2.0,
+                    b=0.0,
+                    sample_count=8,
+                    positive_count=4,
+                    negative_count=4,
+                )
+            },
+        )
+
+        raw = se.estimate_raw(single_image)
+        uncalibrated = se.probabilities_from_raw(raw, calibrated=False)
+        calibrated = se.probabilities_from_raw(raw, calibrated=True)
+
+        assert uncalibrated["on(a,b)"] != pytest.approx(calibrated["on(a,b)"])
+        assert all(prob == pytest.approx(0.8) for prob in uncalibrated.values())
+
+    def test_calibrated_true_without_profile_raises(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+
+        raw = se.estimate_raw(single_image)
+        with pytest.raises(ValueError, match="fit_platt_scaling"):
+            se.probabilities_from_raw(raw, calibrated=True)
+
+    def test_auto_mode_without_profile_returns_uncalibrated(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+
+        raw = se.estimate_raw(single_image)
+        from_raw = se.probabilities_from_raw(raw)
+        assert all(prob == pytest.approx(0.8) for prob in from_raw.values())
+
+
 class TestPlattScalingErrors:
     def test_fit_platt_scaling_rejects_text_match_mode(
         self, blocksworld_domain, blocksworld_problem

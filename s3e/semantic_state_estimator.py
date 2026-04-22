@@ -217,7 +217,9 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                     pred: probability for pred, (probability, _) in details.items()
                 }
             per_image_calibrated = [
-                self._calibrate_prediction_details(self._estimate_single([img]))
+                self.probabilities_from_raw(
+                    self.estimate_raw([img]), calibrated=True
+                )
                 for img in images
             ]
             predicates = list(per_image_calibrated[0].keys())
@@ -226,11 +228,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 for pred in predicates
             }
 
-        details = self._estimate_single(images)
-        if not use_calibration:
-            return {pred: probability for pred, (probability, _) in details.items()}
-
-        return self._calibrate_prediction_details(details)
+        raw = self.estimate_raw(images)
+        return self.probabilities_from_raw(raw, calibrated=calibrated)
 
     def estimate_raw(self, images: list[Image]) -> dict[str, VLMOutput]:
         """Get the full VLMOutput for each grounded predicate."""
@@ -386,6 +385,39 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 "Loaded lifted Platt scaling profile is missing parameters "
                 f"for lifted fluent(s): {missing}."
             )
+
+    def probabilities_from_raw(
+        self,
+        raw_outputs: dict[str, VLMOutput],
+        calibrated: bool | None = None,
+    ) -> dict[str, float]:
+        """Derive probabilities from already-obtained raw VLM outputs.
+
+        This avoids a second VLM invocation when you need both calibrated
+        and uncalibrated probabilities for the same observation::
+
+            raw = estimator.estimate_raw(images)
+            uncalibrated = estimator.probabilities_from_raw(raw)
+            calibrated = estimator.probabilities_from_raw(raw, calibrated=True)
+
+        Args:
+            raw_outputs: Mapping of grounded predicate strings to
+                :class:`VLMOutput`, as returned by :meth:`estimate_raw`.
+            calibrated: Whether to apply Platt scaling.  ``None`` auto-detects
+                (apply if a profile is loaded), ``True`` requires a profile,
+                ``False`` always returns uncalibrated probabilities.
+
+        Returns:
+            Mapping of grounded predicate strings to P(true).
+        """
+        use_calibration = self._resolve_calibrated_flag(calibrated)
+        details = {
+            pred: self._extract_probability(output)
+            for pred, output in raw_outputs.items()
+        }
+        if not use_calibration:
+            return {pred: probability for pred, (probability, _) in details.items()}
+        return self._calibrate_prediction_details(details)
 
     def _calibrate_prediction_details(
         self, details: dict[str, tuple[float, float]]
