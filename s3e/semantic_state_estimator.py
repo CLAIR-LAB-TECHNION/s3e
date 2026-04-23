@@ -230,12 +230,58 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         confidence: float | None = None,
         calibrated: bool | None = None,
         predicates: list[str] | None = None,
-    ) -> dict[str, bool]:
-        probs = self.estimate_probabilities(
-            images, calibrated=calibrated, predicates=predicates
+    ) -> dict[str, bool | None]:
+        details = self.estimate_prediction_details(
+            images,
+            calibrated=calibrated,
+            predicates=predicates,
         )
         threshold = confidence if confidence is not None else self.confidence
-        return {pred: bool(prob >= threshold) for pred, prob in probs.items()}
+        return {
+            pred: None if detail.none_is_max_raw else bool(detail.probability >= threshold)
+            for pred, detail in details.items()
+        }
+
+    def estimate_prediction_details(
+        self,
+        images: list[Image],
+        calibrated: bool | None = None,
+        predicates: list[str] | None = None,
+    ) -> dict[str, PredicatePredictionDetails]:
+        if self.multi_image_strategy != "average":
+            raw = self.estimate_raw(images, predicates=predicates)
+            return self.prediction_details_from_raw(raw, calibrated=calibrated)
+
+        per_image = [
+            self.prediction_details_from_raw(
+                self.estimate_raw([img], predicates=predicates),
+                calibrated=calibrated,
+            )
+            for img in images
+        ]
+        return self._average_prediction_details(per_image)
+
+    def _average_prediction_details(
+        self,
+        per_image_details: list[dict[str, PredicatePredictionDetails]],
+    ) -> dict[str, PredicatePredictionDetails]:
+        predicates = list(per_image_details[0].keys())
+        result: dict[str, PredicatePredictionDetails] = {}
+        for pred in predicates:
+            items = [details[pred] for details in per_image_details]
+            raw_true_mass = float(np.mean([d.raw_true_mass for d in items]))
+            raw_false_mass = float(np.mean([d.raw_false_mass for d in items]))
+            raw_none_mass = float(np.mean([d.raw_none_mass for d in items]))
+            result[pred] = PredicatePredictionDetails(
+                probability=float(np.mean([d.probability for d in items])),
+                raw_probability=float(np.mean([d.raw_probability for d in items])),
+                score=float(np.mean([d.score for d in items])),
+                raw_true_mass=raw_true_mass,
+                raw_false_mass=raw_false_mass,
+                raw_none_mass=raw_none_mass,
+                none_is_max_raw=raw_none_mass > raw_true_mass and raw_none_mass > raw_false_mass,
+            )
+        return result
 
     def estimate_probabilities(
         self,
@@ -252,28 +298,10 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 query.  When ``None`` (default), all predicates are
                 queried.  Unknown predicates raise :class:`ValueError`.
         """
-        use_calibration = self._resolve_calibrated_flag(calibrated)
-        if self.multi_image_strategy == "average":
-            if not use_calibration:
-                details = self._estimate_average(images, predicates=predicates)
-                return {
-                    pred: probability for pred, (probability, _) in details.items()
-                }
-            per_image_calibrated = [
-                self.probabilities_from_raw(
-                    self.estimate_raw([img], predicates=predicates),
-                    calibrated=True,
-                )
-                for img in images
-            ]
-            preds = list(per_image_calibrated[0].keys())
-            return {
-                pred: float(np.mean([details[pred] for details in per_image_calibrated]))
-                for pred in preds
-            }
-
-        raw = self.estimate_raw(images, predicates=predicates)
-        return self.probabilities_from_raw(raw, calibrated=calibrated)
+        details = self.estimate_prediction_details(
+            images, calibrated=calibrated, predicates=predicates
+        )
+        return {pred: detail.probability for pred, detail in details.items()}
 
     def estimate_raw(
         self,
@@ -374,12 +402,12 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             example_up_problem = create_up_problem(self._domain, example_problem)
             per_sample_details = self._estimate_calibration_example(example)
             for details in per_sample_details:
-                for predicate, (_, score) in details.items():
+                for predicate, detail in details.items():
                     if scope == "global":
                         key = GLOBAL_CALIBRATION_KEY
                     else:
                         key = get_lifted_predicate_key(example_up_problem, predicate)
-                    grouped_scores.setdefault(key, []).append(score)
+                    grouped_scores.setdefault(key, []).append(detail.score)
                     grouped_labels.setdefault(key, []).append(example.state_dict[predicate])
 
         params_by_group: dict[str, PlattParameters] = {}
@@ -613,19 +641,10 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         details = self.prediction_details_from_raw(raw_outputs, calibrated=calibrated)
         return {pred: detail.probability for pred, detail in details.items()}
 
-    def _calibrate_prediction_details(
-        self, details: dict[str, tuple[float, float]]
-    ) -> dict[str, float]:
-        result: dict[str, float] = {}
-        for pred, (probability, score) in details.items():
-            calibrated = self._apply_platt_profile(pred, score)
-            result[pred] = calibrated if calibrated is not None else probability
-        return result
-
     def _estimate_calibration_example(
         self,
         example: CalibrationExample,
-    ) -> list[dict[str, tuple[float, float]]]:
+    ) -> list[dict[str, PredicatePredictionDetails]]:
         original_problem = self._problem
         try:
             if example.problem is not None:
@@ -638,8 +657,19 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 )
             labeled = list(example.state_dict.keys())
             if self.multi_image_strategy == "average":
-                return [self._estimate_single([image], predicates=labeled) for image in example.images]
-            return [self._estimate_single(example.images, predicates=labeled)]
+                return [
+                    self.prediction_details_from_raw(
+                        self.estimate_raw([image], predicates=labeled),
+                        calibrated=False,
+                    )
+                    for image in example.images
+                ]
+            return [
+                self.prediction_details_from_raw(
+                    self.estimate_raw(example.images, predicates=labeled),
+                    calibrated=False,
+                )
+            ]
         finally:
             if example.problem is not None:
                 self.swap_problem(self._domain, original_problem)
@@ -661,66 +691,3 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 f"Unknown predicate(s): {', '.join(sorted(unknown))}"
             )
         return {p: self.queries_dict[p] for p in predicates}
-
-    def _estimate_single(
-        self,
-        images: list[Image],
-        predicates: list[str] | None = None,
-    ) -> dict[str, tuple[float, float]]:
-        """Estimate probabilities with all images in a single pass."""
-        raw = self.estimate_raw(images, predicates=predicates)
-        return {
-            pred: self._extract_probability(output)
-            for pred, output in raw.items()
-        }
-
-    def _estimate_average(
-        self,
-        images: list[Image],
-        predicates: list[str] | None = None,
-    ) -> dict[str, tuple[float, float]]:
-        """Estimate probabilities by averaging across individual images."""
-        per_image_details = [
-            self._estimate_single([img], predicates=predicates)
-            for img in images
-        ]
-        predicates = list(per_image_details[0].keys())
-        return {
-            pred: (
-                float(np.mean([details[pred][0] for details in per_image_details])),
-                float(np.mean([details[pred][1] for details in per_image_details])),
-            )
-            for pred in predicates
-        }
-
-    def _extract_probability(self, output: VLMOutput) -> tuple[float, float]:
-        """Extract P(true) from a VLMOutput."""
-        if self.probability_method == "text_match":
-            probability = self._extract_text_match(output)
-            return probability, 0.0
-        return self._extract_logprobs(output)
-
-    def _extract_logprobs(self, output: VLMOutput) -> tuple[float, float]:
-        """Extract P(true) by grouping and normalizing token probabilities."""
-        true_sum = sum(
-            output.token_probs.get(tok, 0.0) for tok in self.true_tokens
-        )
-        false_sum = sum(
-            output.token_probs.get(tok, 0.0) for tok in self.false_tokens
-        )
-        total = true_sum + false_sum
-        if total == 0:
-            return 0.5, 0.0
-        probability = float(np.clip(true_sum / total, 0.0, 1.0))
-        score = grouped_log_odds(output.token_probs, self.true_tokens, self.false_tokens)
-        return probability, score
-
-    def _extract_text_match(self, output: VLMOutput) -> float:
-        """Extract P(true) by checking if generated text matches true tokens."""
-        if output.text is None:
-            return 0.5
-        text = output.text.strip().lower()
-        true_lower = {t.lower() for t in self.true_tokens}
-        if text in true_lower:
-            return 1.0
-        return 0.0

@@ -44,7 +44,7 @@ class StateEstimator(ABC):
         self.up_problem = create_up_problem(domain, problem)
 
     @abstractmethod
-    def __call__(self, images: list[Image]) -> dict[str, bool]:
+    def __call__(self, images: list[Image]) -> dict[str, bool | None]:
         """Estimate the current state from images.
 
         Args:
@@ -53,7 +53,7 @@ class StateEstimator(ABC):
 
         Returns:
             Dictionary mapping predicate strings (e.g. ``"on(a,b)"``)
-            to boolean values.
+            to boolean values, or ``None`` when the estimator abstains.
         """
         ...
 
@@ -82,7 +82,7 @@ class ProbabilisticStateEstimator(StateEstimator, ABC):
 
     def __call__(
         self, images: list[Image], confidence: float | None = None
-    ) -> dict[str, bool]:
+    ) -> dict[str, bool | None]:
         """Estimate state as boolean predicates via thresholded probabilities.
 
         Args:

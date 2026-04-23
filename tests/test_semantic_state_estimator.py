@@ -1666,6 +1666,63 @@ class TestNullTokenDetails:
         assert probs["on(a,b)"] == pytest.approx(2.0 / 3.0)
 
 
+class TestNullAwareCall:
+    def test_call_returns_none_when_null_mass_is_strictly_largest(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.2, "false": 0.1, "null": 0.6})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+
+        state = se(single_image, predicates=["on(a,b)"])
+        assert state == {"on(a,b)": None}
+
+    def test_call_uses_threshold_when_null_mass_ties_true(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.4, "false": 0.1, "null": 0.4})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            confidence=0.5,
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+
+        state = se(single_image, predicates=["on(a,b)"])
+        assert state == {"on(a,b)": True}
+
+    def test_estimate_prediction_details_matches_projection_from_raw(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.6, "false": 0.2, "null": 0.1})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+
+        direct = se.estimate_prediction_details(
+            single_image,
+            calibrated=False,
+            predicates=["on(a,b)"],
+        )
+        raw = se.estimate_raw(single_image, predicates=["on(a,b)"])
+        from_raw = se.prediction_details_from_raw(raw, calibrated=False)
+        assert direct == from_raw
+
+
 @pytest.mark.slow
 class TestSemanticStateEstimatorIntegration:
     """End-to-end integration tests with a tiny real HuggingFace VLM."""
