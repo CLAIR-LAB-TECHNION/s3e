@@ -1723,6 +1723,80 @@ class TestNullAwareCall:
         assert direct == from_raw
 
 
+class TestNullTokenCalibrationCompatibility:
+    def test_prediction_details_from_raw_supports_both_binary_views(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2, "null": 0.6})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+        se._platt_scaling_profile = PlattScalingProfile(
+            scope="global",
+            probability_method="logprobs",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            domain_fingerprint="irrelevant-for-this-test",
+            score_kind="grouped_log_odds",
+            groups={
+                GLOBAL_CALIBRATION_KEY: PlattParameters(
+                    a=2.0,
+                    b=0.0,
+                    sample_count=8,
+                    positive_count=4,
+                    negative_count=4,
+                )
+            },
+        )
+
+        raw = se.estimate_raw(single_image, predicates=["on(a,b)"])
+        uncalibrated = se.prediction_details_from_raw(raw, calibrated=False)["on(a,b)"]
+        calibrated = se.prediction_details_from_raw(raw, calibrated=True)["on(a,b)"]
+
+        assert calibrated.probability != pytest.approx(uncalibrated.probability)
+        assert calibrated.raw_probability == pytest.approx(uncalibrated.raw_probability)
+        assert calibrated.raw_none_mass == pytest.approx(uncalibrated.raw_none_mass)
+        assert calibrated.none_is_max_raw is uncalibrated.none_is_max_raw
+
+    def test_probabilities_from_raw_matches_estimate_probabilities_with_null_tokens(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2, "null": 0.6})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+
+        raw = se.estimate_raw(single_image)
+        from_raw = se.probabilities_from_raw(raw, calibrated=False)
+        direct = se.estimate_probabilities(single_image, calibrated=False)
+        assert from_raw == direct
+
+    def test_load_platt_scaling_ignores_null_tokens(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        path = save_global_platt_profile(tmp_path, blocksworld_domain, blocksworld_problem)
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(),
+            null_tokens=["null"],
+        )
+
+        se.load_platt_scaling(path)
+        probs = se.estimate_probabilities(make_calibration_image(1), calibrated=True)
+        assert "on(a,b)" in probs
+
+
 @pytest.mark.slow
 class TestSemanticStateEstimatorIntegration:
     """End-to-end integration tests with a tiny real HuggingFace VLM."""
