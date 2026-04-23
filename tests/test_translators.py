@@ -69,6 +69,37 @@ class TestTemplateTranslator:
         assert result["on(a,b)"] == "Is a on top of b?"
         assert result["clear(a)"] == "Is a clear?"
 
+    def test_fills_templates_with_named_placeholders(self):
+        templates = {
+            "on": "Is {x} on top of {y}?",
+            "clear": "Is {x} clear?",
+        }
+        translator = TemplateTranslator(templates)
+        result = translator.translate(SAMPLE_PREDICATES, SAMPLE_DOMAIN, SAMPLE_PROBLEM)
+        assert result["on(a,b)"] == "Is a on top of b?"
+        assert result["clear(a)"] == "Is a clear?"
+
+    def test_fills_templates_with_custom_kwarg_name(self):
+        domain = """
+        (define (domain people)
+          (:requirements :typing)
+          (:types person)
+          (:predicates (hasname ?x - person))
+        )
+        """
+        problem = """
+        (define (problem p1)
+          (:domain people)
+          (:objects alice - person)
+          (:init)
+          (:goal (hasname alice))
+        )
+        """
+        translator = TemplateTranslator({"hasname": "my name is {name}"})
+
+        result = translator.translate(["hasname(alice)"], domain, problem)
+        assert result["hasname(alice)"] == "my name is alice"
+
     def test_raises_on_missing_template(self):
         templates = {"on": "Is {0} on {1}?"}  # missing "clear"
         translator = TemplateTranslator(templates)
