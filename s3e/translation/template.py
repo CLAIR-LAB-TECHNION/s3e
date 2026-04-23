@@ -12,7 +12,7 @@ _FORMATTER = string.Formatter()
 
 def _parse_predicate(predicate_str: str) -> tuple[str, list[str]]:
     """Parse a grounded predicate string into its name and arguments."""
-    match = re.match(r"(\w+)\((.*)\)", predicate_str)
+    match = re.match(r"^([\w-]+)\((.*)\)$", predicate_str)
     if not match:
         raise ValueError(f"Cannot parse predicate string: {predicate_str!r}")
     name = match.group(1)

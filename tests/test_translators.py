@@ -100,6 +100,27 @@ class TestTemplateTranslator:
         result = translator.translate(["hasname(alice)"], domain, problem)
         assert result["hasname(alice)"] == "my name is alice"
 
+    def test_hyphenated_predicate_name(self):
+        domain = """
+        (define (domain people)
+          (:requirements :typing)
+          (:types person)
+          (:predicates (has-name ?person - person))
+        )
+        """
+        problem = """
+        (define (problem p1)
+          (:domain people)
+          (:objects alice - person)
+          (:init)
+          (:goal (has-name alice))
+        )
+        """
+        translator = TemplateTranslator({"has-name": "is {person} registered?"})
+
+        result = translator.translate(["has-name(alice)"], domain, problem)
+        assert result["has-name(alice)"] == "is alice registered?"
+
     def test_raises_on_missing_template(self):
         templates = {"on": "Is {0} on {1}?"}  # missing "clear"
         translator = TemplateTranslator(templates)
