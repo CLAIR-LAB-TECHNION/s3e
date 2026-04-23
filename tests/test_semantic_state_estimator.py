@@ -1399,6 +1399,77 @@ class TestSwapProblem:
         assert raw == {"lit(lamp1)": pytest.approx(0.8)}
 
 
+class TestPredicateFiltering:
+    """Tests for the predicates parameter on __call__, estimate_probabilities, and estimate_raw."""
+
+    def test_estimate_raw_filters_predicates(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=fake_vlm
+        )
+        subset = ["on(a,b)", "clear(a)"]
+        raw = se.estimate_raw(single_image, predicates=subset)
+        assert set(raw.keys()) == set(subset)
+
+    def test_estimate_probabilities_filters_predicates(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=fake_vlm
+        )
+        subset = ["on(a,b)"]
+        probs = se.estimate_probabilities(single_image, predicates=subset)
+        assert list(probs.keys()) == subset
+
+    def test_call_filters_predicates(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=fake_vlm
+        )
+        subset = ["clear(b)"]
+        result = se(single_image, predicates=subset)
+        assert list(result.keys()) == subset
+        assert all(isinstance(v, bool) for v in result.values())
+
+    def test_unknown_predicate_raises(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=fake_vlm
+        )
+        with pytest.raises(ValueError, match="Unknown predicate"):
+            se.estimate_raw(single_image, predicates=["nonexistent(x)"])
+
+    def test_none_predicates_returns_all(
+        self, fake_vlm, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=fake_vlm
+        )
+        all_result = se.estimate_raw(single_image)
+        none_result = se.estimate_raw(single_image, predicates=None)
+        assert set(all_result.keys()) == set(none_result.keys())
+
+    def test_average_strategy_filters_predicates(
+        self, fake_vlm, blocksworld_domain, blocksworld_problem
+    ):
+        images = [
+            Image.new("RGB", (2, 2), color=(0, 0, 0)),
+            Image.new("RGB", (2, 2), color=(1, 1, 1)),
+        ]
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=fake_vlm,
+            multi_image_strategy="average",
+        )
+        subset = ["on(a,b)", "clear(a)"]
+        probs = se.estimate_probabilities(images, predicates=subset)
+        assert set(probs.keys()) == set(subset)
+
+
 @pytest.mark.slow
 class TestSemanticStateEstimatorIntegration:
     """End-to-end integration tests with a tiny real HuggingFace VLM."""

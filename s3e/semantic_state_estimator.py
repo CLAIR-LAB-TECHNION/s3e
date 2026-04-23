@@ -199,8 +199,11 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         images: list[Image],
         confidence: float | None = None,
         calibrated: bool | None = None,
+        predicates: list[str] | None = None,
     ) -> dict[str, bool]:
-        probs = self.estimate_probabilities(images, calibrated=calibrated)
+        probs = self.estimate_probabilities(
+            images, calibrated=calibrated, predicates=predicates
+        )
         threshold = confidence if confidence is not None else self.confidence
         return {pred: bool(prob >= threshold) for pred, prob in probs.items()}
 
@@ -208,37 +211,59 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         self,
         images: list[Image],
         calibrated: bool | None = None,
+        predicates: list[str] | None = None,
     ) -> dict[str, float]:
-        """Estimate P(true) for each grounded predicate."""
+        """Estimate P(true) for each grounded predicate.
+
+        Args:
+            images: List of PIL images representing the current state.
+            calibrated: Whether to apply Platt scaling.
+            predicates: Optional list of grounded predicate strings to
+                query.  When ``None`` (default), all predicates are
+                queried.  Unknown predicates raise :class:`ValueError`.
+        """
         use_calibration = self._resolve_calibrated_flag(calibrated)
         if self.multi_image_strategy == "average":
             if not use_calibration:
-                details = self._estimate_average(images)
+                details = self._estimate_average(images, predicates=predicates)
                 return {
                     pred: probability for pred, (probability, _) in details.items()
                 }
             per_image_calibrated = [
                 self.probabilities_from_raw(
-                    self.estimate_raw([img]), calibrated=True
+                    self.estimate_raw([img], predicates=predicates),
+                    calibrated=True,
                 )
                 for img in images
             ]
-            predicates = list(per_image_calibrated[0].keys())
+            preds = list(per_image_calibrated[0].keys())
             return {
                 pred: float(np.mean([details[pred] for details in per_image_calibrated]))
-                for pred in predicates
+                for pred in preds
             }
 
-        raw = self.estimate_raw(images)
+        raw = self.estimate_raw(images, predicates=predicates)
         return self.probabilities_from_raw(raw, calibrated=calibrated)
 
-    def estimate_raw(self, images: list[Image]) -> dict[str, VLMOutput]:
-        """Get the full VLMOutput for each grounded predicate."""
+    def estimate_raw(
+        self,
+        images: list[Image],
+        predicates: list[str] | None = None,
+    ) -> dict[str, VLMOutput]:
+        """Get the full VLMOutput for each grounded predicate.
+
+        Args:
+            images: List of PIL images representing the current state.
+            predicates: Optional list of grounded predicate strings to
+                query.  When ``None`` (default), all predicates are
+                queried.  Unknown predicates raise :class:`ValueError`.
+        """
+        queries = self._resolve_queries(predicates)
         prompts = [
             self.user_prompt_template.format(query=query)
-            for query in self.queries_dict.values()
+            for query in queries.values()
         ]
-        predicates = list(self.queries_dict.keys())
+        predicates = list(queries.keys())
 
         results: dict[str, VLMOutput] = {}
         num_batches = math.ceil(len(prompts) / self.batch_size)
@@ -444,17 +469,46 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             if example.problem is not None:
                 self.swap_problem(self._domain, original_problem)
 
-    def _estimate_single(self, images: list[Image]) -> dict[str, tuple[float, float]]:
+    def _resolve_queries(
+        self, predicates: list[str] | None
+    ) -> dict[str, str]:
+        """Return the queries dict filtered to *predicates*.
+
+        When *predicates* is ``None``, the full ``queries_dict`` is
+        returned.  Otherwise, only the requested subset is returned
+        (order preserved) and unknown predicates raise ``ValueError``.
+        """
+        if predicates is None:
+            return self.queries_dict
+        unknown = set(predicates) - set(self.queries_dict)
+        if unknown:
+            raise ValueError(
+                f"Unknown predicate(s): {', '.join(sorted(unknown))}"
+            )
+        return {p: self.queries_dict[p] for p in predicates}
+
+    def _estimate_single(
+        self,
+        images: list[Image],
+        predicates: list[str] | None = None,
+    ) -> dict[str, tuple[float, float]]:
         """Estimate probabilities with all images in a single pass."""
-        raw = self.estimate_raw(images)
+        raw = self.estimate_raw(images, predicates=predicates)
         return {
             pred: self._extract_probability(output)
             for pred, output in raw.items()
         }
 
-    def _estimate_average(self, images: list[Image]) -> dict[str, tuple[float, float]]:
+    def _estimate_average(
+        self,
+        images: list[Image],
+        predicates: list[str] | None = None,
+    ) -> dict[str, tuple[float, float]]:
         """Estimate probabilities by averaging across individual images."""
-        per_image_details = [self._estimate_single([img]) for img in images]
+        per_image_details = [
+            self._estimate_single([img], predicates=predicates)
+            for img in images
+        ]
         predicates = list(per_image_details[0].keys())
         return {
             pred: (
