@@ -4,7 +4,9 @@
 
 **Goal:** Add optional null-token support to `SemanticStateEstimator` so it can abstain with `None` while preserving the existing binary probability API and the single-raw-call calibrated/uncalibrated workflow.
 
-**Architecture:** Introduce a shared `PredicatePredictionDetails` intermediate object inside `SemanticStateEstimator` and make every public view project from it. Keep calibration strictly binary over true/false token groups, expose null metadata beside the binary probability, and drive `__call__()` abstention from raw null dominance only.
+**Architecture:** Replace the existing tuple-based extraction pipeline with a single shared `PredicatePredictionDetails` intermediate. Every public method projects from it. Keep calibration strictly binary over true/false token groups, expose null metadata beside the binary probability, and drive `__call__()` abstention from raw null dominance only.
+
+**Key design principle:** One shared internal pipeline. `_extract_prediction_details()` is the single point of truth for converting a `VLMOutput` into structured details. All public methods — `estimate_probabilities()`, `probabilities_from_raw()`, `estimate_prediction_details()`, `prediction_details_from_raw()`, and `__call__()` — project from it. The old tuple-based methods (`_extract_probability`, `_extract_logprobs`, `_extract_text_match`, `_estimate_single`, `_estimate_average`, `_calibrate_prediction_details`) are deleted.
 
 **Tech Stack:** Python 3.10+, pytest, NumPy, PIL fixtures, existing `s3e` calibration helpers
 
@@ -13,7 +15,7 @@
 ## File Map
 
 - Modify: `s3e/semantic_state_estimator.py`
-  Add `PredicatePredictionDetails`, `null_tokens`, token-group validation, raw-details extraction, the new companion details APIs, and the null-aware `__call__()` logic.
+  Add `PredicatePredictionDetails`, `null_tokens`, token-group validation, `_extract_prediction_details()`, `prediction_details_from_raw()`, `estimate_prediction_details()`, `_average_prediction_details()`. Rewrite `probabilities_from_raw()`, `estimate_probabilities()`, and `__call__()` as thin projections from the details path. Update `_estimate_calibration_example()` and `fit_platt_scaling()` to use details. Delete `_extract_probability()`, `_extract_logprobs()`, `_extract_text_match()`, `_estimate_single()`, `_estimate_average()`, `_calibrate_prediction_details()`.
 - Modify: `s3e/state_estimator.py`
   Widen the abstract/base `__call__()` return types and docs from `bool` to `bool | None` without changing the binary estimator fallback behavior.
 - Modify: `s3e/__init__.py`
@@ -118,7 +120,7 @@ pytest \
   -v
 ```
 
-Expected: FAIL with `TypeError: SemanticStateEstimator.__init__() got an unexpected keyword argument 'null_tokens'` and `AttributeError: 'SemanticStateEstimator' object has no attribute 'prediction_details_from_raw'`.
+Expected: FAIL with `TypeError: SemanticStateEstimator.__init__() got an unexpected keyword argument 'null_tokens'` and `ImportError` for `PredicatePredictionDetails`.
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -139,53 +141,20 @@ class PredicatePredictionDetails:
     none_is_max_raw: bool
 ```
 
+Add `null_tokens` to `__init__`, after the existing `false_tokens` block:
+
 ```python
-def __init__(
-    self,
-    domain: str,
-    problem: str,
-    vlm: Union[VLMBackend, str],
-    query_translator: QueryTranslator | None = None,
-    system_prompt: str | None = None,
-    user_prompt_template: str | None = None,
-    true_tokens: list[str] | None = None,
-    false_tokens: list[str] | None = None,
     null_tokens: list[str] | None = None,
-    confidence: float = 0.5,
-    multi_image_strategy: str = "single",
-    probability_method: str = "logprobs",
-    batch_size: int = 8,
-    additional_instructions: str | None = None,
-    vlm_kwargs: dict | None = None,
-    inference_kwargs: dict | None = None,
-):
-    super().__init__(domain, problem, confidence)
-    if isinstance(vlm, str):
-        self.vlm = self._build_vlm_from_string(vlm, vlm_kwargs or {})
-    else:
-        self.vlm = vlm
-    self.inference_kwargs = inference_kwargs or {}
-    self.query_translator = query_translator or IdentityTranslator()
-    has_nl_translator = not isinstance(self.query_translator, IdentityTranslator)
-    if true_tokens is not None:
-        self.true_tokens = true_tokens
-    else:
-        self.true_tokens = (
-            list(TRUE_TOKENS_WITH_TRANSLATION)
-            if has_nl_translator
-            else list(TRUE_TOKENS_NO_TRANSLATION)
-        )
-    if false_tokens is not None:
-        self.false_tokens = false_tokens
-    else:
-        self.false_tokens = (
-            list(FALSE_TOKENS_WITH_TRANSLATION)
-            if has_nl_translator
-            else list(FALSE_TOKENS_NO_TRANSLATION)
-        )
+```
+
+At the end of the token-group section in `__init__`, add:
+
+```python
     self.null_tokens = list(null_tokens or [])
     self._validate_token_groups()
 ```
+
+Add the validation helper:
 
 ```python
 def _validate_token_groups(self) -> None:
@@ -198,11 +167,18 @@ def _validate_token_groups(self) -> None:
         if values:
             joined = ", ".join(sorted(values))
             raise ValueError(f"Token groups must be disjoint; overlap between {label}: {joined}")
+```
 
+Add the single shared extraction method that handles both `logprobs` and `text_match`. This method is self-contained — it does not delegate to any of the old extraction methods:
 
+```python
 def _extract_prediction_details(self, output: VLMOutput) -> PredicatePredictionDetails:
     if self.probability_method == "text_match":
-        probability = self._extract_text_match(output)
+        if output.text is None:
+            return PredicatePredictionDetails(0.5, 0.5, 0.0, 0.0, 0.0, 0.0, False)
+        text = output.text.strip().lower()
+        true_lower = {t.lower() for t in self.true_tokens}
+        probability = 1.0 if text in true_lower else 0.0
         return PredicatePredictionDetails(
             probability=probability,
             raw_probability=probability,
@@ -228,8 +204,11 @@ def _extract_prediction_details(self, output: VLMOutput) -> PredicatePredictionD
         raw_none_mass=raw_none_mass,
         none_is_max_raw=raw_none_mass > raw_true_mass and raw_none_mass > raw_false_mass,
     )
+```
 
+Add the structured details method with calibration support:
 
+```python
 def prediction_details_from_raw(
     self,
     raw_outputs: dict[str, VLMOutput],
@@ -253,7 +232,7 @@ def prediction_details_from_raw(
     return result
 ```
 
-Keep `estimate_probabilities()` binary by projecting from the new details map:
+Rewrite `probabilities_from_raw()` to project from the details path:
 
 ```python
 def probabilities_from_raw(
@@ -261,6 +240,25 @@ def probabilities_from_raw(
     raw_outputs: dict[str, VLMOutput],
     calibrated: bool | None = None,
 ) -> dict[str, float]:
+    """Derive probabilities from already-obtained raw VLM outputs.
+
+    This avoids a second VLM invocation when you need both calibrated
+    and uncalibrated probabilities for the same observation::
+
+        raw = estimator.estimate_raw(images)
+        uncalibrated = estimator.probabilities_from_raw(raw)
+        calibrated = estimator.probabilities_from_raw(raw, calibrated=True)
+
+    Args:
+        raw_outputs: Mapping of grounded predicate strings to
+            :class:`VLMOutput`, as returned by :meth:`estimate_raw`.
+        calibrated: Whether to apply Platt scaling.  ``None`` auto-detects
+            (apply if a profile is loaded), ``True`` requires a profile,
+            ``False`` always returns uncalibrated probabilities.
+
+    Returns:
+        Mapping of grounded predicate strings to P(true).
+    """
     details = self.prediction_details_from_raw(raw_outputs, calibrated=calibrated)
     return {pred: detail.probability for pred, detail in details.items()}
 ```
@@ -310,7 +308,9 @@ git add s3e/semantic_state_estimator.py s3e/__init__.py tests/test_semantic_stat
 git commit -m "feat: add raw null-token prediction details"
 ```
 
-### Task 2: Make `__call__()` Abstain On Dominant Null Mass
+### Task 2: Unify Pipeline And Add Null Abstention
+
+This task completes the pipeline unification. After this task, every public method projects from `_extract_prediction_details()`. The old tuple-based extraction methods are deleted. `__call__()` gains abstention behavior for dominant null mass.
 
 **Files:**
 - Modify: `tests/test_semantic_state_estimator.py`
@@ -393,7 +393,33 @@ Expected: FAIL because `__call__()` still returns `bool` values and `estimate_pr
 
 - [ ] **Step 3: Write the minimal implementation**
 
-In `s3e/semantic_state_estimator.py`, add the convenience wrapper and switch `__call__()` to the details path:
+Add the multi-image averaging helper:
+
+```python
+def _average_prediction_details(
+    self,
+    per_image_details: list[dict[str, PredicatePredictionDetails]],
+) -> dict[str, PredicatePredictionDetails]:
+    predicates = list(per_image_details[0].keys())
+    result: dict[str, PredicatePredictionDetails] = {}
+    for pred in predicates:
+        items = [details[pred] for details in per_image_details]
+        raw_true_mass = float(np.mean([d.raw_true_mass for d in items]))
+        raw_false_mass = float(np.mean([d.raw_false_mass for d in items]))
+        raw_none_mass = float(np.mean([d.raw_none_mass for d in items]))
+        result[pred] = PredicatePredictionDetails(
+            probability=float(np.mean([d.probability for d in items])),
+            raw_probability=float(np.mean([d.raw_probability for d in items])),
+            score=float(np.mean([d.score for d in items])),
+            raw_true_mass=raw_true_mass,
+            raw_false_mass=raw_false_mass,
+            raw_none_mass=raw_none_mass,
+            none_is_max_raw=raw_none_mass > raw_true_mass and raw_none_mass > raw_false_mass,
+        )
+    return result
+```
+
+Add the convenience wrapper:
 
 ```python
 def estimate_prediction_details(
@@ -402,9 +428,45 @@ def estimate_prediction_details(
     calibrated: bool | None = None,
     predicates: list[str] | None = None,
 ) -> dict[str, PredicatePredictionDetails]:
-    raw = self.estimate_raw(images, predicates=predicates)
-    return self.prediction_details_from_raw(raw, calibrated=calibrated)
+    if self.multi_image_strategy != "average":
+        raw = self.estimate_raw(images, predicates=predicates)
+        return self.prediction_details_from_raw(raw, calibrated=calibrated)
+
+    per_image = [
+        self.prediction_details_from_raw(
+            self.estimate_raw([img], predicates=predicates),
+            calibrated=calibrated,
+        )
+        for img in images
+    ]
+    return self._average_prediction_details(per_image)
 ```
+
+Rewrite `estimate_probabilities()` as a thin projection from the details path:
+
+```python
+def estimate_probabilities(
+    self,
+    images: list[Image],
+    calibrated: bool | None = None,
+    predicates: list[str] | None = None,
+) -> dict[str, float]:
+    """Estimate P(true) for each grounded predicate.
+
+    Args:
+        images: List of PIL images representing the current state.
+        calibrated: Whether to apply Platt scaling.
+        predicates: Optional list of grounded predicate strings to
+            query.  When ``None`` (default), all predicates are
+            queried.  Unknown predicates raise :class:`ValueError`.
+    """
+    details = self.estimate_prediction_details(
+        images, calibrated=calibrated, predicates=predicates
+    )
+    return {pred: detail.probability for pred, detail in details.items()}
+```
+
+Rewrite `__call__()` to use the details path with abstention:
 
 ```python
 def __call__(
@@ -425,6 +487,66 @@ def __call__(
         for pred, detail in details.items()
     }
 ```
+
+Update `_estimate_calibration_example()` to use the details path:
+
+```python
+def _estimate_calibration_example(
+    self,
+    example: CalibrationExample,
+) -> list[dict[str, PredicatePredictionDetails]]:
+    original_problem = self._problem
+    try:
+        if example.problem is not None:
+            self.swap_problem(self._domain, example.problem)
+        unknown = set(example.state_dict.keys()) - set(self.queries_dict)
+        if unknown:
+            raise ValueError(
+                f"Calibration example contains predicate(s) not in the "
+                f"current problem: {', '.join(sorted(unknown))}"
+            )
+        labeled = list(example.state_dict.keys())
+        if self.multi_image_strategy == "average":
+            return [
+                self.prediction_details_from_raw(
+                    self.estimate_raw([image], predicates=labeled),
+                    calibrated=False,
+                )
+                for image in example.images
+            ]
+        return [
+            self.prediction_details_from_raw(
+                self.estimate_raw(example.images, predicates=labeled),
+                calibrated=False,
+            )
+        ]
+    finally:
+        if example.problem is not None:
+            self.swap_problem(self._domain, original_problem)
+```
+
+Update `fit_platt_scaling()` to read `.score` from the details objects. Change the inner loop from:
+
+```python
+for predicate, (_, score) in details.items():
+```
+
+to:
+
+```python
+for predicate, detail in details.items():
+```
+
+and replace `score` with `detail.score` in the body.
+
+Delete the old tuple-based methods that are no longer called:
+
+- `_extract_probability()`
+- `_extract_logprobs()`
+- `_extract_text_match()`
+- `_estimate_single()`
+- `_estimate_average()`
+- `_calibrate_prediction_details()`
 
 In `s3e/state_estimator.py`, widen the types and docs without changing the default thresholding behavior of the base class:
 
@@ -448,9 +570,9 @@ def __call__(
     return {pred: bool(prob >= threshold) for pred, prob in probs.items()}
 ```
 
-- [ ] **Step 4: Run the targeted tests to verify green**
+- [ ] **Step 4: Run the targeted tests to verify green, then run full regression**
 
-Run:
+Run the new tests:
 
 ```bash
 pytest \
@@ -462,11 +584,19 @@ pytest \
 
 Expected: PASS.
 
+Then run the full non-slow suite to verify the pipeline unification preserved all existing behavior:
+
+```bash
+pytest -m "not slow" -v
+```
+
+Expected: all existing tests pass. This confirms that the old tuple-based methods were safely replaced.
+
 - [ ] **Step 5: Commit**
 
 ```bash
 git add s3e/semantic_state_estimator.py s3e/state_estimator.py tests/test_semantic_state_estimator.py
-git commit -m "feat: abstain when null token mass dominates"
+git commit -m "feat: unify pipeline through details path and add null abstention"
 ```
 
 ### Task 3: Preserve Binary Calibration And Single-Raw-Call Reuse
@@ -564,39 +694,11 @@ pytest \
   -v
 ```
 
-Expected: FAIL because the details path does not yet preserve both calibrated and uncalibrated binary views while keeping raw masses stable.
+Expected: These tests should PASS immediately because Tasks 1 and 2 already built all the necessary infrastructure. If they pass, there is no Step 3 implementation needed — move directly to Step 4.
 
-- [ ] **Step 3: Write the minimal implementation**
+If any test fails, investigate and fix the details/calibration interaction in `prediction_details_from_raw()`. The `replace(detail, probability=calibrated_probability)` pattern should already preserve raw masses and `none_is_max_raw`.
 
-Keep calibration binary-only and apply it by replacing only the `probability` field in the details object:
-
-```python
-def prediction_details_from_raw(
-    self,
-    raw_outputs: dict[str, VLMOutput],
-    calibrated: bool | None = None,
-) -> dict[str, PredicatePredictionDetails]:
-    use_calibration = self._resolve_calibrated_flag(calibrated)
-    details = {
-        pred: self._extract_prediction_details(output)
-        for pred, output in raw_outputs.items()
-    }
-    if not use_calibration:
-        return details
-
-    result: dict[str, PredicatePredictionDetails] = {}
-    for pred, detail in details.items():
-        calibrated_probability = self._apply_platt_profile(pred, detail.score)
-        if calibrated_probability is None:
-            result[pred] = detail
-        else:
-            result[pred] = replace(detail, probability=calibrated_probability)
-    return result
-```
-
-Do not change `fit_platt_scaling()`, profile serialization, or `_validate_platt_profile()` beyond ensuring they continue to compare only `true_tokens` and `false_tokens`.
-
-- [ ] **Step 4: Run the targeted tests to verify green**
+- [ ] **Step 3: Verify green**
 
 Run:
 
@@ -610,11 +712,11 @@ pytest \
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add s3e/semantic_state_estimator.py tests/test_semantic_state_estimator.py
-git commit -m "feat: preserve binary calibration with null-token metadata"
+git add tests/test_semantic_state_estimator.py
+git commit -m "test: verify binary calibration compatibility with null tokens"
 ```
 
 ### Task 4: Support `text_match` And Multi-Image Null Details
@@ -738,11 +840,11 @@ pytest \
   -v
 ```
 
-Expected: FAIL because `text_match` details are still binary-only and `estimate_prediction_details()` does not yet average structured details across images.
+Expected: FAIL because `text_match` details are still binary-only (no null-aware one-hot grouping). The multi-image averaging test should PASS because `_average_prediction_details()` already handles null masses from Task 2 — if it passes, that is fine; it was included here to confirm coverage.
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Teach the shared extraction path about one-hot `text_match` grouping and average structured details instead of just `(probability, score)` tuples:
+Replace the text_match branch in `_extract_prediction_details()` with a dedicated null-aware one-hot method:
 
 ```python
 def _extract_text_match_details(self, output: VLMOutput) -> PredicatePredictionDetails:
@@ -771,68 +873,13 @@ def _extract_text_match_details(self, output: VLMOutput) -> PredicatePredictionD
     return PredicatePredictionDetails(0.5, 0.5, 0.0, 0.0, 0.0, 0.0, False)
 ```
 
+Update `_extract_prediction_details()` to delegate:
+
 ```python
 def _extract_prediction_details(self, output: VLMOutput) -> PredicatePredictionDetails:
     if self.probability_method == "text_match":
         return self._extract_text_match_details(output)
-    raw_true_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.true_tokens)
-    raw_false_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.false_tokens)
-    raw_none_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.null_tokens)
-    raw_total = raw_true_mass + raw_false_mass
-    raw_probability = 0.5 if raw_total == 0 else float(np.clip(raw_true_mass / raw_total, 0.0, 1.0))
-    score = 0.0 if raw_total == 0 else grouped_log_odds(output.token_probs, self.true_tokens, self.false_tokens)
-    return PredicatePredictionDetails(
-        probability=raw_probability,
-        raw_probability=raw_probability,
-        score=score,
-        raw_true_mass=raw_true_mass,
-        raw_false_mass=raw_false_mass,
-        raw_none_mass=raw_none_mass,
-        none_is_max_raw=raw_none_mass > raw_true_mass and raw_none_mass > raw_false_mass,
-    )
-```
-
-```python
-def _average_prediction_details(
-    self,
-    per_image_details: list[dict[str, PredicatePredictionDetails]],
-) -> dict[str, PredicatePredictionDetails]:
-    predicates = list(per_image_details[0].keys())
-    result: dict[str, PredicatePredictionDetails] = {}
-    for pred in predicates:
-        raw_true_mass = float(np.mean([details[pred].raw_true_mass for details in per_image_details]))
-        raw_false_mass = float(np.mean([details[pred].raw_false_mass for details in per_image_details]))
-        raw_none_mass = float(np.mean([details[pred].raw_none_mass for details in per_image_details]))
-        result[pred] = PredicatePredictionDetails(
-            probability=float(np.mean([details[pred].probability for details in per_image_details])),
-            raw_probability=float(np.mean([details[pred].raw_probability for details in per_image_details])),
-            score=float(np.mean([details[pred].score for details in per_image_details])),
-            raw_true_mass=raw_true_mass,
-            raw_false_mass=raw_false_mass,
-            raw_none_mass=raw_none_mass,
-            none_is_max_raw=raw_none_mass > raw_true_mass and raw_none_mass > raw_false_mass,
-        )
-    return result
-
-
-def estimate_prediction_details(
-    self,
-    images: list[Image],
-    calibrated: bool | None = None,
-    predicates: list[str] | None = None,
-) -> dict[str, PredicatePredictionDetails]:
-    if self.multi_image_strategy != "average":
-        raw = self.estimate_raw(images, predicates=predicates)
-        return self.prediction_details_from_raw(raw, calibrated=calibrated)
-
-    per_image = [
-        self.prediction_details_from_raw(
-            self.estimate_raw([img], predicates=predicates),
-            calibrated=calibrated,
-        )
-        for img in images
-    ]
-    return self._average_prediction_details(per_image)
+    # ... logprobs path unchanged ...
 ```
 
 - [ ] **Step 4: Run the targeted tests to verify green**
@@ -957,12 +1004,32 @@ git commit -m "docs: clarify null-token abstention behavior"
 - `text_match` one-hot null behavior: Task 4
 - multi-image averaged raw null metadata: Task 4
 - updated public docs/types: Tasks 2 and 5
+- one shared internal pipeline: Task 2 (deletes old tuple-based methods, all public methods project from `_extract_prediction_details`)
 
 No spec requirement is left without a task.
 
+### Pipeline unification checklist
+
+After Task 2 completes, the following old methods must be deleted:
+
+- `_extract_probability()` — replaced by `_extract_prediction_details()`
+- `_extract_logprobs()` — inlined into `_extract_prediction_details()`
+- `_extract_text_match()` — inlined into `_extract_prediction_details()`, later replaced by `_extract_text_match_details()` in Task 4
+- `_estimate_single()` — replaced by `prediction_details_from_raw(estimate_raw(...))`
+- `_estimate_average()` — replaced by `_average_prediction_details()`
+- `_calibrate_prediction_details()` — replaced by calibration logic in `prediction_details_from_raw()`
+
+And the following methods must be rewritten to project from the details path:
+
+- `estimate_probabilities()` — projects `detail.probability` from `estimate_prediction_details()`
+- `probabilities_from_raw()` — projects `detail.probability` from `prediction_details_from_raw()`
+- `__call__()` — projects from `estimate_prediction_details()` with abstention
+- `_estimate_calibration_example()` — returns `list[dict[str, PredicatePredictionDetails]]`
+- `fit_platt_scaling()` — reads `detail.score` instead of tuple index
+
 ### Placeholder scan
 
-The plan contains exact file paths, concrete test names, concrete commands, and concrete code blocks. There are no `TODO`, `TBD`, or “similar to above” placeholders.
+The plan contains exact file paths, concrete test names, concrete commands, and concrete code blocks. There are no `TODO`, `TBD`, or "similar to above" placeholders.
 
 ### Type consistency
 
