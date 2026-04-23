@@ -297,6 +297,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         if scope not in {"global", "lifted"}:
             raise ValueError(f"Unsupported Platt scaling scope: {scope}")
 
+        self._validate_calibration_labels(examples, scope)
+
         grouped_scores: dict[str, list[float]] = {}
         grouped_labels: dict[str, list[bool]] = {}
 
@@ -407,6 +409,46 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             raise ValueError(
                 "Loaded lifted Platt scaling profile is missing parameters "
                 f"for lifted fluent(s): {missing}."
+            )
+
+    def _validate_calibration_labels(
+        self,
+        examples: list[CalibrationExample],
+        scope: str,
+    ) -> None:
+        """Check that every label group has both positive and negative examples.
+
+        This runs before the expensive VLM predictions so that missing
+        label diversity is caught early.
+        """
+        label_sets: dict[str, set[bool]] = {}
+        for example in examples:
+            example_problem = example.problem or self._problem
+            if scope == "global":
+                for predicate in example.state_dict:
+                    label_sets.setdefault(GLOBAL_CALIBRATION_KEY, set()).add(
+                        example.state_dict[predicate]
+                    )
+            else:
+                example_up_problem = create_up_problem(self._domain, example_problem)
+                for predicate in example.state_dict:
+                    key = get_lifted_predicate_key(example_up_problem, predicate)
+                    label_sets.setdefault(key, set()).add(
+                        example.state_dict[predicate]
+                    )
+
+        for key, labels in label_sets.items():
+            if True in labels and False in labels:
+                continue
+            present = "positive" if True in labels else "negative"
+            if scope == "global":
+                raise ValueError(
+                    "Platt scaling requires both positive and negative labels, "
+                    f"but all provided labels are {present}."
+                )
+            raise ValueError(
+                f"Platt scaling requires both positive and negative labels "
+                f"for each lifted predicate, but '{key}' has only {present} labels."
             )
 
     def probabilities_from_raw(
