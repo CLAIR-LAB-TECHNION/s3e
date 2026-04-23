@@ -17,6 +17,7 @@ from tqdm.auto import tqdm
 from .calibration import (
     CalibrationExample,
     GLOBAL_CALIBRATION_KEY,
+    PlattParameters,
     PlattScalingProfile,
     apply_platt_scaling,
     compute_domain_fingerprint,
@@ -287,7 +288,42 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         examples: list[CalibrationExample],
         scope: str = "global",
         progress_bar: bool = False,
+        pass_through_single_class: bool = False,
     ) -> None:
+        """Fit a Platt scaling calibration profile from labeled examples.
+
+        Each example pairs a set of images with a ground-truth boolean
+        state dict.  The estimator queries its VLM for every labeled
+        predicate, collects the resulting log-odds scores, and fits a
+        logistic regression (Platt scaling) to map raw scores to
+        calibrated probabilities.
+
+        Args:
+            examples: Labeled calibration examples.  Each
+                :class:`CalibrationExample` contains images, a
+                ``state_dict`` mapping grounded predicates to boolean
+                labels, and an optional problem string.
+            scope: Grouping strategy for the Platt parameters.
+                ``"global"`` fits a single pair of parameters shared
+                across all predicates.  ``"lifted"`` fits separate
+                parameters per lifted predicate (fluent name).
+            progress_bar: Whether to display a ``tqdm`` progress bar
+                while querying the VLM.
+            pass_through_single_class: When ``False`` (default), a
+                :class:`ValueError` is raised before any VLM
+                predictions if a label group contains only positive or
+                only negative examples.  When ``True``, single-class
+                groups are assigned identity Platt parameters
+                (``a=-1, b=0``) so that calibrated output equals
+                ``sigmoid(score)`` — effectively leaving those
+                predicates uncalibrated.
+
+        Raises:
+            ValueError: If ``probability_method`` is not ``"logprobs"``,
+                *examples* is empty, *scope* is unrecognised, or
+                *pass_through_single_class* is ``False`` and a label
+                group lacks both classes.
+        """
         if self.probability_method != "logprobs":
             raise ValueError(
                 "Platt scaling is only supported for probability_method='logprobs'."
@@ -297,7 +333,9 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         if scope not in {"global", "lifted"}:
             raise ValueError(f"Unsupported Platt scaling scope: {scope}")
 
-        self._validate_calibration_labels(examples, scope)
+        single_class_keys = self._validate_calibration_labels(
+            examples, scope, pass_through_single_class
+        )
 
         grouped_scores: dict[str, list[float]] = {}
         grouped_labels: dict[str, list[bool]] = {}
@@ -315,10 +353,21 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                     grouped_scores.setdefault(key, []).append(score)
                     grouped_labels.setdefault(key, []).append(example.state_dict[predicate])
 
-        params_by_group = {
-            key: fit_platt_parameters(scores, grouped_labels[key])
-            for key, scores in grouped_scores.items()
-        }
+        params_by_group: dict[str, PlattParameters] = {}
+        for key, scores in grouped_scores.items():
+            if key not in single_class_keys:
+                params_by_group[key] = fit_platt_parameters(
+                    scores, grouped_labels[key]
+                )
+            else:
+                labels = grouped_labels[key]
+                params_by_group[key] = PlattParameters(
+                    a=-1.0,
+                    b=0.0,
+                    sample_count=len(scores),
+                    positive_count=sum(bool(l) for l in labels),
+                    negative_count=sum(not bool(l) for l in labels),
+                )
         self._platt_scaling_profile = PlattScalingProfile(
             scope=scope,
             probability_method=self.probability_method,
@@ -358,16 +407,21 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             return False
         return True
 
-    def _apply_platt_profile(self, predicate: str, score: float) -> float:
+    def _apply_platt_profile(self, predicate: str, score: float) -> float | None:
+        """Apply Platt scaling for *predicate*.
+
+        Returns ``None`` when parameters are not available for the
+        predicate's group (e.g. the group was skipped during fitting).
+        """
         assert self._platt_scaling_profile is not None
         if self._platt_scaling_profile.scope == "global":
+            if GLOBAL_CALIBRATION_KEY not in self._platt_scaling_profile.groups:
+                return None
             params = self._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY]
         else:
             key = get_lifted_predicate_key(self.up_problem, predicate)
             if key not in self._platt_scaling_profile.groups:
-                raise ValueError(
-                    f"No Platt scaling parameters available for lifted fluent '{key}'."
-                )
+                return None
             params = self._platt_scaling_profile.groups[key]
         return apply_platt_scaling(score, params)
 
@@ -395,31 +449,23 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             raise ValueError(
                 f"Loaded Platt scaling profile has unsupported score_kind: {profile.score_kind}."
             )
-        if profile.scope == "global":
-            if GLOBAL_CALIBRATION_KEY not in profile.groups:
-                raise ValueError(
-                    "Loaded global Platt scaling profile is missing global parameters."
-                )
-            return
-
-        required_groups = {fluent.name for fluent in self.up_problem.fluents}
-        missing_groups = sorted(required_groups - set(profile.groups))
-        if missing_groups:
-            missing = ", ".join(missing_groups)
-            raise ValueError(
-                "Loaded lifted Platt scaling profile is missing parameters "
-                f"for lifted fluent(s): {missing}."
-            )
+        # Missing groups are allowed — they arise when the profile was
+        # fit with single_class_policy="skip".  At inference time the
+        # estimator falls back to the uncalibrated probability for any
+        # predicate whose group is absent from the profile.
 
     def _validate_calibration_labels(
         self,
         examples: list[CalibrationExample],
         scope: str,
-    ) -> None:
-        """Check that every label group has both positive and negative examples.
+        pass_through_single_class: bool = False,
+    ) -> set[str]:
+        """Check label groups for single-class issues.
 
-        This runs before the expensive VLM predictions so that missing
-        label diversity is caught early.
+        Returns the set of group keys that have only one label class.
+        When *pass_through_single_class* is ``False``, a
+        :class:`ValueError` is raised instead of returning a non-empty
+        set.
         """
         label_sets: dict[str, set[bool]] = {}
         for example in examples:
@@ -437,19 +483,24 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                         example.state_dict[predicate]
                     )
 
+        single_class_keys: set[str] = set()
         for key, labels in label_sets.items():
             if True in labels and False in labels:
                 continue
-            present = "positive" if True in labels else "negative"
-            if scope == "global":
+            if not pass_through_single_class:
+                present = "positive" if True in labels else "negative"
+                if scope == "global":
+                    raise ValueError(
+                        "Platt scaling requires both positive and negative labels, "
+                        f"but all provided labels are {present}."
+                    )
                 raise ValueError(
-                    "Platt scaling requires both positive and negative labels, "
-                    f"but all provided labels are {present}."
+                    f"Platt scaling requires both positive and negative labels "
+                    f"for each lifted predicate, but '{key}' has only {present} labels."
                 )
-            raise ValueError(
-                f"Platt scaling requires both positive and negative labels "
-                f"for each lifted predicate, but '{key}' has only {present} labels."
-            )
+            single_class_keys.add(key)
+
+        return single_class_keys
 
     def probabilities_from_raw(
         self,
@@ -487,10 +538,11 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
     def _calibrate_prediction_details(
         self, details: dict[str, tuple[float, float]]
     ) -> dict[str, float]:
-        return {
-            pred: self._apply_platt_profile(pred, score)
-            for pred, (_, score) in details.items()
-        }
+        result: dict[str, float] = {}
+        for pred, (probability, score) in details.items():
+            calibrated = self._apply_platt_profile(pred, score)
+            result[pred] = calibrated if calibrated is not None else probability
+        return result
 
     def _estimate_calibration_example(
         self,

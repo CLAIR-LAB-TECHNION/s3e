@@ -1433,9 +1433,10 @@ class TestLiftedPlattScaling:
         with pytest.raises(ValueError, match="fit_platt_scaling"):
             se.estimate_probabilities(make_calibration_image(1), calibrated=True)
 
-    def test_load_platt_scaling_rejects_lifted_profile_missing_required_groups(
+    def test_load_platt_scaling_with_missing_groups_falls_back_to_uncalibrated(
         self, tmp_path, blocksworld_domain, blocksworld_problem
     ):
+        """Missing lifted groups are allowed — those predicates use uncalibrated probabilities."""
         path = save_lifted_platt_profile(
             tmp_path, blocksworld_domain, blocksworld_problem
         )
@@ -1449,10 +1450,14 @@ class TestLiftedPlattScaling:
             vlm=FakeVLM(),
         )
 
-        with pytest.raises(ValueError, match="missing parameters for lifted fluent"):
-            se.load_platt_scaling(path)
-        with pytest.raises(ValueError, match="fit_platt_scaling"):
-            se.estimate_probabilities(make_calibration_image(1), calibrated=True)
+        se.load_platt_scaling(path)
+        uncalibrated = se.estimate_probabilities(make_calibration_image(1))
+        calibrated = se.estimate_probabilities(make_calibration_image(1), calibrated=True)
+
+        clear_preds = [p for p in calibrated if p.startswith("clear(")]
+        assert clear_preds
+        for p in clear_preds:
+            assert calibrated[p] == uncalibrated[p]
 
 
 class TestSwapProblem:
