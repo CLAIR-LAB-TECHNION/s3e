@@ -785,7 +785,7 @@ class TestPlattScalingErrors:
         ):
             se.fit_platt_scaling([example], scope="global")
 
-    def test_fit_platt_scaling_requires_complete_state_labels(
+    def test_fit_platt_scaling_accepts_partial_state_labels(
         self, blocksworld_domain, blocksworld_problem
     ):
         vlm = CalibrationVLM(
@@ -795,7 +795,6 @@ class TestPlattScalingErrors:
                 (1, "on(b,a)"): 0.20,
                 (1, "on(b,b)"): 0.05,
                 (1, "clear(a)"): 0.80,
-                (1, "clear(b)"): 0.20,
             }
         )
         se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
@@ -810,8 +809,28 @@ class TestPlattScalingErrors:
             },
         )
 
+        se.fit_platt_scaling([example], scope="global")
+
+        profile = se._platt_scaling_profile
+        assert profile is not None
+        assert profile.groups[GLOBAL_CALIBRATION_KEY].sample_count == 5
+
+    def test_fit_platt_scaling_rejects_unknown_predicates_in_labels(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=FakeVLM()
+        )
+        example = CalibrationExample(
+            images=make_calibration_image(1),
+            state_dict={
+                "on(a,b)": True,
+                "nonexistent(x)": False,
+            },
+        )
+
         with pytest.raises(
-            ValueError, match="Missing calibration label for predicate clear\\(b\\)"
+            ValueError, match="not in the current problem.*nonexistent\\(x\\)"
         ):
             se.fit_platt_scaling([example], scope="global")
 
@@ -991,6 +1010,109 @@ class TestGlobalPlattScaling:
         assert (
             se._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY].sample_count == 24
         )
+
+    def test_fit_platt_scaling_only_queries_labeled_predicates(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        """The VLM should only be called for predicates in the state_dict."""
+        queried_prompts = []
+
+        class TrackingVLM(FakeVLM):
+            def query(self, images, prompt, system_prompt=None, generate=False, **inference_kwargs):
+                queried_prompts.append(prompt)
+                return VLMOutput(
+                    token_probs={"true": 0.6, "false": 0.4},
+                    text="true",
+                )
+
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=TrackingVLM()
+        )
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1),
+                state_dict={"on(a,b)": True, "clear(a)": False},
+            ),
+            CalibrationExample(
+                images=make_calibration_image(2),
+                state_dict={"on(a,b)": False, "clear(a)": True},
+            ),
+        ]
+
+        se.fit_platt_scaling(examples, scope="global")
+
+        assert set(queried_prompts) == {"on(a,b)", "clear(a)"}
+        assert se._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY].sample_count == 4
+
+    def test_fit_platt_scaling_partial_labels_average_mode(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        """Average mode with partial labels should produce per-image samples only for labeled predicates."""
+        vlm = CalibrationVLM(
+            {
+                (1, "on(a,b)"): 0.60,
+                (1, "clear(a)"): 0.80,
+                (2, "on(a,b)"): 0.55,
+                (2, "clear(a)"): 0.75,
+                (3, "on(a,b)"): 0.40,
+                (3, "clear(a)"): 0.20,
+                (4, "on(a,b)"): 0.35,
+                (4, "clear(a)"): 0.25,
+            }
+        )
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            multi_image_strategy="average",
+        )
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1) + make_calibration_image(2),
+                state_dict={"on(a,b)": True, "clear(a)": True},
+            ),
+            CalibrationExample(
+                images=make_calibration_image(3) + make_calibration_image(4),
+                state_dict={"on(a,b)": False, "clear(a)": False},
+            ),
+        ]
+
+        se.fit_platt_scaling(examples, scope="global")
+
+        assert se._platt_scaling_profile is not None
+        assert se._platt_scaling_profile.groups[GLOBAL_CALIBRATION_KEY].sample_count == 8
+
+    def test_fit_platt_scaling_partial_labels_lifted_scope(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        """Lifted scope with partial labels should group only the labeled predicates."""
+        vlm = CalibrationVLM(
+            {
+                (1, "on(a,b)"): 0.60,
+                (1, "clear(a)"): 0.80,
+                (2, "on(a,b)"): 0.40,
+                (2, "clear(a)"): 0.25,
+            }
+        )
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1),
+                state_dict={"on(a,b)": True, "clear(a)": True},
+            ),
+            CalibrationExample(
+                images=make_calibration_image(2),
+                state_dict={"on(a,b)": False, "clear(a)": False},
+            ),
+        ]
+
+        se.fit_platt_scaling(examples, scope="lifted")
+
+        profile = se._platt_scaling_profile
+        assert profile is not None
+        assert set(profile.groups.keys()) == {"on", "clear"}
+        assert profile.groups["on"].sample_count == 2
+        assert profile.groups["clear"].sample_count == 2
 
 
 class TestLiftedPlattScaling:

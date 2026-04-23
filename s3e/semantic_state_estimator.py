@@ -306,10 +306,6 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             per_sample_details = self._estimate_calibration_example(example)
             for details in per_sample_details:
                 for predicate, (_, score) in details.items():
-                    if predicate not in example.state_dict:
-                        raise ValueError(
-                            f"Missing calibration label for predicate {predicate}."
-                        )
                     if scope == "global":
                         key = GLOBAL_CALIBRATION_KEY
                     else:
@@ -462,9 +458,16 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         try:
             if example.problem is not None:
                 self.swap_problem(self._domain, example.problem)
+            unknown = set(example.state_dict.keys()) - set(self.queries_dict)
+            if unknown:
+                raise ValueError(
+                    f"Calibration example contains predicate(s) not in the "
+                    f"current problem: {', '.join(sorted(unknown))}"
+                )
+            labeled = list(example.state_dict.keys())
             if self.multi_image_strategy == "average":
-                return [self._estimate_single([image]) for image in example.images]
-            return [self._estimate_single(example.images)]
+                return [self._estimate_single([image], predicates=labeled) for image in example.images]
+            return [self._estimate_single(example.images, predicates=labeled)]
         finally:
             if example.problem is not None:
                 self.swap_problem(self._domain, original_problem)
