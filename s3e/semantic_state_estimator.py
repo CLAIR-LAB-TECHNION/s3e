@@ -8,6 +8,7 @@ values (or probabilities) compatible with planning systems.
 
 import math
 import re
+from dataclasses import dataclass, replace
 from typing import Union
 
 import numpy as np
@@ -47,6 +48,17 @@ from .translation.translator import QueryTranslator
 from .vlm.backend import VLMBackend, VLMOutput
 
 
+@dataclass(frozen=True)
+class PredicatePredictionDetails:
+    probability: float
+    raw_probability: float
+    score: float
+    raw_true_mass: float
+    raw_false_mass: float
+    raw_none_mass: float
+    none_is_max_raw: bool
+
+
 class SemanticStateEstimator(ProbabilisticStateEstimator):
     """Vision-language model based state estimator.
 
@@ -81,6 +93,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         user_prompt_template: str | None = None,
         true_tokens: list[str] | None = None,
         false_tokens: list[str] | None = None,
+        null_tokens: list[str] | None = None,
         confidence: float = 0.5,
         multi_image_strategy: str = "single",
         probability_method: str = "logprobs",
@@ -120,6 +133,9 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 if has_nl_translator
                 else list(FALSE_TOKENS_NO_TRANSLATION)
             )
+
+        self.null_tokens = list(null_tokens or [])
+        self._validate_token_groups()
 
         # --- System prompt ---
         if system_prompt is not None:
@@ -183,6 +199,19 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         else:
             from .vlm.huggingface import HuggingFaceVLM
             return HuggingFaceVLM(vlm_id, **vlm_kwargs)
+
+    def _validate_token_groups(self) -> None:
+        overlaps = [
+            ("true_tokens and false_tokens", set(self.true_tokens) & set(self.false_tokens)),
+            ("null_tokens and true_tokens", set(self.null_tokens) & set(self.true_tokens)),
+            ("null_tokens and false_tokens", set(self.null_tokens) & set(self.false_tokens)),
+        ]
+        for label, values in overlaps:
+            if values:
+                joined = ", ".join(sorted(values))
+                raise ValueError(
+                    f"Token groups must be disjoint; overlap between {label}: {joined}"
+                )
 
     def swap_problem(self, domain: str, problem: str) -> None:
         """Update domain/problem and re-translate predicates."""
@@ -502,6 +531,61 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
 
         return single_class_keys
 
+    def _extract_prediction_details(self, output: VLMOutput) -> PredicatePredictionDetails:
+        if self.probability_method == "text_match":
+            if output.text is None:
+                return PredicatePredictionDetails(0.5, 0.5, 0.0, 0.0, 0.0, 0.0, False)
+            text = output.text.strip().lower()
+            true_lower = {t.lower() for t in self.true_tokens}
+            probability = 1.0 if text in true_lower else 0.0
+            return PredicatePredictionDetails(
+                probability=probability,
+                raw_probability=probability,
+                score=0.0,
+                raw_true_mass=0.0,
+                raw_false_mass=0.0,
+                raw_none_mass=0.0,
+                none_is_max_raw=False,
+            )
+
+        raw_true_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.true_tokens)
+        raw_false_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.false_tokens)
+        raw_none_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.null_tokens)
+        raw_total = raw_true_mass + raw_false_mass
+        raw_probability = 0.5 if raw_total == 0 else float(np.clip(raw_true_mass / raw_total, 0.0, 1.0))
+        score = 0.0 if raw_total == 0 else grouped_log_odds(output.token_probs, self.true_tokens, self.false_tokens)
+        return PredicatePredictionDetails(
+            probability=raw_probability,
+            raw_probability=raw_probability,
+            score=score,
+            raw_true_mass=raw_true_mass,
+            raw_false_mass=raw_false_mass,
+            raw_none_mass=raw_none_mass,
+            none_is_max_raw=raw_none_mass > raw_true_mass and raw_none_mass > raw_false_mass,
+        )
+
+    def prediction_details_from_raw(
+        self,
+        raw_outputs: dict[str, VLMOutput],
+        calibrated: bool | None = None,
+    ) -> dict[str, PredicatePredictionDetails]:
+        use_calibration = self._resolve_calibrated_flag(calibrated)
+        details = {
+            pred: self._extract_prediction_details(output)
+            for pred, output in raw_outputs.items()
+        }
+        if not use_calibration:
+            return details
+
+        result: dict[str, PredicatePredictionDetails] = {}
+        for pred, detail in details.items():
+            calibrated_probability = self._apply_platt_profile(pred, detail.score)
+            if calibrated_probability is None:
+                result[pred] = detail
+            else:
+                result[pred] = replace(detail, probability=calibrated_probability)
+        return result
+
     def probabilities_from_raw(
         self,
         raw_outputs: dict[str, VLMOutput],
@@ -526,14 +610,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         Returns:
             Mapping of grounded predicate strings to P(true).
         """
-        use_calibration = self._resolve_calibrated_flag(calibrated)
-        details = {
-            pred: self._extract_probability(output)
-            for pred, output in raw_outputs.items()
-        }
-        if not use_calibration:
-            return {pred: probability for pred, (probability, _) in details.items()}
-        return self._calibrate_prediction_details(details)
+        details = self.prediction_details_from_raw(raw_outputs, calibrated=calibrated)
+        return {pred: detail.probability for pred, detail in details.items()}
 
     def _calibrate_prediction_details(
         self, details: dict[str, tuple[float, float]]

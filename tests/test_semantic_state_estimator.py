@@ -5,7 +5,7 @@ import json
 import pytest
 from PIL import Image
 
-from s3e import CalibrationExample
+from s3e import CalibrationExample, PredicatePredictionDetails
 from s3e.calibration import GLOBAL_CALIBRATION_KEY, PlattParameters, PlattScalingProfile
 from s3e.semantic_state_estimator import SemanticStateEstimator
 from s3e.vlm.backend import VLMOutput
@@ -1595,6 +1595,75 @@ class TestPredicateFiltering:
         subset = ["on(a,b)", "clear(a)"]
         probs = se.estimate_probabilities(images, predicates=subset)
         assert set(probs.keys()) == set(subset)
+
+
+class TestNullTokenDetails:
+    def test_custom_null_tokens(
+        self, fake_vlm, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=fake_vlm,
+            null_tokens=["null", "NULL"],
+        )
+        assert se.null_tokens == ["null", "NULL"]
+
+    def test_overlapping_null_and_true_tokens_raise(
+        self, fake_vlm, blocksworld_domain, blocksworld_problem
+    ):
+        with pytest.raises(ValueError, match="null_tokens and true_tokens"):
+            SemanticStateEstimator(
+                blocksworld_domain,
+                blocksworld_problem,
+                vlm=fake_vlm,
+                true_tokens=["true"],
+                false_tokens=["false"],
+                null_tokens=["true"],
+            )
+
+    def test_prediction_details_from_raw_reports_raw_masses_and_none_flag(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(
+            token_probs={"true": 0.2, "false": 0.1, "null": 0.6, "other": 0.1}
+        )
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+
+        raw = se.estimate_raw(single_image, predicates=["on(a,b)"])
+        details = se.prediction_details_from_raw(raw, calibrated=False)
+        pred_details = details["on(a,b)"]
+
+        assert isinstance(pred_details, PredicatePredictionDetails)
+        assert pred_details.raw_true_mass == pytest.approx(0.2)
+        assert pred_details.raw_false_mass == pytest.approx(0.1)
+        assert pred_details.raw_none_mass == pytest.approx(0.6)
+        assert pred_details.none_is_max_raw is True
+        assert pred_details.raw_probability == pytest.approx(2.0 / 3.0)
+        assert pred_details.probability == pytest.approx(2.0 / 3.0)
+
+    def test_estimate_probabilities_ignores_null_mass(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.2, "false": 0.1, "null": 0.6})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+
+        probs = se.estimate_probabilities(single_image, calibrated=False)
+        assert probs["on(a,b)"] == pytest.approx(2.0 / 3.0)
 
 
 @pytest.mark.slow

@@ -14,7 +14,7 @@ See the README for full documentation and examples.
 """
 
 from .state_estimator import StateEstimator, ProbabilisticStateEstimator
-from .semantic_state_estimator import SemanticStateEstimator
+from .semantic_state_estimator import PredicatePredictionDetails, SemanticStateEstimator
 from .calibration import CalibrationExample
 from .vlm import VLMBackend, VLMOutput, HuggingFaceVLM, OpenAIVLM
 from .translation import (
@@ -29,6 +29,7 @@ __all__ = [
     "StateEstimator",
     "ProbabilisticStateEstimator",
     "SemanticStateEstimator",
+    "PredicatePredictionDetails",
     "CalibrationExample",
     "VLMBackend",
     "VLMOutput",
