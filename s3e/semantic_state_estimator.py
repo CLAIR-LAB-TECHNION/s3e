@@ -50,8 +50,10 @@ from .vlm.backend import VLMBackend, VLMOutput
 
 @dataclass(frozen=True)
 class PredicatePredictionDetails:
-    probability: float
+    """Raw and calibrated probability details for one predicate prediction."""
+
     raw_probability: float
+    calibrated_probability: float | None
     score: float
     raw_true_mass: float
     raw_false_mass: float
@@ -235,31 +237,30 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         calibrated: bool | None = None,
         predicates: list[str] | None = None,
     ) -> dict[str, bool | None]:
-        details = self.estimate_prediction_details(
-            images,
-            calibrated=calibrated,
-            predicates=predicates,
-        )
+        details = self.estimate_prediction_details(images, predicates=predicates)
+        probabilities = self._probabilities_from_details(details, calibrated)
         threshold = confidence if confidence is not None else self.confidence
         return {
-            pred: None if detail.none_is_max_raw else bool(detail.probability >= threshold)
+            pred: (
+                None
+                if detail.none_is_max_raw
+                else bool(probabilities[pred] >= threshold)
+            )
             for pred, detail in details.items()
         }
 
     def estimate_prediction_details(
         self,
         images: list[Image],
-        calibrated: bool | None = None,
         predicates: list[str] | None = None,
     ) -> dict[str, PredicatePredictionDetails]:
         if self.multi_image_strategy != "average":
             raw = self.estimate_raw(images, predicates=predicates)
-            return self.prediction_details_from_raw(raw, calibrated=calibrated)
+            return self.prediction_details_from_raw(raw)
 
         per_image = [
             self.prediction_details_from_raw(
                 self.estimate_raw([img], predicates=predicates),
-                calibrated=calibrated,
             )
             for img in images
         ]
@@ -276,14 +277,21 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             raw_true_mass = float(np.mean([d.raw_true_mass for d in items]))
             raw_false_mass = float(np.mean([d.raw_false_mass for d in items]))
             raw_none_mass = float(np.mean([d.raw_none_mass for d in items]))
+            calibrated_probabilities = [d.calibrated_probability for d in items]
+            calibrated_probability = (
+                float(np.mean(calibrated_probabilities))
+                if all(value is not None for value in calibrated_probabilities)
+                else None
+            )
             result[pred] = PredicatePredictionDetails(
-                probability=float(np.mean([d.probability for d in items])),
                 raw_probability=float(np.mean([d.raw_probability for d in items])),
+                calibrated_probability=calibrated_probability,
                 score=float(np.mean([d.score for d in items])),
                 raw_true_mass=raw_true_mass,
                 raw_false_mass=raw_false_mass,
                 raw_none_mass=raw_none_mass,
-                none_is_max_raw=raw_none_mass > raw_true_mass and raw_none_mass > raw_false_mass,
+                none_is_max_raw=raw_none_mass > raw_true_mass
+                and raw_none_mass > raw_false_mass,
             )
         return result
 
@@ -305,10 +313,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 query.  When ``None`` (default), all predicates are
                 queried.  Unknown predicates raise :class:`ValueError`.
         """
-        details = self.estimate_prediction_details(
-            images, calibrated=calibrated, predicates=predicates
-        )
-        return {pred: detail.probability for pred, detail in details.items()}
+        details = self.estimate_prediction_details(images, predicates=predicates)
+        return self._probabilities_from_details(details, calibrated)
 
     def estimate_raw(
         self,
@@ -569,8 +575,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
     def _extract_text_match_details(self, output: VLMOutput) -> PredicatePredictionDetails:
         if output.text is None:
             return PredicatePredictionDetails(
-                probability=0.5,
                 raw_probability=0.5,
+                calibrated_probability=None,
                 score=0.0,
                 raw_true_mass=0.0,
                 raw_false_mass=0.0,
@@ -584,12 +590,44 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         none_lower = {t.lower() for t in self.null_tokens}
 
         if text in true_lower:
-            return PredicatePredictionDetails(1.0, 1.0, 0.0, 1.0, 0.0, 0.0, False)
+            return PredicatePredictionDetails(
+                raw_probability=1.0,
+                calibrated_probability=None,
+                score=0.0,
+                raw_true_mass=1.0,
+                raw_false_mass=0.0,
+                raw_none_mass=0.0,
+                none_is_max_raw=False,
+            )
         if text in false_lower:
-            return PredicatePredictionDetails(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, False)
+            return PredicatePredictionDetails(
+                raw_probability=0.0,
+                calibrated_probability=None,
+                score=0.0,
+                raw_true_mass=0.0,
+                raw_false_mass=1.0,
+                raw_none_mass=0.0,
+                none_is_max_raw=False,
+            )
         if text in none_lower:
-            return PredicatePredictionDetails(0.5, 0.5, 0.0, 0.0, 0.0, 1.0, True)
-        return PredicatePredictionDetails(0.5, 0.5, 0.0, 0.0, 0.0, 0.0, False)
+            return PredicatePredictionDetails(
+                raw_probability=0.5,
+                calibrated_probability=None,
+                score=0.0,
+                raw_true_mass=0.0,
+                raw_false_mass=0.0,
+                raw_none_mass=1.0,
+                none_is_max_raw=True,
+            )
+        return PredicatePredictionDetails(
+            raw_probability=0.5,
+            calibrated_probability=None,
+            score=0.0,
+            raw_true_mass=0.0,
+            raw_false_mass=0.0,
+            raw_none_mass=0.0,
+            none_is_max_raw=False,
+        )
 
     def _extract_prediction_details(self, output: VLMOutput) -> PredicatePredictionDetails:
         if self.probability_method == "text_match":
@@ -599,66 +637,73 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         raw_false_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.false_tokens)
         raw_none_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.null_tokens)
         raw_total = raw_true_mass + raw_false_mass
-        raw_probability = 0.5 if raw_total == 0 else float(np.clip(raw_true_mass / raw_total, 0.0, 1.0))
-        score = 0.0 if raw_total == 0 else grouped_log_odds(output.token_probs, self.true_tokens, self.false_tokens)
+        raw_probability = (
+            0.5
+            if raw_total == 0
+            else float(np.clip(raw_true_mass / raw_total, 0.0, 1.0))
+        )
+        score = (
+            0.0
+            if raw_total == 0
+            else grouped_log_odds(output.token_probs, self.true_tokens, self.false_tokens)
+        )
         return PredicatePredictionDetails(
-            probability=raw_probability,
             raw_probability=raw_probability,
+            calibrated_probability=None,
             score=score,
             raw_true_mass=raw_true_mass,
             raw_false_mass=raw_false_mass,
             raw_none_mass=raw_none_mass,
-            none_is_max_raw=raw_none_mass > raw_true_mass and raw_none_mass > raw_false_mass,
+            none_is_max_raw=raw_none_mass > raw_true_mass
+            and raw_none_mass > raw_false_mass,
         )
 
     def prediction_details_from_raw(
         self,
         raw_outputs: dict[str, VLMOutput],
-        calibrated: bool | None = None,
     ) -> dict[str, PredicatePredictionDetails]:
-        use_calibration = self._resolve_calibrated_flag(calibrated)
         details = {
             pred: self._extract_prediction_details(output)
             for pred, output in raw_outputs.items()
         }
-        if not use_calibration:
+        if not self._has_compatible_platt_profile():
             return details
 
         result: dict[str, PredicatePredictionDetails] = {}
         for pred, detail in details.items():
             calibrated_probability = self._apply_platt_profile(pred, detail.score)
-            if calibrated_probability is None:
-                result[pred] = detail
-            else:
-                result[pred] = replace(detail, probability=calibrated_probability)
+            result[pred] = replace(
+                detail,
+                calibrated_probability=calibrated_probability,
+            )
         return result
 
-    def probabilities_from_raw(
+    def _has_compatible_platt_profile(self) -> bool:
+        return (
+            self._platt_scaling_profile is not None
+            and self.probability_method == "logprobs"
+            and self._platt_scaling_profile.probability_method == "logprobs"
+        )
+
+    def _probabilities_from_details(
         self,
-        raw_outputs: dict[str, VLMOutput],
+        details: dict[str, PredicatePredictionDetails],
         calibrated: bool | None = None,
     ) -> dict[str, float]:
-        """Derive probabilities from already-obtained raw VLM outputs.
+        use_calibration = self._resolve_calibrated_flag(calibrated)
+        return {
+            pred: self._probability_from_detail(detail, use_calibration)
+            for pred, detail in details.items()
+        }
 
-        This avoids a second VLM invocation when you need both calibrated
-        and uncalibrated probabilities for the same observation::
-
-            raw = estimator.estimate_raw(images)
-            uncalibrated = estimator.probabilities_from_raw(raw)
-            calibrated = estimator.probabilities_from_raw(raw, calibrated=True)
-
-        Args:
-            raw_outputs: Mapping of grounded predicate strings to
-                :class:`VLMOutput`, as returned by :meth:`estimate_raw`.
-            calibrated: Whether to apply Platt scaling.  ``None`` auto-detects
-                (apply if a profile is loaded), ``True`` requires a profile,
-                ``False`` always returns uncalibrated probabilities.
-
-        Returns:
-            Mapping of grounded predicate strings to P(true).
-        """
-        details = self.prediction_details_from_raw(raw_outputs, calibrated=calibrated)
-        return {pred: detail.probability for pred, detail in details.items()}
+    def _probability_from_detail(
+        self,
+        detail: PredicatePredictionDetails,
+        use_calibration: bool,
+    ) -> float:
+        if use_calibration and detail.calibrated_probability is not None:
+            return detail.calibrated_probability
+        return detail.raw_probability
 
     def _estimate_calibration_example(
         self,
@@ -679,14 +724,12 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 return [
                     self.prediction_details_from_raw(
                         self.estimate_raw([image], predicates=labeled),
-                        calibrated=False,
                     )
                     for image in example.images
                 ]
             return [
                 self.prediction_details_from_raw(
                     self.estimate_raw(example.images, predicates=labeled),
-                    calibrated=False,
                 )
             ]
         finally:
