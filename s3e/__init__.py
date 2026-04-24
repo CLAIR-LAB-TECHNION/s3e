@@ -8,7 +8,7 @@ Quick start::
     from s3e import SemanticStateEstimator
 
     se = SemanticStateEstimator(domain_pddl, problem_pddl, vlm="Qwen/Qwen2-VL-7B-Instruct")
-    state = se(images)  # dict[str, bool]
+    state = se(images)  # dict[str, bool | None]
 
 See the README for full documentation and examples.
 """

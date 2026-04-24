@@ -75,6 +75,10 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         user_prompt_template: Format string for each query. Must contain ``{query}``.
         true_tokens: Token strings representing "true". If ``None``, auto-selected.
         false_tokens: Token strings representing "false". If ``None``, auto-selected.
+        null_tokens: Token strings representing "not enough information".
+            When configured, :meth:`__call__` may return ``None`` for
+            predicates whose raw null token mass is strictly larger than
+            the raw true and false token masses.
         confidence: Probability threshold for boolean conversion.
         multi_image_strategy: ``"single"`` or ``"average"``.
         probability_method: ``"logprobs"`` or ``"text_match"``.
@@ -289,7 +293,10 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         calibrated: bool | None = None,
         predicates: list[str] | None = None,
     ) -> dict[str, float]:
-        """Estimate P(true) for each grounded predicate.
+        """Estimate binary P(true) for each grounded predicate.
+
+        Null-token mass is available through :meth:`estimate_prediction_details`
+        and does not change the meaning of this method.
 
         Args:
             images: List of PIL images representing the current state.
