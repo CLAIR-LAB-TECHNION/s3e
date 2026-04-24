@@ -559,22 +559,34 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
 
         return single_class_keys
 
-    def _extract_prediction_details(self, output: VLMOutput) -> PredicatePredictionDetails:
-        if self.probability_method == "text_match":
-            if output.text is None:
-                return PredicatePredictionDetails(0.5, 0.5, 0.0, 0.0, 0.0, 0.0, False)
-            text = output.text.strip().lower()
-            true_lower = {t.lower() for t in self.true_tokens}
-            probability = 1.0 if text in true_lower else 0.0
+    def _extract_text_match_details(self, output: VLMOutput) -> PredicatePredictionDetails:
+        if output.text is None:
             return PredicatePredictionDetails(
-                probability=probability,
-                raw_probability=probability,
+                probability=0.5,
+                raw_probability=0.5,
                 score=0.0,
                 raw_true_mass=0.0,
                 raw_false_mass=0.0,
                 raw_none_mass=0.0,
                 none_is_max_raw=False,
             )
+
+        text = output.text.strip().lower()
+        true_lower = {t.lower() for t in self.true_tokens}
+        false_lower = {t.lower() for t in self.false_tokens}
+        none_lower = {t.lower() for t in self.null_tokens}
+
+        if text in true_lower:
+            return PredicatePredictionDetails(1.0, 1.0, 0.0, 1.0, 0.0, 0.0, False)
+        if text in false_lower:
+            return PredicatePredictionDetails(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, False)
+        if text in none_lower:
+            return PredicatePredictionDetails(0.5, 0.5, 0.0, 0.0, 0.0, 1.0, True)
+        return PredicatePredictionDetails(0.5, 0.5, 0.0, 0.0, 0.0, 0.0, False)
+
+    def _extract_prediction_details(self, output: VLMOutput) -> PredicatePredictionDetails:
+        if self.probability_method == "text_match":
+            return self._extract_text_match_details(output)
 
         raw_true_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.true_tokens)
         raw_false_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.false_tokens)

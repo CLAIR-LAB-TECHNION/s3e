@@ -1797,6 +1797,106 @@ class TestNullTokenCalibrationCompatibility:
         assert "on(a,b)" in probs
 
 
+class TestNullTokenTextMatch:
+    def test_text_match_null_output_sets_full_none_mass(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(text="null"),
+            probability_method="text_match",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+
+        details = se.estimate_prediction_details(single_image, predicates=["on(a,b)"])
+        pred_details = details["on(a,b)"]
+        assert pred_details.raw_true_mass == pytest.approx(0.0)
+        assert pred_details.raw_false_mass == pytest.approx(0.0)
+        assert pred_details.raw_none_mass == pytest.approx(1.0)
+        assert pred_details.none_is_max_raw is True
+        assert pred_details.raw_probability == pytest.approx(0.5)
+        assert pred_details.probability == pytest.approx(0.5)
+
+    def test_text_match_null_output_keeps_binary_probability_api(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(text="null"),
+            probability_method="text_match",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+
+        probs = se.estimate_probabilities(single_image, predicates=["on(a,b)"])
+        assert probs == {"on(a,b)": pytest.approx(0.5)}
+
+
+class TestNullTokenAverageStrategy:
+    def test_estimate_prediction_details_averages_raw_masses(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        image_one = Image.new("RGB", (64, 64))
+        image_two = Image.new("RGB", (64, 64))
+
+        class ImageAwareVLM(FakeVLM):
+            def __init__(self):
+                super().__init__()
+                self.token_probs_by_image_id = {}
+
+            def query(
+                self,
+                images,
+                prompt,
+                system_prompt=None,
+                generate=False,
+                **inference_kwargs,
+            ):
+                del prompt
+                del system_prompt
+                del generate
+                del inference_kwargs
+                return VLMOutput(
+                    token_probs=self.token_probs_by_image_id[id(images[0])]
+                )
+
+        vlm = ImageAwareVLM()
+        vlm.token_probs_by_image_id[id(image_one)] = {
+            "true": 0.2,
+            "false": 0.1,
+            "null": 0.7,
+        }
+        vlm.token_probs_by_image_id[id(image_two)] = {
+            "true": 0.3,
+            "false": 0.2,
+            "null": 0.1,
+        }
+
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            multi_image_strategy="average",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            null_tokens=["null"],
+        )
+
+        details = se.estimate_prediction_details([image_one, image_two], predicates=["on(a,b)"])
+        pred_details = details["on(a,b)"]
+
+        assert pred_details.raw_true_mass == pytest.approx(0.25)
+        assert pred_details.raw_false_mass == pytest.approx(0.15)
+        assert pred_details.raw_none_mass == pytest.approx(0.4)
+        assert pred_details.none_is_max_raw is True
+        assert pred_details.raw_probability == pytest.approx(((0.2 / 0.3) + (0.3 / 0.5)) / 2.0)
+
+
 @pytest.mark.slow
 class TestSemanticStateEstimatorIntegration:
     """End-to-end integration tests with a tiny real HuggingFace VLM."""
