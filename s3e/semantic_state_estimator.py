@@ -7,7 +7,6 @@ values (or probabilities) compatible with planning systems.
 """
 
 import math
-import re
 from dataclasses import dataclass, replace
 from typing import Union
 
@@ -187,14 +186,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
 
     def _current_domain_fingerprint(self) -> str:
         """Fingerprint the canonical domain for the current parsed UP problem."""
-        domain_str, _ = get_pddl_strings(self.up_problem)
-        canonical_domain_str = re.sub(
-            r"\(domain\s+[^\s)]+\)",
-            "(domain __canonical__)",
-            domain_str,
-            count=1,
-        )
-        return compute_domain_fingerprint(canonical_domain_str)
+        return compute_domain_fingerprint(self.up_problem)
 
     @staticmethod
     def _build_vlm_from_string(vlm_id: str, vlm_kwargs: dict) -> VLMBackend:
