@@ -266,17 +266,25 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         result: dict[str, PredicatePredictionDetails] = {}
         for pred in predicates:
             items = [details[pred] for details in per_image_details]
-            raw_true_mass = float(np.mean([d.raw_true_mass for d in items]))
-            raw_false_mass = float(np.mean([d.raw_false_mass for d in items]))
-            raw_none_mass = float(np.mean([d.raw_none_mass for d in items]))
+            raw_true_mass = float(np.clip(
+                np.mean([d.raw_true_mass for d in items]), 0.0, 1.0,
+            ))
+            raw_false_mass = float(np.clip(
+                np.mean([d.raw_false_mass for d in items]), 0.0, 1.0,
+            ))
+            raw_none_mass = float(np.clip(
+                np.mean([d.raw_none_mass for d in items]), 0.0, 1.0,
+            ))
             calibrated_probabilities = [d.calibrated_probability for d in items]
             calibrated_probability = (
-                float(np.mean(calibrated_probabilities))
+                float(np.clip(np.mean(calibrated_probabilities), 0.0, 1.0))
                 if all(value is not None for value in calibrated_probabilities)
                 else None
             )
             result[pred] = PredicatePredictionDetails(
-                raw_probability=float(np.mean([d.raw_probability for d in items])),
+                raw_probability=float(np.clip(
+                    np.mean([d.raw_probability for d in items]), 0.0, 1.0,
+                )),
                 calibrated_probability=calibrated_probability,
                 score=float(np.mean([d.score for d in items])),
                 raw_true_mass=raw_true_mass,
@@ -625,9 +633,18 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         if self.probability_method == "text_match":
             return self._extract_text_match_details(output)
 
-        raw_true_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.true_tokens)
-        raw_false_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.false_tokens)
-        raw_none_mass = sum(output.token_probs.get(tok, 0.0) for tok in self.null_tokens)
+        raw_true_mass = float(np.clip(
+            sum(output.token_probs.get(tok, 0.0) for tok in self.true_tokens),
+            0.0, 1.0,
+        ))
+        raw_false_mass = float(np.clip(
+            sum(output.token_probs.get(tok, 0.0) for tok in self.false_tokens),
+            0.0, 1.0,
+        ))
+        raw_none_mass = float(np.clip(
+            sum(output.token_probs.get(tok, 0.0) for tok in self.null_tokens),
+            0.0, 1.0,
+        ))
         raw_total = raw_true_mass + raw_false_mass
         raw_probability = (
             0.5
@@ -664,6 +681,10 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         result: dict[str, PredicatePredictionDetails] = {}
         for pred, detail in details.items():
             calibrated_probability = self._apply_platt_profile(pred, detail.score)
+            if calibrated_probability is not None:
+                calibrated_probability = float(
+                    np.clip(calibrated_probability, 0.0, 1.0)
+                )
             result[pred] = replace(
                 detail,
                 calibrated_probability=calibrated_probability,

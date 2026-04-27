@@ -2008,6 +2008,188 @@ class TestNullTokenAverageStrategy:
         assert pred_details.calibrated_probability == pytest.approx(expected)
 
 
+class TestProbabilityClipping:
+    """Probabilities and masses must always lie in [0, 1] even when
+    token-level inputs would drift outside that range due to
+    floating-point precision errors.
+    """
+
+    def test_raw_masses_clipped_when_token_probs_sum_above_one(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(
+            token_probs={
+                "true_a": 0.6,
+                "true_b": 0.5,
+                "false_a": 0.6,
+                "false_b": 0.5,
+                "null_a": 0.6,
+                "null_b": 0.5,
+            }
+        )
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            true_tokens=["true_a", "true_b"],
+            false_tokens=["false_a", "false_b"],
+            null_tokens=["null_a", "null_b"],
+        )
+
+        details = se.estimate_prediction_details(
+            single_image, predicates=["on(a,b)"]
+        )
+        pred = details["on(a,b)"]
+
+        assert 0.0 <= pred.raw_true_mass <= 1.0
+        assert 0.0 <= pred.raw_false_mass <= 1.0
+        assert 0.0 <= pred.raw_none_mass <= 1.0
+        assert pred.raw_true_mass == 1.0
+        assert pred.raw_false_mass == 1.0
+        assert pred.raw_none_mass == 1.0
+
+    def test_raw_probability_in_range(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(
+            token_probs={"true_a": 0.6, "true_b": 0.5, "false": 0.4}
+        )
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            true_tokens=["true_a", "true_b"],
+            false_tokens=["false"],
+        )
+
+        probs = se.estimate_probabilities(single_image, calibrated=False)
+        for value in probs.values():
+            assert 0.0 <= value <= 1.0
+
+    def test_average_mode_masses_clipped(
+        self, fake_images, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(
+            token_probs={
+                "true_a": 0.6,
+                "true_b": 0.5,
+                "false_a": 0.6,
+                "false_b": 0.5,
+                "null_a": 0.6,
+                "null_b": 0.5,
+            }
+        )
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            multi_image_strategy="average",
+            true_tokens=["true_a", "true_b"],
+            false_tokens=["false_a", "false_b"],
+            null_tokens=["null_a", "null_b"],
+        )
+
+        details = se.estimate_prediction_details(
+            fake_images, predicates=["on(a,b)"]
+        )
+        pred = details["on(a,b)"]
+
+        assert 0.0 <= pred.raw_true_mass <= 1.0
+        assert 0.0 <= pred.raw_false_mass <= 1.0
+        assert 0.0 <= pred.raw_none_mass <= 1.0
+        assert 0.0 <= pred.raw_probability <= 1.0
+
+    def test_calibrated_probability_clipped(
+        self, single_image, blocksworld_domain, blocksworld_problem, monkeypatch
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.7, "false": 0.3})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            true_tokens=["true"],
+            false_tokens=["false"],
+        )
+        params = PlattParameters(
+            a=-1.0,
+            b=0.0,
+            sample_count=4,
+            positive_count=2,
+            negative_count=2,
+        )
+        se._platt_scaling_profile = PlattScalingProfile(
+            scope="global",
+            probability_method="logprobs",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            domain_fingerprint=se._domain_fingerprint,
+            score_kind="grouped_log_odds",
+            groups={GLOBAL_CALIBRATION_KEY: params},
+        )
+
+        monkeypatch.setattr(
+            SemanticStateEstimator,
+            "_apply_platt_profile",
+            lambda self, predicate, score: 1.0 + 1e-9,
+        )
+
+        details = se.estimate_prediction_details(
+            single_image, predicates=["on(a,b)"]
+        )
+        pred = details["on(a,b)"]
+
+        assert pred.calibrated_probability is not None
+        assert 0.0 <= pred.calibrated_probability <= 1.0
+        assert pred.calibrated_probability == 1.0
+
+        probs = se.estimate_probabilities(single_image, calibrated=True)
+        for value in probs.values():
+            assert 0.0 <= value <= 1.0
+
+    def test_average_mode_calibrated_probability_clipped(
+        self, fake_images, blocksworld_domain, blocksworld_problem, monkeypatch
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.7, "false": 0.3})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            multi_image_strategy="average",
+            true_tokens=["true"],
+            false_tokens=["false"],
+        )
+        params = PlattParameters(
+            a=-1.0,
+            b=0.0,
+            sample_count=4,
+            positive_count=2,
+            negative_count=2,
+        )
+        se._platt_scaling_profile = PlattScalingProfile(
+            scope="global",
+            probability_method="logprobs",
+            true_tokens=["true"],
+            false_tokens=["false"],
+            domain_fingerprint=se._domain_fingerprint,
+            score_kind="grouped_log_odds",
+            groups={GLOBAL_CALIBRATION_KEY: params},
+        )
+
+        monkeypatch.setattr(
+            SemanticStateEstimator,
+            "_apply_platt_profile",
+            lambda self, predicate, score: 1.0 + 1e-9,
+        )
+
+        details = se.estimate_prediction_details(
+            fake_images, predicates=["on(a,b)"]
+        )
+        pred = details["on(a,b)"]
+
+        assert pred.calibrated_probability is not None
+        assert 0.0 <= pred.calibrated_probability <= 1.0
+
+
 @pytest.mark.slow
 class TestSemanticStateEstimatorIntegration:
     """End-to-end integration tests with a tiny real HuggingFace VLM."""
