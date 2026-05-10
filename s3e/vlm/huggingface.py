@@ -90,6 +90,11 @@ class HuggingFaceVLM(VLMBackend):
         if not prompts:
             return []
 
+        if generate:
+            return self._query_batch_sequential(
+                images, prompts, system_prompt, generate, **inference_kwargs
+            )
+
         text_inputs = [
             self._render_prompt(images, prompt, system_prompt)
             for prompt in prompts
@@ -99,11 +104,6 @@ class HuggingFaceVLM(VLMBackend):
         try:
             inputs = self._prepare_inputs(text_inputs, batched_images)
         except Exception:
-            return self._query_batch_sequential(
-                images, prompts, system_prompt, generate, **inference_kwargs
-            )
-
-        if generate:
             return self._query_batch_sequential(
                 images, prompts, system_prompt, generate, **inference_kwargs
             )
@@ -194,11 +194,34 @@ class HuggingFaceVLM(VLMBackend):
         messages.append({"role": "user", "content": user_content})
         return messages
 
+    def _select_next_token_logits(self, logits, inputs):
+        """Select logits after the last non-padding token in each batch row."""
+        attention_mask = inputs.get("attention_mask")
+        if (
+            isinstance(attention_mask, torch.Tensor)
+            and attention_mask.ndim == 2
+            and tuple(attention_mask.shape) == tuple(logits.shape[:2])
+        ):
+            mask = attention_mask.to(device=logits.device).bool()
+            positions = torch.arange(logits.shape[1], device=logits.device).expand(
+                logits.shape[0], -1
+            )
+            last_indices = positions.masked_fill(~mask, -1).max(dim=1).values
+            last_indices = torch.where(
+                last_indices >= 0,
+                last_indices,
+                torch.full_like(last_indices, logits.shape[1] - 1),
+            )
+            batch_indices = torch.arange(logits.shape[0], device=logits.device)
+            return logits[batch_indices, last_indices, :]
+
+        return logits[:, -1, :]
+
     def _get_next_token_probs(self, inputs, **inference_kwargs):
         with torch.no_grad():
             outputs = self.model(**inputs, **inference_kwargs)
 
-        logits = outputs.logits[:, -1, :].float()
+        logits = self._select_next_token_logits(outputs.logits, inputs).float()
         probs = torch.softmax(logits, dim=-1)
 
         if self.num_logprobs is None:
