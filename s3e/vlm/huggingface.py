@@ -279,6 +279,11 @@ class HuggingFaceVLM(VLMBackend):
         try:
             output_ids = self.model.generate(**inputs, **inference_kwargs)
             generated_sequences = self._trim_generated_sequences(output_ids, inputs)
+            generated_sequences = self._select_generated_sequences_for_prompts(
+                generated_sequences, batch_size
+            )
+            if generated_sequences is None:
+                return [None for _ in range(batch_size)]
             return self._decode_generated_sequences(generated_sequences)
         except Exception:
             return [None for _ in range(batch_size)]
@@ -296,6 +301,17 @@ class HuggingFaceVLM(VLMBackend):
             return [row for row in output_ids]
         input_len = inputs["input_ids"].shape[-1]
         return [row[input_len:] for row in output_ids]
+
+    @staticmethod
+    def _select_generated_sequences_for_prompts(sequences, batch_size: int):
+        """Keep one generated sequence per input prompt."""
+        sequence_count = len(sequences)
+        if sequence_count == batch_size:
+            return sequences
+        if batch_size > 0 and sequence_count > 0 and sequence_count % batch_size == 0:
+            group_size = sequence_count // batch_size
+            return [sequences[i * group_size] for i in range(batch_size)]
+        return None
 
     def _model_is_encoder_decoder(self) -> bool:
         config = getattr(self.model, "config", None)

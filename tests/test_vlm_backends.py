@@ -590,6 +590,36 @@ class TestHuggingFaceVLMMocked:
 
     @patch("s3e.vlm.huggingface.AutoProcessor")
     @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_generate_returns_one_output_per_prompt_when_multiple_sequences_returned(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        input_ids = torch.ones(2, 3, dtype=torch.long)
+        vlm, mock_model, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, input_ids=input_ids
+        )
+        mock_model.generate.return_value = torch.tensor(
+            [
+                [1, 2, 3, 10, 11],
+                [1, 2, 3, 12, 13],
+                [4, 5, 6, 20, 21],
+                [4, 5, 6, 22, 23],
+            ],
+            dtype=torch.long,
+        )
+        mock_processor.batch_decode.side_effect = None
+        mock_processor.batch_decode.return_value = ["first q1", "first q2"]
+
+        results = vlm.query_batch(
+            [], ["q1", "q2"], generate=True, num_return_sequences=2
+        )
+
+        decoded_sequences = mock_processor.batch_decode.call_args.args[0]
+        assert [seq.tolist() for seq in decoded_sequences] == [[10, 11], [20, 21]]
+        assert len(results) == 2
+        assert [result.text for result in results] == ["first q1", "first q2"]
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
     def test_query_batch_generate_does_not_trim_encoder_decoder_outputs(
         self, mock_model_cls, mock_proc_cls
     ):
