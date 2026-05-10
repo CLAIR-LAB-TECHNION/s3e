@@ -163,6 +163,7 @@ class TestHuggingFaceVLMMocked:
         mock_model_cls.from_pretrained.assert_called_once()
         mock_proc_cls.from_pretrained.assert_called_once()
         assert vlm.max_new_tokens == 10
+        assert vlm.num_logprobs is None
 
     @patch("s3e.vlm.huggingface.AutoProcessor")
     @patch("s3e.vlm.huggingface._AutoModelClass")
@@ -211,6 +212,68 @@ class TestHuggingFaceVLMMocked:
         assert result.text is None
         mock_model.assert_called_once()
         mock_model.generate.assert_not_called()
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_returns_all_token_probs_by_default(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+        mock_processor.return_value = {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+        mock_processor.decode.side_effect = lambda idx: f"tok{idx}"
+
+        logits = torch.arange(25, dtype=torch.float32).reshape(1, 1, 25)
+        mock_output = MagicMock()
+        mock_output.logits = logits
+        mock_model.return_value = mock_output
+
+        vlm = HuggingFaceVLM("test/model")
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query([img], "Is A on B?")
+
+        expected_probs = torch.softmax(logits[0, -1].float(), dim=-1)
+        assert set(result.token_probs) == {f"tok{i}" for i in range(25)}
+        for token_id, expected_prob in enumerate(expected_probs):
+            assert result.token_probs[f"tok{token_id}"] == pytest.approx(
+                expected_prob.item()
+            )
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_limits_token_probs_when_num_logprobs_is_set(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+        mock_processor.return_value = {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+        mock_processor.decode.side_effect = lambda idx: f"tok{idx}"
+
+        logits = torch.tensor([[[0.0, 1.0, 2.0, 3.0]]])
+        mock_output = MagicMock()
+        mock_output.logits = logits
+        mock_model.return_value = mock_output
+
+        vlm = HuggingFaceVLM("test/model", num_logprobs=2)
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query([img], "Is A on B?")
+
+        expected_probs = torch.softmax(logits[0, -1].float(), dim=-1)
+        assert set(result.token_probs) == {"tok2", "tok3"}
+        assert result.token_probs["tok3"] == pytest.approx(expected_probs[3].item())
+        assert result.token_probs["tok2"] == pytest.approx(expected_probs[2].item())
 
     @patch("s3e.vlm.huggingface.AutoProcessor")
     @patch("s3e.vlm.huggingface._AutoModelClass")
