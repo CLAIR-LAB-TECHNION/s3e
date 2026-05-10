@@ -157,10 +157,13 @@ class HuggingFaceVLM(VLMBackend):
                 probs[0], min(self.num_logprobs, probs.shape[-1])
             )
 
+        selected_probs = selected_probs.detach().cpu().tolist()
+        selected_indices = selected_indices.detach().cpu().tolist()
+
         token_probs = {}
         for prob, idx in zip(selected_probs, selected_indices):
-            token_str = self.processor.decode(idx.item())
-            token_probs[token_str] = prob.item()
+            token_str = self.processor.decode(int(idx))
+            token_probs[token_str] = float(prob)
         return token_probs
 
     def _generate_text(self, inputs, **inference_kwargs) -> str | None:
