@@ -558,6 +558,90 @@ class TestHuggingFaceVLMMocked:
         generate_kwargs = mock_model.generate.call_args.kwargs
         assert "max_new_tokens" not in generate_kwargs
 
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_generate_calls_generate_once_and_batch_decodes(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        input_ids = torch.ones(2, 3, dtype=torch.long)
+        vlm, mock_model, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, input_ids=input_ids
+        )
+        mock_model.generate.return_value = torch.tensor(
+            [
+                [1, 2, 3, 10, 11],
+                [4, 5, 6, 20, 21],
+            ],
+            dtype=torch.long,
+        )
+        mock_processor.batch_decode.side_effect = None
+        mock_processor.batch_decode.return_value = ["yes", "no"]
+
+        results = vlm.query_batch(
+            [], ["q1", "q2"], generate=True, max_new_tokens=2
+        )
+
+        assert mock_model.generate.call_count == 1
+        assert mock_model.generate.call_args.kwargs["max_new_tokens"] == 2
+        decoded_sequences = mock_processor.batch_decode.call_args.args[0]
+        assert [seq.tolist() for seq in decoded_sequences] == [[10, 11], [20, 21]]
+        assert [result.text for result in results] == ["yes", "no"]
+        assert all(result.token_probs is None for result in results)
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_generate_does_not_trim_encoder_decoder_outputs(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        input_ids = torch.ones(2, 3, dtype=torch.long)
+        vlm, mock_model, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, input_ids=input_ids
+        )
+        mock_model.config.is_encoder_decoder = True
+        mock_model.generate.return_value = torch.tensor(
+            [
+                [10, 11],
+                [20, 21],
+            ],
+            dtype=torch.long,
+        )
+        mock_processor.batch_decode.side_effect = None
+        mock_processor.batch_decode.return_value = ["yes", "no"]
+
+        results = vlm.query_batch([], ["q1", "q2"], generate=True)
+
+        decoded_sequences = mock_processor.batch_decode.call_args.args[0]
+        assert [seq.tolist() for seq in decoded_sequences] == [[10, 11], [20, 21]]
+        assert [result.text for result in results] == ["yes", "no"]
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_generate_falls_back_to_decode_when_batch_decode_fails(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        input_ids = torch.ones(2, 3, dtype=torch.long)
+        vlm, mock_model, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, input_ids=input_ids
+        )
+        mock_model.generate.return_value = torch.tensor(
+            [
+                [1, 2, 3, 10, 11],
+                [4, 5, 6, 20, 21],
+            ],
+            dtype=torch.long,
+        )
+        mock_processor.batch_decode.side_effect = TypeError("no batch decode")
+        mock_processor.decode.side_effect = (
+            lambda sequence, **kwargs: f"decoded:{sequence.tolist()}"
+        )
+
+        results = vlm.query_batch([], ["q1", "q2"], generate=True)
+
+        assert [result.text for result in results] == [
+            "decoded:[10, 11]",
+            "decoded:[20, 21]",
+        ]
+
 
 @pytest.mark.slow
 class TestHuggingFaceVLMIntegration:
