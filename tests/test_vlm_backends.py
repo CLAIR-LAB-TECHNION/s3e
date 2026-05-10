@@ -698,9 +698,15 @@ class TestHuggingFaceVLMIntegration:
     def test_query_batch(self):
         from s3e.vlm.huggingface import HuggingFaceVLM
 
-        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu")
+        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu", num_logprobs=2)
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
         results = vlm.query_batch([img], ["q1?", "q2?"])
 
         assert len(results) == 2
         assert all(isinstance(r, VLMOutput) for r in results)
+        assert all(isinstance(r.token_probs, dict) for r in results)
+        assert all(0 < len(r.token_probs) <= 2 for r in results)
+        assert all(
+            all(prob >= 0 for prob in r.token_probs.values())
+            for r in results
+        )
