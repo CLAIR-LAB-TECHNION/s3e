@@ -395,6 +395,38 @@ class TestHuggingFaceVLMMocked:
 
     @patch("s3e.vlm.huggingface.AutoProcessor")
     @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_uses_attention_mask_for_last_prompt_token(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.zeros((2, 4, 4), dtype=torch.float32)
+        logits[0, 2, 2] = 10.0
+        logits[0, 3, 0] = 20.0
+        logits[1, 3, 1] = 10.0
+        vlm, _, mock_processor = self._make_mock_hf_components(
+            mock_model_cls,
+            mock_proc_cls,
+            logits=logits,
+            input_ids=torch.ones(2, 4, dtype=torch.long),
+            vlm_kwargs={"num_logprobs": 1},
+        )
+        mock_processor.return_value = {
+            "input_ids": torch.ones(2, 4, dtype=torch.long),
+            "attention_mask": torch.tensor(
+                [
+                    [1, 1, 1, 0],
+                    [1, 1, 1, 1],
+                ],
+                dtype=torch.long,
+            ),
+        }
+
+        results = vlm.query_batch([], ["short", "long"])
+
+        assert set(results[0].token_probs) == {"tok2"}
+        assert set(results[1].token_probs) == {"tok1"}
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
     def test_query_batch_sums_duplicate_decoded_tokens(
         self, mock_model_cls, mock_proc_cls
     ):
