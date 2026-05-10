@@ -43,7 +43,8 @@ class HuggingFaceVLM(VLMBackend):
             ``torch.float16`` when CUDA is available, else ``torch.float32``.
         device_map: Device placement strategy. Defaults to ``"auto"``.
         attn_implementation: Attention implementation to use. ``None`` uses default.
-        num_logprobs: Number of top tokens to include in token_probs. Defaults to 20.
+        num_logprobs: Number of top tokens to include in token_probs. ``None``
+            returns probabilities for all tokens. Defaults to ``None``.
         max_new_tokens: Maximum number of new tokens to generate. Defaults to 10.
         **model_kwargs: Additional kwargs for from_pretrained(). ``max_new_tokens``
             is consumed from this mapping and used for text generation.
@@ -55,7 +56,7 @@ class HuggingFaceVLM(VLMBackend):
         torch_dtype=None,
         device_map: str = "auto",
         attn_implementation: str | None = None,
-        num_logprobs: int = 20,
+        num_logprobs: int | None = None,
         max_new_tokens: int = 10,
         **model_kwargs,
     ):
@@ -148,12 +149,16 @@ class HuggingFaceVLM(VLMBackend):
         logits = outputs.logits[:, -1, :].float()
         probs = torch.softmax(logits, dim=-1)
 
-        # Extract top-k token probabilities
-        top_probs, top_indices = torch.topk(
-            probs[0], min(self.num_logprobs, probs.shape[-1])
-        )
+        if self.num_logprobs is None:
+            selected_probs = probs[0]
+            selected_indices = torch.arange(probs.shape[-1], device=probs.device)
+        else:
+            selected_probs, selected_indices = torch.topk(
+                probs[0], min(self.num_logprobs, probs.shape[-1])
+            )
+
         token_probs = {}
-        for prob, idx in zip(top_probs, top_indices):
+        for prob, idx in zip(selected_probs, selected_indices):
             token_str = self.processor.decode(idx.item())
             token_probs[token_str] = prob.item()
         return token_probs
