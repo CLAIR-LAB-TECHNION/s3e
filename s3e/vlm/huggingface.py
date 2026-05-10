@@ -90,11 +90,6 @@ class HuggingFaceVLM(VLMBackend):
         if not prompts:
             return []
 
-        if generate:
-            return self._query_batch_sequential(
-                images, prompts, system_prompt, generate, **inference_kwargs
-            )
-
         text_inputs = [
             self._render_prompt(images, prompt, system_prompt)
             for prompt in prompts
@@ -107,6 +102,13 @@ class HuggingFaceVLM(VLMBackend):
             return self._query_batch_sequential(
                 images, prompts, system_prompt, generate, **inference_kwargs
             )
+
+        if generate:
+            generated_texts = self._generate_text(inputs, **inference_kwargs)
+            return [
+                VLMOutput(token_probs=None, text=generated_text)
+                for generated_text in generated_texts
+            ]
 
         token_probs_batch = self._get_next_token_probs(inputs, **inference_kwargs)
         return [
@@ -129,7 +131,7 @@ class HuggingFaceVLM(VLMBackend):
             inputs = self._prepare_inputs(text_input, images if images else None)
 
             if generate:
-                generated_text = self._generate_text(inputs, **inference_kwargs)
+                generated_text = self._generate_text(inputs, **inference_kwargs)[0]
                 token_probs = None
             else:
                 token_probs = self._get_next_token_probs(
@@ -271,13 +273,46 @@ class HuggingFaceVLM(VLMBackend):
 
         return [self.processor.decode(int(token_id)) for token_id in token_ids]
 
-    def _generate_text(self, inputs, **inference_kwargs) -> str | None:
-        """Generate a short text response for the text_match probability method."""
+    def _generate_text(self, inputs, **inference_kwargs) -> list[str | None]:
+        """Generate text responses for a batch of prompts."""
+        batch_size = self._infer_batch_size(inputs)
         try:
             output_ids = self.model.generate(**inputs, **inference_kwargs)
-            # Trim the input tokens from the output
-            input_len = inputs["input_ids"].shape[-1]
-            generated_ids = output_ids[0, input_len:]
-            return self.processor.decode(generated_ids, skip_special_tokens=True)
+            generated_sequences = self._trim_generated_sequences(output_ids, inputs)
+            return self._decode_generated_sequences(generated_sequences)
         except Exception:
-            return None
+            return [None for _ in range(batch_size)]
+
+    @staticmethod
+    def _infer_batch_size(inputs) -> int:
+        input_ids = inputs.get("input_ids")
+        if input_ids is not None and hasattr(input_ids, "shape") and input_ids.shape:
+            return int(input_ids.shape[0])
+        return 1
+
+    def _trim_generated_sequences(self, output_ids, inputs):
+        """Remove prompt tokens from decoder-only generation outputs."""
+        if self._model_is_encoder_decoder():
+            return [row for row in output_ids]
+        input_len = inputs["input_ids"].shape[-1]
+        return [row[input_len:] for row in output_ids]
+
+    def _model_is_encoder_decoder(self) -> bool:
+        config = getattr(self.model, "config", None)
+        return getattr(config, "is_encoder_decoder", False) is True
+
+    def _decode_generated_sequences(self, sequences) -> list[str]:
+        """Decode generated token sequences, preferring batch decoding."""
+        batch_decode = getattr(self.processor, "batch_decode", None)
+        if callable(batch_decode):
+            try:
+                decoded = batch_decode(sequences, skip_special_tokens=True)
+                if len(decoded) == len(sequences):
+                    return list(decoded)
+            except Exception:
+                pass
+
+        return [
+            self.processor.decode(sequence, skip_special_tokens=True)
+            for sequence in sequences
+        ]
