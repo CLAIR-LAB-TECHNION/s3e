@@ -154,6 +154,64 @@ import torch
 class TestHuggingFaceVLMMocked:
     """Unit tests for HuggingFaceVLM using mocked transformers."""
 
+    def _make_mock_hf_components(
+        self,
+        mock_model_cls,
+        mock_proc_cls,
+        logits=None,
+        input_ids=None,
+        vlm_kwargs=None,
+    ):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+        mock_model.config.is_encoder_decoder = False
+
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+
+        if input_ids is None:
+            batch_size = int(logits.shape[0]) if logits is not None else 1
+            input_ids = torch.ones(batch_size, 5, dtype=torch.long)
+        mock_processor.return_value = {"input_ids": input_ids}
+
+        def render_chat(messages, add_generation_prompt=True, tokenize=False):
+            del add_generation_prompt
+            del tokenize
+            user_text = messages[-1]["content"][-1]["text"]
+            return f"chat:{user_text}"
+
+        def decode_token(token_id, **kwargs):
+            del kwargs
+            if isinstance(token_id, torch.Tensor):
+                token_id = token_id.item()
+            return f"tok{int(token_id)}"
+
+        def batch_decode_tokens(sequences, **kwargs):
+            del kwargs
+            decoded = []
+            for sequence in sequences:
+                if isinstance(sequence, torch.Tensor):
+                    flat = sequence.flatten()
+                    decoded.append(f"tok{int(flat[0])}" if len(flat) else "")
+                else:
+                    decoded.append(f"tok{int(sequence[0])}" if sequence else "")
+            return decoded
+
+        mock_processor.apply_chat_template.side_effect = render_chat
+        mock_processor.decode.side_effect = decode_token
+        mock_processor.batch_decode.side_effect = batch_decode_tokens
+
+        if logits is not None:
+            mock_output = MagicMock()
+            mock_output.logits = logits
+            mock_model.return_value = mock_output
+
+        vlm = HuggingFaceVLM("test/model", **(vlm_kwargs or {}))
+        return vlm, mock_model, mock_processor
+
     @patch("s3e.vlm.huggingface.AutoProcessor")
     @patch("s3e.vlm.huggingface._AutoModelClass")
     def test_construction(self, mock_model_cls, mock_proc_cls):
@@ -274,6 +332,138 @@ class TestHuggingFaceVLMMocked:
         assert set(result.token_probs) == {"tok2", "tok3"}
         assert result.token_probs["tok3"] == pytest.approx(expected_probs[3].item())
         assert result.token_probs["tok2"] == pytest.approx(expected_probs[2].item())
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_runs_single_forward_for_multiple_prompts(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor(
+            [
+                [[0.0, 1.0, 2.0]],
+                [[2.0, 1.0, 0.0]],
+            ],
+            dtype=torch.float32,
+        )
+        vlm, mock_model, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, logits=logits
+        )
+        img = Image.new("RGB", (64, 64))
+
+        results = vlm.query_batch([img], ["q1", "q2"], system_prompt="sys")
+
+        assert len(results) == 2
+        assert mock_processor.call_count == 1
+        assert mock_model.call_count == 1
+        assert mock_processor.call_args.kwargs["text"] == ["chat:q1", "chat:q2"]
+        processor_images = mock_processor.call_args.kwargs["images"]
+        assert len(processor_images) == 2
+        assert processor_images[0][0] is img
+        assert processor_images[1][0] is img
+
+        expected_probs = torch.softmax(logits[:, -1, :].float(), dim=-1)
+        assert results[0].token_probs["tok2"] == pytest.approx(
+            expected_probs[0, 2].item()
+        )
+        assert results[1].token_probs["tok0"] == pytest.approx(
+            expected_probs[1, 0].item()
+        )
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_topk_is_computed_per_row(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor(
+            [
+                [[0.0, 1.0, 2.0, 3.0]],
+                [[3.0, 2.0, 1.0, 0.0]],
+            ],
+            dtype=torch.float32,
+        )
+        vlm, _, _ = self._make_mock_hf_components(
+            mock_model_cls,
+            mock_proc_cls,
+            logits=logits,
+            vlm_kwargs={"num_logprobs": 2},
+        )
+
+        results = vlm.query_batch([], ["q1", "q2"])
+
+        assert set(results[0].token_probs) == {"tok2", "tok3"}
+        assert set(results[1].token_probs) == {"tok0", "tok1"}
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_sums_duplicate_decoded_tokens(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor([[[0.0, 1.0, 2.0, 3.0]]], dtype=torch.float32)
+        vlm, _, mock_processor = self._make_mock_hf_components(
+            mock_model_cls,
+            mock_proc_cls,
+            logits=logits,
+            vlm_kwargs={"num_logprobs": 2},
+        )
+        mock_processor.decode.side_effect = None
+        mock_processor.decode.return_value = "same"
+        mock_processor.batch_decode.side_effect = None
+        mock_processor.batch_decode.return_value = ["same", "same"]
+
+        result = vlm.query([], "q1")
+
+        expected_probs = torch.softmax(logits[0, -1, :].float(), dim=-1)
+        assert set(result.token_probs) == {"same"}
+        assert result.token_probs["same"] == pytest.approx(
+            expected_probs[2].item() + expected_probs[3].item()
+        )
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_falls_back_to_sequential_when_batched_processor_rejects_images(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor([[[0.0, 1.0]]], dtype=torch.float32)
+        vlm, mock_model, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, logits=logits
+        )
+        img = Image.new("RGB", (64, 64))
+
+        def processor_call(*, text, images, return_tensors, padding):
+            del images
+            del return_tensors
+            del padding
+            if isinstance(text, list):
+                raise ValueError("nested image batches unsupported")
+            return {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+
+        mock_processor.side_effect = processor_call
+
+        results = vlm.query_batch([img], ["q1", "q2"])
+
+        assert len(results) == 2
+        assert mock_processor.call_count == 3
+        assert mock_model.call_count == 2
+        assert all(isinstance(result.token_probs, dict) for result in results)
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_query_batch_empty_prompts_returns_empty_list(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+
+        vlm = HuggingFaceVLM("test/model")
+        img = Image.new("RGB", (64, 64))
+
+        assert vlm.query_batch([img], []) == []
+        mock_processor.assert_not_called()
+        mock_model.assert_not_called()
 
     @patch("s3e.vlm.huggingface.AutoProcessor")
     @patch("s3e.vlm.huggingface._AutoModelClass")

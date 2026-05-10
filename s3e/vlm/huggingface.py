@@ -87,43 +87,96 @@ class HuggingFaceVLM(VLMBackend):
 
     def query_batch(self, images, prompts, system_prompt=None, generate=False, **inference_kwargs):
         """Send multiple queries against the same images."""
+        if not prompts:
+            return []
+
+        text_inputs = [
+            self._render_prompt(images, prompt, system_prompt)
+            for prompt in prompts
+        ]
+        batched_images = self._build_batched_images(images, len(prompts))
+
+        try:
+            inputs = self._prepare_inputs(text_inputs, batched_images)
+        except Exception:
+            return self._query_batch_sequential(
+                images, prompts, system_prompt, generate, **inference_kwargs
+            )
+
+        if generate:
+            return self._query_batch_sequential(
+                images, prompts, system_prompt, generate, **inference_kwargs
+            )
+
+        token_probs_batch = self._get_next_token_probs(inputs, **inference_kwargs)
+        return [
+            VLMOutput(token_probs=token_probs, text=None)
+            for token_probs in token_probs_batch
+        ]
+
+    def _query_batch_sequential(
+        self,
+        images,
+        prompts,
+        system_prompt=None,
+        generate=False,
+        **inference_kwargs,
+    ):
+        """Correctness fallback for processors that cannot batch inputs."""
         results = []
         for prompt in prompts:
-            full_prompt = prompt
-            if system_prompt is not None:
-                full_prompt = f"{system_prompt}\n\n{prompt}"
-
-            # Build conversation format for chat models
-            messages = self._build_messages(images, prompt, system_prompt)
-
-            try:
-                text_input = self.processor.apply_chat_template(
-                    messages, add_generation_prompt=True, tokenize=False
-                )
-            except Exception:
-                # Fallback for models without chat template
-                text_input = full_prompt
-
-            inputs = self.processor(
-                text=text_input,
-                images=images if images else None,
-                return_tensors="pt",
-                padding=True,
-            )
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+            text_input = self._render_prompt(images, prompt, system_prompt)
+            inputs = self._prepare_inputs(text_input, images if images else None)
 
             if generate:
-                # Generate text response
                 generated_text = self._generate_text(inputs, **inference_kwargs)
                 token_probs = None
             else:
-                # Get next-token probabilities
-                token_probs = self._get_next_token_probs(inputs, **inference_kwargs)
+                token_probs = self._get_next_token_probs(
+                    inputs, **inference_kwargs
+                )[0]
                 generated_text = None
 
             results.append(VLMOutput(token_probs=token_probs, text=generated_text))
-
         return results
+
+    def _render_prompt(self, images, prompt, system_prompt=None):
+        """Render a prompt with the processor chat template when available."""
+        full_prompt = prompt
+        if system_prompt is not None:
+            full_prompt = f"{system_prompt}\n\n{prompt}"
+
+        messages = self._build_messages(images, prompt, system_prompt)
+        try:
+            return self.processor.apply_chat_template(
+                messages, add_generation_prompt=True, tokenize=False
+            )
+        except Exception:
+            return full_prompt
+
+    @staticmethod
+    def _build_batched_images(images, batch_size: int):
+        """Repeat the same image set for every prompt row."""
+        if not images:
+            return None
+        return [list(images) for _ in range(batch_size)]
+
+    def _prepare_inputs(self, text, images):
+        """Run the processor and move tensor-like inputs to the model device."""
+        inputs = self.processor(
+            text=text,
+            images=images,
+            return_tensors="pt",
+            padding=True,
+        )
+        return self._move_inputs_to_device(inputs)
+
+    def _move_inputs_to_device(self, inputs):
+        """Move tensor-like processor outputs while preserving metadata."""
+        return {
+            key: value.to(self.model.device) if hasattr(value, "to") else value
+            for key, value in inputs.items()
+        }
 
     def _build_messages(self, images, prompt, system_prompt=None):
         """Build a chat-format message list."""
@@ -145,26 +198,55 @@ class HuggingFaceVLM(VLMBackend):
         with torch.no_grad():
             outputs = self.model(**inputs, **inference_kwargs)
 
-            # Get next-token logits (last position in sequence)
         logits = outputs.logits[:, -1, :].float()
         probs = torch.softmax(logits, dim=-1)
 
         if self.num_logprobs is None:
-            selected_probs = probs[0]
-            selected_indices = torch.arange(probs.shape[-1], device=probs.device)
+            selected_probs = probs
+            selected_indices = torch.arange(
+                probs.shape[-1], device=probs.device
+            ).expand(probs.shape[0], -1)
         else:
             selected_probs, selected_indices = torch.topk(
-                probs[0], min(self.num_logprobs, probs.shape[-1])
+                probs, min(self.num_logprobs, probs.shape[-1]), dim=-1
             )
 
         selected_probs = selected_probs.detach().cpu().tolist()
         selected_indices = selected_indices.detach().cpu().tolist()
+        flat_indices = [int(idx) for row in selected_indices for idx in row]
+        decoded_tokens = self._decode_token_ids(flat_indices)
 
-        token_probs = {}
-        for prob, idx in zip(selected_probs, selected_indices):
-            token_str = self.processor.decode(int(idx))
-            token_probs[token_str] = float(prob)
-        return token_probs
+        results = []
+        offset = 0
+        for row_probs, row_indices in zip(selected_probs, selected_indices):
+            row_tokens = decoded_tokens[offset : offset + len(row_indices)]
+            offset += len(row_indices)
+
+            token_probs = {}
+            for token_str, prob in zip(row_tokens, row_probs):
+                token_probs[token_str] = token_probs.get(token_str, 0.0) + float(prob)
+            results.append(token_probs)
+
+        return results
+
+    def _decode_token_ids(self, token_ids: list[int]) -> list[str]:
+        """Decode token IDs, preferring batch decoding when it behaves correctly."""
+        if not token_ids:
+            return []
+
+        batch_decode = getattr(self.processor, "batch_decode", None)
+        if callable(batch_decode):
+            try:
+                decoded = batch_decode(
+                    [[int(token_id)] for token_id in token_ids],
+                    skip_special_tokens=False,
+                )
+                if len(decoded) == len(token_ids):
+                    return list(decoded)
+            except Exception:
+                pass
+
+        return [self.processor.decode(int(token_id)) for token_id in token_ids]
 
     def _generate_text(self, inputs, **inference_kwargs) -> str | None:
         """Generate a short text response for the text_match probability method."""
