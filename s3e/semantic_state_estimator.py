@@ -401,78 +401,82 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
     ) -> None:
         """Fit a Platt scaling calibration profile from labeled examples.
 
-        Each example pairs a set of images with a ground-truth boolean
-        state dict.  The estimator queries its VLM for every labeled
-        predicate, collects the resulting log-odds scores, and fits a
-        logistic regression (Platt scaling) to map raw scores to
-        calibrated probabilities.
-
-        Args:
-            examples: Labeled calibration examples.  Each
-                :class:`CalibrationExample` contains images, a
-                ``state_dict`` mapping grounded predicates to boolean
-                labels, and an optional problem string.
-            scope: Grouping strategy for the Platt parameters.
-                ``"global"`` fits a single pair of parameters shared
-                across all predicates.  ``"lifted"`` fits separate
-                parameters per lifted predicate (fluent name).
-            progress_bar: Whether to display a ``tqdm`` progress bar
-                while querying the VLM.
-            pass_through_single_class: When ``False`` (default), a
-                :class:`ValueError` is raised before any VLM
-                predictions if a label group contains only positive or
-                only negative examples.  When ``True``, single-class
-                groups are assigned identity Platt parameters
-                (``a=-1, b=0``) so that calibrated output equals
-                ``sigmoid(score)`` — effectively leaving those
-                predicates uncalibrated.
-
-        Raises:
-            ValueError: If ``probability_method`` is not ``"logprobs"``,
-                *examples* is empty, *scope* is unrecognised, or
-                *pass_through_single_class* is ``False`` and a label
-                group lacks both classes.
+        This method performs VLM inference to collect calibration samples,
+        then delegates fitting to :meth:`fit_platt_scaling_from_data`.
+        Use :meth:`collect_platt_scaling_data` and
+        :meth:`save_platt_scaling_data` when you want to reuse expensive
+        predictions across runs.
         """
         self._validate_platt_logprobs_mode()
         if not examples:
             raise ValueError("Expected at least one calibration example.")
         self._validate_platt_scope(scope)
 
-        single_class_keys = self._validate_calibration_labels(
-            examples, scope, pass_through_single_class
+        label_samples = [
+            PlattCalibrationSample(
+                predicate=predicate,
+                score=0.0,
+                label=label,
+                problem=example.problem,
+            )
+            for example in examples
+            for predicate, label in example.state_dict.items()
+        ]
+        _, grouped_labels = self._group_platt_calibration_samples(
+            label_samples, scope
+        )
+        self._validate_grouped_platt_labels(
+            grouped_labels, scope, pass_through_single_class
         )
 
-        grouped_scores: dict[str, list[float]] = {}
-        grouped_labels: dict[str, list[bool]] = {}
+        data = self.collect_platt_scaling_data(
+            examples,
+            progress_bar=progress_bar,
+        )
+        self.fit_platt_scaling_from_data(
+            data,
+            scope=scope,
+            pass_through_single_class=pass_through_single_class,
+        )
 
-        for example in tqdm(examples, disable=not progress_bar, desc="Fitting Platt scaling"):
-            example_problem = example.problem or self._problem
-            example_up_problem = create_up_problem(self._domain, example_problem)
-            per_sample_details = self._estimate_calibration_example(example)
-            for details in per_sample_details:
-                for predicate, detail in details.items():
-                    if scope == "global":
-                        key = GLOBAL_CALIBRATION_KEY
-                    else:
-                        key = get_lifted_predicate_key(example_up_problem, predicate)
-                    grouped_scores.setdefault(key, []).append(detail.score)
-                    grouped_labels.setdefault(key, []).append(example.state_dict[predicate])
+    def fit_platt_scaling_from_data(
+        self,
+        data: list[PlattCalibrationSample],
+        scope: str = "global",
+        pass_through_single_class: bool = False,
+    ) -> None:
+        """Fit a Platt scaling calibration profile from precomputed samples.
 
+        This method does not query the VLM. It consumes grouped log-odds
+        scores and boolean labels produced earlier by
+        :meth:`collect_platt_scaling_data` or loaded with
+        :meth:`load_platt_scaling_data`.
+        """
+        self._validate_platt_logprobs_mode()
+        if not data:
+            raise ValueError("Expected at least one Platt calibration sample.")
+        self._validate_platt_scope(scope)
+
+        grouped_scores, grouped_labels = self._group_platt_calibration_samples(
+            data, scope
+        )
+        single_class_keys = self._validate_grouped_platt_labels(
+            grouped_labels, scope, pass_through_single_class
+        )
         params_by_group: dict[str, PlattParameters] = {}
         for key, scores in grouped_scores.items():
+            labels = grouped_labels[key]
             if key not in single_class_keys:
-                params_by_group[key] = fit_platt_parameters(
-                    scores, grouped_labels[key]
-                )
+                params_by_group[key] = fit_platt_parameters(scores, labels)
             else:
-                labels = grouped_labels[key]
                 params_by_group[key] = PlattParameters(
                     a=-1.0,
                     b=0.0,
                     sample_count=len(scores),
-                    positive_count=sum(bool(l) for l in labels),
-                    negative_count=sum(not bool(l) for l in labels),
+                    positive_count=sum(bool(label) for label in labels),
+                    negative_count=sum(not bool(label) for label in labels),
                 )
+
         self._platt_scaling_profile = PlattScalingProfile(
             scope=scope,
             probability_method=self.probability_method,
@@ -660,41 +664,59 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         # estimator falls back to the uncalibrated probability for any
         # predicate whose group is absent from the profile.
 
-    def _validate_calibration_labels(
+    def _group_platt_calibration_samples(
         self,
-        examples: list[CalibrationExample],
+        data: list[PlattCalibrationSample],
         scope: str,
-        pass_through_single_class: bool = False,
-    ) -> set[str]:
-        """Check label groups for single-class issues.
+    ) -> tuple[dict[str, list[float]], dict[str, list[bool]]]:
+        grouped_scores: dict[str, list[float]] = {}
+        grouped_labels: dict[str, list[bool]] = {}
+        problem_cache: dict[str, object] = {}
+        predicates_cache: dict[str, set[str]] = {}
 
-        Returns the set of group keys that have only one label class.
-        When *pass_through_single_class* is ``False``, a
-        :class:`ValueError` is raised instead of returning a non-empty
-        set.
-        """
-        label_sets: dict[str, set[bool]] = {}
-        for example in examples:
-            example_problem = example.problem or self._problem
+        for sample in data:
+            problem = sample.problem or self._problem
+            if problem not in problem_cache:
+                problem_cache[problem] = (
+                    self.up_problem
+                    if problem == self._problem
+                    else create_up_problem(self._domain, problem)
+                )
+            if problem not in predicates_cache:
+                predicates_cache[problem] = set(
+                    get_all_grounded_predicates_for_objects(problem_cache[problem])
+                )
+            if sample.predicate not in predicates_cache[problem]:
+                raise ValueError(
+                    f"Calibration data contains predicate(s) not in the "
+                    f"current problem: {sample.predicate}"
+                )
+
             if scope == "global":
-                for predicate in example.state_dict:
-                    label_sets.setdefault(GLOBAL_CALIBRATION_KEY, set()).add(
-                        example.state_dict[predicate]
-                    )
+                key = GLOBAL_CALIBRATION_KEY
             else:
-                example_up_problem = create_up_problem(self._domain, example_problem)
-                for predicate in example.state_dict:
-                    key = get_lifted_predicate_key(example_up_problem, predicate)
-                    label_sets.setdefault(key, set()).add(
-                        example.state_dict[predicate]
-                    )
+                key = get_lifted_predicate_key(
+                    problem_cache[problem], sample.predicate
+                )
+            grouped_scores.setdefault(key, []).append(sample.score)
+            grouped_labels.setdefault(key, []).append(sample.label)
 
+        return grouped_scores, grouped_labels
+
+    def _validate_grouped_platt_labels(
+        self,
+        grouped_labels: dict[str, list[bool]],
+        scope: str,
+        pass_through_single_class: bool,
+    ) -> set[str]:
         single_class_keys: set[str] = set()
-        for key, labels in label_sets.items():
-            if True in labels and False in labels:
+        for key, labels in grouped_labels.items():
+            has_positive = any(bool(label) for label in labels)
+            has_negative = any(not bool(label) for label in labels)
+            if has_positive and has_negative:
                 continue
             if not pass_through_single_class:
-                present = "positive" if True in labels else "negative"
+                present = "positive" if has_positive else "negative"
                 if scope == "global":
                     raise ValueError(
                         "Platt scaling requires both positive and negative labels, "
@@ -705,7 +727,6 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                     f"for each lifted predicate, but '{key}' has only {present} labels."
                 )
             single_class_keys.add(key)
-
         return single_class_keys
 
     def _extract_text_match_details(self, output: VLMOutput) -> PredicatePredictionDetails:

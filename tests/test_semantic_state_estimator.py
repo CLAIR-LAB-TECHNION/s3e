@@ -1323,6 +1323,113 @@ class TestGlobalPlattScaling:
         assert profile.groups["on"].sample_count == 2
         assert profile.groups["clear"].sample_count == 2
 
+    def test_fit_platt_scaling_from_data_matches_fit_platt_scaling_global(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        table = {
+            (1, "on(a,a)"): 0.10,
+            (1, "on(a,b)"): 0.40,
+            (1, "on(b,a)"): 0.35,
+            (1, "on(b,b)"): 0.05,
+            (1, "clear(a)"): 0.75,
+            (1, "clear(b)"): 0.25,
+            (2, "on(a,a)"): 0.15,
+            (2, "on(a,b)"): 0.55,
+            (2, "on(b,a)"): 0.30,
+            (2, "on(b,b)"): 0.05,
+            (2, "clear(a)"): 0.80,
+            (2, "clear(b)"): 0.20,
+        }
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+            CalibrationExample(
+                images=make_calibration_image(2),
+                state_dict={
+                    "on(a,a)": False,
+                    "on(a,b)": True,
+                    "on(b,a)": False,
+                    "on(b,b)": False,
+                    "clear(a)": True,
+                    "clear(b)": False,
+                },
+            ),
+        ]
+        collect_estimator = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=CalibrationVLM(table)
+        )
+        direct_estimator = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=CalibrationVLM(table)
+        )
+        offline_estimator = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=FakeVLM()
+        )
+
+        data = collect_estimator.collect_platt_scaling_data(examples)
+        direct_estimator.fit_platt_scaling(examples, scope="global")
+        offline_estimator.fit_platt_scaling_from_data(data, scope="global")
+
+        direct_profile = direct_estimator._platt_scaling_profile
+        offline_profile = offline_estimator._platt_scaling_profile
+        assert direct_profile is not None
+        assert offline_profile is not None
+        assert offline_profile.scope == "global"
+        assert set(offline_profile.groups) == {GLOBAL_CALIBRATION_KEY}
+        assert offline_profile.groups[GLOBAL_CALIBRATION_KEY].sample_count == 12
+        assert offline_profile.groups[GLOBAL_CALIBRATION_KEY].a == pytest.approx(
+            direct_profile.groups[GLOBAL_CALIBRATION_KEY].a
+        )
+        assert offline_profile.groups[GLOBAL_CALIBRATION_KEY].b == pytest.approx(
+            direct_profile.groups[GLOBAL_CALIBRATION_KEY].b
+        )
+
+    def test_fit_platt_scaling_delegates_to_fit_from_data(
+        self, blocksworld_domain, blocksworld_problem, monkeypatch
+    ):
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=FakeVLM())
+        examples = [
+            CalibrationExample(
+                images=make_calibration_image(1),
+                state_dict={"on(a,b)": True, "clear(a)": False},
+            )
+        ]
+        collected = [
+            PlattCalibrationSample("on(a,b)", 1.0, True),
+            PlattCalibrationSample("clear(a)", -1.0, False),
+        ]
+        calls = []
+
+        def fake_collect(received_examples, progress_bar=False):
+            calls.append(("collect", received_examples, progress_bar))
+            return collected
+
+        def fake_fit(data, scope="global", pass_through_single_class=False):
+            calls.append(("fit", data, scope, pass_through_single_class))
+
+        monkeypatch.setattr(se, "collect_platt_scaling_data", fake_collect)
+        monkeypatch.setattr(se, "fit_platt_scaling_from_data", fake_fit)
+
+        se.fit_platt_scaling(
+            examples,
+            scope="global",
+            progress_bar=True,
+            pass_through_single_class=True,
+        )
+
+        assert calls == [
+            ("collect", examples, True),
+            ("fit", collected, "global", True),
+        ]
+
 
 class TestLiftedPlattScaling:
     def test_fit_platt_scaling_lifted_handles_multiple_problem_instances(
@@ -1667,6 +1774,64 @@ class TestLiftedPlattScaling:
         assert clear_preds
         for p in clear_preds:
             assert calibrated[p] == uncalibrated[p]
+
+    def test_fit_platt_scaling_from_data_lifted_handles_multiple_problem_instances(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        data = [
+            PlattCalibrationSample("on(a,b)", 1.0, True, problem=blocksworld_problem),
+            PlattCalibrationSample("on(b,a)", -1.0, False, problem=blocksworld_problem),
+            PlattCalibrationSample("clear(a)", 1.2, True, problem=blocksworld_problem),
+            PlattCalibrationSample("clear(b)", -1.2, False, problem=blocksworld_problem),
+            PlattCalibrationSample("on(a,c)", -0.8, False, problem=PROBLEM_3OBJ),
+            PlattCalibrationSample("clear(c)", 0.8, True, problem=PROBLEM_3OBJ),
+        ]
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=FakeVLM())
+
+        se.fit_platt_scaling_from_data(data, scope="lifted")
+
+        profile = se._platt_scaling_profile
+        assert profile is not None
+        assert profile.scope == "lifted"
+        assert set(profile.groups) == {"on", "clear"}
+        assert profile.groups["on"].sample_count == 3
+        assert profile.groups["clear"].sample_count == 3
+
+    def test_fit_platt_scaling_from_data_rejects_unknown_predicates(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=FakeVLM())
+        data = [
+            PlattCalibrationSample("on(a,b)", 1.0, True),
+            PlattCalibrationSample("nonexistent(x)", -1.0, False),
+        ]
+
+        with pytest.raises(ValueError, match="nonexistent\\(x\\)"):
+            se.fit_platt_scaling_from_data(data, scope="global")
+
+    def test_fit_platt_scaling_from_data_pass_through_single_class(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=FakeVLM())
+        data = [
+            PlattCalibrationSample("on(a,b)", 1.0, True),
+            PlattCalibrationSample("clear(a)", 0.5, True),
+        ]
+
+        se.fit_platt_scaling_from_data(
+            data,
+            scope="global",
+            pass_through_single_class=True,
+        )
+
+        profile = se._platt_scaling_profile
+        assert profile is not None
+        params = profile.groups[GLOBAL_CALIBRATION_KEY]
+        assert params.a == -1.0
+        assert params.b == 0.0
+        assert params.sample_count == 2
+        assert params.positive_count == 2
+        assert params.negative_count == 0
 
 
 class TestSwapProblem:
