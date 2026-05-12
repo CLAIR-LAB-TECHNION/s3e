@@ -4,6 +4,9 @@
 # cached translations
 semantic_state_estimator/cache/
 
+# local git worktrees
+.worktrees/
+
 # log files
 *.err
 *.out
