@@ -7,6 +7,7 @@ from unified_planning.io import PDDLReader
 
 from s3e.calibration import (
     CalibrationExample,
+    PlattCalibrationSample,
     PlattParameters,
     PlattScalingProfile,
     apply_platt_scaling,
@@ -83,6 +84,40 @@ class TestProfileSerialization:
 
         with pytest.raises(ValueError, match="Unsupported calibration schema version: 99"):
             PlattScalingProfile.from_dict(payload)
+
+
+class TestPlattCalibrationSample:
+    def test_round_trips_through_dict(self):
+        sample = PlattCalibrationSample(
+            predicate="on(a,b)",
+            score=1.25,
+            label=True,
+            problem="(define (problem bw-2) (:domain blocksworld))",
+        )
+
+        payload = sample.to_dict()
+
+        assert payload == {
+            "predicate": "on(a,b)",
+            "score": 1.25,
+            "label": True,
+            "problem": "(define (problem bw-2) (:domain blocksworld))",
+        }
+        assert PlattCalibrationSample.from_dict(payload) == sample
+
+    def test_round_trips_without_problem(self):
+        sample = PlattCalibrationSample(
+            predicate="clear(a)",
+            score=-0.75,
+            label=False,
+        )
+
+        assert PlattCalibrationSample.from_dict(sample.to_dict()) == sample
+
+    def test_is_reexported_from_package(self):
+        import s3e
+
+        assert s3e.PlattCalibrationSample is PlattCalibrationSample
 
 
 def _make_blocksworld(

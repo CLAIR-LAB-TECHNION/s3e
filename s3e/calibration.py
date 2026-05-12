@@ -22,6 +22,7 @@ except ImportError:
 
 
 CALIBRATION_SCHEMA_VERSION = 1
+PLATT_CALIBRATION_DATA_SCHEMA_VERSION = 1
 SCORE_EPS = 1e-12
 GLOBAL_CALIBRATION_KEY = "__global__"
 
@@ -31,6 +32,43 @@ class CalibrationExample:
     images: list[Image]
     state_dict: dict[str, bool]
     problem: str | None = None
+
+
+@dataclass(frozen=True)
+class PlattCalibrationSample:
+    """Precomputed score and label used to fit Platt scaling.
+
+    The score is the grouped log-odds value produced by the estimator's
+    configured true and false token groups. `problem` should be set when
+    the sample came from a problem instance other than the estimator's
+    current problem, especially for lifted-scope calibration.
+    """
+
+    predicate: str
+    score: float
+    label: bool
+    problem: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "predicate": self.predicate,
+            "score": self.score,
+            "label": self.label,
+            "problem": self.problem,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PlattCalibrationSample":
+        return cls(
+            predicate=str(data["predicate"]),
+            score=float(data["score"]),
+            label=bool(data["label"]),
+            problem=(
+                None
+                if data.get("problem") is None
+                else str(data["problem"])
+            ),
+        )
 
 
 @dataclass(frozen=True)
