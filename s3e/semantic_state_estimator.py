@@ -669,6 +669,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         data: list[PlattCalibrationSample],
         scope: str,
     ) -> tuple[dict[str, list[float]], dict[str, list[bool]]]:
+        """Group samples by calibration key; validates predicates against each sample's problem."""
         grouped_scores: dict[str, list[float]] = {}
         grouped_labels: dict[str, list[bool]] = {}
         problem_cache: dict[str, object] = {}
@@ -709,6 +710,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         scope: str,
         pass_through_single_class: bool,
     ) -> set[str]:
+        """Return single-class group keys, raising when pass_through_single_class is False."""
         single_class_keys: set[str] = set()
         for key, labels in grouped_labels.items():
             has_positive = any(bool(label) for label in labels)
