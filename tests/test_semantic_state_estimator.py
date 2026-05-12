@@ -744,6 +744,12 @@ class TestPredictionDetailsFromRaw:
 
 
 class TestPlattCalibrationDataPersistence:
+    def _save_payload(self, tmp_path, se):
+        path = tmp_path / "platt-calibration-data.json"
+        data = [PlattCalibrationSample("on(a,b)", 1.25, True)]
+        se.save_platt_scaling_data(data, str(path))
+        return path, json.loads(path.read_text())
+
     def test_save_and_load_platt_scaling_data_round_trip(
         self, tmp_path, blocksworld_domain, blocksworld_problem
     ):
@@ -771,7 +777,7 @@ class TestPlattCalibrationDataPersistence:
         assert payload["samples"] == [sample.to_dict() for sample in data]
         assert loaded == data
 
-    def test_load_platt_scaling_data_rejects_metadata_mismatch(
+    def test_load_platt_scaling_data_rejects_schema_version_mismatch(
         self, tmp_path, blocksworld_domain, blocksworld_problem
     ):
         se = SemanticStateEstimator(
@@ -779,14 +785,103 @@ class TestPlattCalibrationDataPersistence:
             blocksworld_problem,
             vlm=FakeVLM(token_probs={"true": 0.8, "false": 0.2}),
         )
-        path = tmp_path / "platt-calibration-data.json"
-        data = [PlattCalibrationSample("on(a,b)", 1.25, True)]
-        se.save_platt_scaling_data(data, str(path))
-        payload = json.loads(path.read_text())
+        path, payload = self._save_payload(tmp_path, se)
+        payload["schema_version"] = 999
+        path.write_text(json.dumps(payload))
+
+        with pytest.raises(
+            ValueError, match="Unsupported Platt calibration data schema version"
+        ):
+            se.load_platt_scaling_data(str(path))
+
+    def test_load_platt_scaling_data_rejects_probability_method_mismatch(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(token_probs={"true": 0.8, "false": 0.2}),
+        )
+        path, payload = self._save_payload(tmp_path, se)
+        payload["probability_method"] = "text_match"
+        path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="only compatible with logprobs mode"):
+            se.load_platt_scaling_data(str(path))
+
+    def test_load_platt_scaling_data_rejects_token_group_mismatch(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(token_probs={"true": 0.8, "false": 0.2}),
+        )
+        path, payload = self._save_payload(tmp_path, se)
+        payload["true_tokens"] = ["yes"]
+        path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="token groups"):
+            se.load_platt_scaling_data(str(path))
+
+    def test_load_platt_scaling_data_rejects_domain_fingerprint_mismatch(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(token_probs={"true": 0.8, "false": 0.2}),
+        )
+        path, payload = self._save_payload(tmp_path, se)
+        payload["domain_fingerprint"] = "different-domain"
+        path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="different domain"):
+            se.load_platt_scaling_data(str(path))
+
+    def test_load_platt_scaling_data_rejects_score_kind_mismatch(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(token_probs={"true": 0.8, "false": 0.2}),
+        )
+        path, payload = self._save_payload(tmp_path, se)
         payload["score_kind"] = "raw_probability"
         path.write_text(json.dumps(payload))
 
         with pytest.raises(ValueError, match="unsupported score_kind"):
+            se.load_platt_scaling_data(str(path))
+
+    def test_load_platt_scaling_data_rejects_missing_required_field(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(token_probs={"true": 0.8, "false": 0.2}),
+        )
+        path, payload = self._save_payload(tmp_path, se)
+        del payload["samples"]
+        path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="missing required field"):
+            se.load_platt_scaling_data(str(path))
+
+    def test_load_platt_scaling_data_rejects_non_list_samples(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(token_probs={"true": 0.8, "false": 0.2}),
+        )
+        path, payload = self._save_payload(tmp_path, se)
+        payload["samples"] = {"predicate": "on(a,b)", "score": 1.25, "label": True}
+        path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="samples must be a list"):
             se.load_platt_scaling_data(str(path))
 
 

@@ -545,7 +545,35 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             raise ValueError(f"Unsupported Platt scaling scope: {scope}")
 
     def _validate_platt_scaling_data_payload(self, payload: dict) -> None:
-        schema_version = int(payload["schema_version"])
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "Loaded Platt calibration data payload must be a JSON object."
+            )
+
+        required_fields = {
+            "schema_version",
+            "score_kind",
+            "probability_method",
+            "true_tokens",
+            "false_tokens",
+            "domain_fingerprint",
+            "samples",
+        }
+        missing_fields = sorted(required_fields - set(payload))
+        if missing_fields:
+            raise ValueError(
+                "Loaded Platt calibration data is missing required field(s): "
+                + ", ".join(missing_fields)
+            )
+        if not isinstance(payload["samples"], list):
+            raise ValueError("Loaded Platt calibration data samples must be a list.")
+
+        try:
+            schema_version = int(payload["schema_version"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Loaded Platt calibration data schema_version must be an integer."
+            ) from exc
         if schema_version != PLATT_CALIBRATION_DATA_SCHEMA_VERSION:
             raise ValueError(
                 f"Unsupported Platt calibration data schema version: {schema_version}"
