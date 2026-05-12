@@ -6,8 +6,10 @@ state from images. The result is a dictionary of PDDL predicate truth
 values (or probabilities) compatible with planning systems.
 """
 
+import json
 import math
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Union
 
 import numpy as np
@@ -17,6 +19,8 @@ from tqdm.auto import tqdm
 from .calibration import (
     CalibrationExample,
     GLOBAL_CALIBRATION_KEY,
+    PLATT_CALIBRATION_DATA_SCHEMA_VERSION,
+    PlattCalibrationSample,
     PlattParameters,
     PlattScalingProfile,
     apply_platt_scaling,
@@ -394,14 +398,10 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 *pass_through_single_class* is ``False`` and a label
                 group lacks both classes.
         """
-        if self.probability_method != "logprobs":
-            raise ValueError(
-                "Platt scaling is only supported for probability_method='logprobs'."
-            )
+        self._validate_platt_logprobs_mode()
         if not examples:
             raise ValueError("Expected at least one calibration example.")
-        if scope not in {"global", "lifted"}:
-            raise ValueError(f"Unsupported Platt scaling scope: {scope}")
+        self._validate_platt_scope(scope)
 
         single_class_keys = self._validate_calibration_labels(
             examples, scope, pass_through_single_class
@@ -458,6 +458,45 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         self._validate_platt_profile(profile)
         self._platt_scaling_profile = profile
 
+    def save_platt_scaling_data(
+        self,
+        data: list[PlattCalibrationSample],
+        path: str,
+    ) -> None:
+        """Save precomputed Platt calibration samples with compatibility metadata.
+
+        The saved metadata describes how the scores were produced. It is
+        used by :meth:`load_platt_scaling_data` to prevent fitting samples
+        with incompatible token groups, probability methods, or domains.
+        """
+        self._validate_platt_logprobs_mode()
+        payload = {
+            "schema_version": PLATT_CALIBRATION_DATA_SCHEMA_VERSION,
+            "score_kind": "grouped_log_odds",
+            "probability_method": self.probability_method,
+            "true_tokens": list(self.true_tokens),
+            "false_tokens": list(self.false_tokens),
+            "domain_fingerprint": self._domain_fingerprint,
+            "samples": [sample.to_dict() for sample in data],
+        }
+        Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+    def load_platt_scaling_data(
+        self,
+        path: str,
+    ) -> list[PlattCalibrationSample]:
+        """Load precomputed Platt calibration samples saved by this estimator.
+
+        Loading validates compatibility metadata and returns plain sample
+        rows. It does not fit or attach a Platt scaling profile.
+        """
+        payload = json.loads(Path(path).read_text())
+        self._validate_platt_scaling_data_payload(payload)
+        return [
+            PlattCalibrationSample.from_dict(sample)
+            for sample in payload["samples"]
+        ]
+
     def clear_platt_scaling(self) -> None:
         self._platt_scaling_profile = None
 
@@ -495,6 +534,41 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             params = self._platt_scaling_profile.groups[key]
         return apply_platt_scaling(score, params)
 
+    def _validate_platt_logprobs_mode(self) -> None:
+        if self.probability_method != "logprobs":
+            raise ValueError(
+                "Platt scaling is only supported for probability_method='logprobs'."
+            )
+
+    def _validate_platt_scope(self, scope: str) -> None:
+        if scope not in {"global", "lifted"}:
+            raise ValueError(f"Unsupported Platt scaling scope: {scope}")
+
+    def _validate_platt_scaling_data_payload(self, payload: dict) -> None:
+        schema_version = int(payload["schema_version"])
+        if schema_version != PLATT_CALIBRATION_DATA_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported Platt calibration data schema version: {schema_version}"
+            )
+        if payload["probability_method"] != "logprobs" or self.probability_method != "logprobs":
+            raise ValueError(
+                "Platt calibration data is only compatible with logprobs mode."
+            )
+        if payload["true_tokens"] != list(self.true_tokens) or payload["false_tokens"] != list(
+            self.false_tokens
+        ):
+            raise ValueError(
+                "Loaded Platt calibration data does not match the estimator token groups."
+            )
+        if payload["domain_fingerprint"] != self._domain_fingerprint:
+            raise ValueError(
+                "Loaded Platt calibration data was collected for a different domain."
+            )
+        if payload["score_kind"] != "grouped_log_odds":
+            raise ValueError(
+                f"Loaded Platt calibration data has unsupported score_kind: {payload['score_kind']}."
+            )
+
     def _validate_platt_profile(self, profile: PlattScalingProfile) -> None:
         if (
             profile.probability_method != "logprobs"
@@ -513,8 +587,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             raise ValueError(
                 "Loaded Platt scaling profile was fit for a different domain."
             )
-        if profile.scope not in {"global", "lifted"}:
-            raise ValueError(f"Unsupported Platt scaling scope: {profile.scope}")
+        self._validate_platt_scope(profile.scope)
         if profile.score_kind != "grouped_log_odds":
             raise ValueError(
                 f"Loaded Platt scaling profile has unsupported score_kind: {profile.score_kind}."

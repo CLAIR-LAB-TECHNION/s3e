@@ -6,7 +6,7 @@ import math
 import pytest
 from PIL import Image
 
-from s3e import CalibrationExample, PredicatePredictionDetails
+from s3e import CalibrationExample, PlattCalibrationSample, PredicatePredictionDetails
 from s3e.calibration import (
     GLOBAL_CALIBRATION_KEY,
     PlattParameters,
@@ -741,6 +741,53 @@ class TestPredictionDetailsFromRaw:
         )
 
         assert not hasattr(se, "probabilities_from_raw")
+
+
+class TestPlattCalibrationDataPersistence:
+    def test_save_and_load_platt_scaling_data_round_trip(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(token_probs={"true": 0.8, "false": 0.2}),
+        )
+        data = [
+            PlattCalibrationSample("on(a,b)", 1.25, True),
+            PlattCalibrationSample("clear(a)", -0.75, False, problem=blocksworld_problem),
+        ]
+        path = tmp_path / "platt-calibration-data.json"
+
+        se.save_platt_scaling_data(data, str(path))
+        loaded = se.load_platt_scaling_data(str(path))
+
+        payload = json.loads(path.read_text())
+        assert payload["schema_version"] == 1
+        assert payload["probability_method"] == "logprobs"
+        assert payload["score_kind"] == "grouped_log_odds"
+        assert payload["true_tokens"] == list(se.true_tokens)
+        assert payload["false_tokens"] == list(se.false_tokens)
+        assert payload["domain_fingerprint"] == se._domain_fingerprint
+        assert payload["samples"] == [sample.to_dict() for sample in data]
+        assert loaded == data
+
+    def test_load_platt_scaling_data_rejects_metadata_mismatch(
+        self, tmp_path, blocksworld_domain, blocksworld_problem
+    ):
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=FakeVLM(token_probs={"true": 0.8, "false": 0.2}),
+        )
+        path = tmp_path / "platt-calibration-data.json"
+        data = [PlattCalibrationSample("on(a,b)", 1.25, True)]
+        se.save_platt_scaling_data(data, str(path))
+        payload = json.loads(path.read_text())
+        payload["score_kind"] = "raw_probability"
+        path.write_text(json.dumps(payload))
+
+        with pytest.raises(ValueError, match="unsupported score_kind"):
+            se.load_platt_scaling_data(str(path))
 
 
 class TestPlattScalingErrors:
