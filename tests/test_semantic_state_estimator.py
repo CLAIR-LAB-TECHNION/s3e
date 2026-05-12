@@ -884,6 +884,59 @@ class TestPlattCalibrationDataPersistence:
         with pytest.raises(ValueError, match="samples must be a list"):
             se.load_platt_scaling_data(str(path))
 
+    def test_collect_platt_scaling_data_queries_only_labeled_predicates(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(
+            token_probs={"true": 0.5, "false": 0.5},
+            per_prompt_probs={
+                "on(a,b)": {"true": 0.60, "false": 0.40},
+                "clear(a)": {"true": 0.25, "false": 0.75},
+            }
+        )
+        se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
+        example = CalibrationExample(
+            images=make_calibration_image(1),
+            state_dict={"on(a,b)": True, "clear(a)": False},
+        )
+
+        data = se.collect_platt_scaling_data([example])
+
+        assert [sample.predicate for sample in data] == ["on(a,b)", "clear(a)"]
+        assert [sample.label for sample in data] == [True, False]
+        assert [sample.problem for sample in data] == [None, None]
+        assert data[0].score == pytest.approx(math.log(0.60 / 0.40))
+        assert data[1].score == pytest.approx(math.log(0.25 / 0.75))
+        assert vlm.received_prompts == ["on(a,b)", "clear(a)"]
+
+    def test_collect_platt_scaling_data_average_mode_emits_per_image_samples(
+        self, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = CalibrationVLM(
+            {
+                (1, "on(a,b)"): 0.60,
+                (2, "on(a,b)"): 0.40,
+            }
+        )
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            multi_image_strategy="average",
+        )
+        example = CalibrationExample(
+            images=make_calibration_image(1) + make_calibration_image(2),
+            state_dict={"on(a,b)": True},
+        )
+
+        data = se.collect_platt_scaling_data([example])
+
+        assert [sample.predicate for sample in data] == ["on(a,b)", "on(a,b)"]
+        assert [sample.label for sample in data] == [True, True]
+        assert [sample.problem for sample in data] == [None, None]
+        assert data[0].score == pytest.approx(math.log(0.60 / 0.40))
+        assert data[1].score == pytest.approx(math.log(0.40 / 0.60))
+
 
 class TestPlattScalingErrors:
     def test_fit_platt_scaling_rejects_text_match_mode(

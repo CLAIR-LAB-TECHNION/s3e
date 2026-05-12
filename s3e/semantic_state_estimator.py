@@ -357,6 +357,41 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
 
         return results
 
+    def collect_platt_scaling_data(
+        self,
+        examples: list[CalibrationExample],
+        progress_bar: bool = False,
+    ) -> list[PlattCalibrationSample]:
+        """Collect precomputed samples for later Platt scaling fitting.
+
+        This method performs VLM inference and is the expensive part of
+        calibration. Save its return value with
+        :meth:`save_platt_scaling_data` to reuse the same predictions
+        without querying the VLM again.
+        """
+        self._validate_platt_logprobs_mode()
+        if not examples:
+            raise ValueError("Expected at least one calibration example.")
+
+        samples: list[PlattCalibrationSample] = []
+        for example in tqdm(
+            examples,
+            disable=not progress_bar,
+            desc="Collecting Platt calibration data",
+        ):
+            per_sample_details = self._estimate_calibration_example(example)
+            for details in per_sample_details:
+                for predicate, detail in details.items():
+                    samples.append(
+                        PlattCalibrationSample(
+                            predicate=predicate,
+                            score=detail.score,
+                            label=example.state_dict[predicate],
+                            problem=example.problem,
+                        )
+                    )
+        return samples
+
     def fit_platt_scaling(
         self,
         examples: list[CalibrationExample],
