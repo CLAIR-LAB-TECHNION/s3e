@@ -125,6 +125,51 @@ raw_outputs = estimator.estimate_raw(images)
 print(raw_outputs["on(a,b)"])
 ```
 
+### Reusing Platt calibration predictions
+
+Platt scaling is available in `probability_method="logprobs"` mode when
+`scikit-learn` is installed:
+
+```bash
+pip install -e '.[calibration]'
+```
+
+The expensive part of calibration is querying the VLM on labeled examples.
+You can collect those prediction scores once, save them, and fit or refit the
+Platt profile later without querying the VLM again:
+
+```python
+from s3e import CalibrationExample
+
+examples = [
+    CalibrationExample(
+        images=[Image.open("calibration-scene-1.png")],
+        state_dict={
+            "on(a,b)": True,
+            "clear(a)": True,
+            "clear(b)": False,
+        },
+    )
+]
+
+calibration_data = estimator.collect_platt_scaling_data(examples)
+estimator.save_platt_scaling_data(calibration_data, "platt-calibration-data.json")
+
+reused_data = estimator.load_platt_scaling_data("platt-calibration-data.json")
+estimator.fit_platt_scaling_from_data(reused_data, scope="global")
+estimator.save_platt_scaling("platt-profile.json")
+```
+
+`collect_platt_scaling_data()` performs VLM inference. `fit_platt_scaling_from_data()`
+only consumes saved scores and labels. The convenience method
+`fit_platt_scaling()` still works and delegates through the same fit-from-data
+path internally, so both workflows produce profiles with the same grouping and
+validation behavior.
+
+For `scope="lifted"` across multiple problem instances, include each
+`CalibrationExample.problem` so saved samples carry the problem string needed to
+recover the lifted predicate key.
+
 To convert the boolean state back into a Unified Planning state object:
 
 ```python
