@@ -69,7 +69,7 @@ class HuggingFaceVLM(VLMBackend):
             torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
         load_kwargs = dict(
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             device_map=device_map,
             **model_kwargs,
         )
