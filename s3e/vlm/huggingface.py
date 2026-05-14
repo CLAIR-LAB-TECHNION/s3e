@@ -220,7 +220,7 @@ class HuggingFaceVLM(VLMBackend):
         return logits[:, -1, :]
 
     def _get_next_token_probs(self, inputs, **inference_kwargs):
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = self.model(**inputs, **inference_kwargs)
 
         logits = self._select_next_token_logits(outputs.logits, inputs).float()
