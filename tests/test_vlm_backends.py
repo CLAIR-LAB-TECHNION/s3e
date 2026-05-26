@@ -2,6 +2,7 @@
 
 import pytest
 from PIL import Image
+from types import SimpleNamespace
 
 from s3e.vlm.backend import VLMBackend, VLMOutput
 
@@ -751,6 +752,16 @@ def _make_text_output(text):
 class TestVLLMBackendMocked:
     """Unit tests for VLLMBackend with vllm mocked out."""
 
+    def _make_backend(self, mock_llm_cls, num_logprobs=None):
+        """Construct a VLLMBackend whose engine is the mocked LLM instance."""
+        from s3e.vlm.vllm import VLLMBackend
+
+        mock_llm = MagicMock()
+        mock_llm_cls.return_value = mock_llm
+        with patch("torch.cuda.device_count", return_value=1):
+            backend = VLLMBackend("test/model", num_logprobs=num_logprobs)
+        return backend, mock_llm
+
     @patch("torch.cuda.device_count", return_value=3)
     @patch("s3e.vlm.vllm.SamplingParams")
     @patch("s3e.vlm.vllm.LLM")
@@ -834,3 +845,122 @@ class TestVLLMBackendMocked:
 
         with pytest.raises(ImportError, match=r"pip install s3e\[vllm\]"):
             VLLMBackend("test/model")
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_query_batch_builds_one_chat_call_with_conversation_structure(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _make_logprobs_output([("yes", _math.log(0.8))]),
+            _make_logprobs_output([("no", _math.log(0.6))]),
+        ]
+        img = Image.new("RGB", (64, 64))
+
+        results = backend.query_batch([img], ["q1", "q2"], system_prompt="sys")
+
+        assert mock_llm.chat.call_count == 1
+        conversations = mock_llm.chat.call_args.args[0]
+        assert len(conversations) == 2
+        # Each conversation: system message then user message with image + text.
+        first = conversations[0]
+        assert first[0] == {"role": "system", "content": "sys"}
+        assert first[1]["role"] == "user"
+        assert first[1]["content"][0]["type"] == "image_pil"
+        assert first[1]["content"][0]["image_pil"] is img
+        assert first[1]["content"][-1] == {"type": "text", "text": "q1"}
+        assert len(results) == 2
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_query_batch_omits_system_message_when_absent(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
+
+        backend.query_batch([], ["q1"])
+
+        conversation = mock_llm.chat.call_args.args[0][0]
+        assert all(m["role"] != "system" for m in conversation)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_logprobs_mode_sampling_params_defaults(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls, num_logprobs=None)
+        mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
+
+        backend.query_batch([], ["q1"])
+
+        kwargs = mock_sp_cls.call_args.kwargs
+        assert kwargs["max_tokens"] == 1
+        assert kwargs["temperature"] == 0.0
+        assert kwargs["logprobs"] == -1  # full vocab when num_logprobs is None
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_logprobs_value_follows_num_logprobs(self, mock_llm_cls, mock_sp_cls):
+        backend, mock_llm = self._make_backend(mock_llm_cls, num_logprobs=4)
+        mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
+
+        backend.query_batch([], ["q1"])
+
+        assert mock_sp_cls.call_args.kwargs["logprobs"] == 4
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_max_tokens_is_overridable_in_logprobs_mode(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
+
+        backend.query_batch([], ["q1"], max_tokens=7)
+
+        assert mock_sp_cls.call_args.kwargs["max_tokens"] == 7
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_logprobs_extraction_converts_to_probabilities(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _make_logprobs_output([("yes", _math.log(0.7)), ("no", _math.log(0.3))])
+        ]
+
+        result = backend.query([], "q1")
+
+        assert result.text is None
+        assert result.token_probs["yes"] == pytest.approx(0.7)
+        assert result.token_probs["no"] == pytest.approx(0.3)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_logprobs_extraction_sums_duplicate_tokens(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _make_logprobs_output([("same", _math.log(0.4)), ("same", _math.log(0.25))])
+        ]
+
+        result = backend.query([], "q1")
+
+        assert set(result.token_probs) == {"same"}
+        assert result.token_probs["same"] == pytest.approx(0.65)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_logprobs_extraction_raises_runtime_error_when_logprobs_attr_missing(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        completion = SimpleNamespace()
+        mock_llm.chat.return_value = [SimpleNamespace(outputs=[completion])]
+
+        with pytest.raises(RuntimeError, match="returned no logprobs"):
+            backend.query([], "q1")

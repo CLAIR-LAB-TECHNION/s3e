@@ -112,9 +112,105 @@ class VLLMBackend(VLMBackend):
         generate: bool = False,
         **inference_kwargs,
     ) -> VLMOutput:
-        del images
-        del prompt
-        del system_prompt
-        del generate
-        del inference_kwargs
-        raise NotImplementedError("VLLMBackend.query is implemented in a later task.")
+        """Send a single query to the vLLM engine."""
+        return self.query_batch(
+            images, [prompt], system_prompt, generate, **inference_kwargs
+        )[0]
+
+    def query_batch(
+        self,
+        images: list,
+        prompts: list[str],
+        system_prompt: str | None = None,
+        generate: bool = False,
+        **inference_kwargs,
+    ) -> list[VLMOutput]:
+        """Send multiple prompts against the same images in one batched call.
+
+        We use ``LLM.chat`` (not ``LLM.generate`` + ``multi_modal_data``) so
+        vLLM applies the model's own chat template and performs the
+        resolution-dependent image-placeholder expansion -- mirroring how
+        :class:`HuggingFaceVLM` relies on ``processor.apply_chat_template`` and
+        owning zero per-model placeholder logic. The trade-off: a model without
+        a chat template is unsupported here.
+        """
+        if not prompts:
+            return []
+
+        sampling_params = self._build_sampling_params(generate, **inference_kwargs)
+
+        # Every prompt shares the same images, so build the image content once
+        # and reuse it across the per-prompt conversations.
+        image_content = [{"type": "image_pil", "image_pil": image} for image in images]
+        conversations = []
+        for prompt in prompts:
+            messages = []
+            if system_prompt is not None:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": image_content + [{"type": "text", "text": prompt}],
+                }
+            )
+            conversations.append(messages)
+
+        # chat() accepts a batched list of conversations and returns outputs in
+        # input order.
+        outputs = self.llm.chat(conversations, sampling_params)
+        return [self._to_vlm_output(output, generate) for output in outputs]
+
+    def _build_sampling_params(self, generate: bool, **inference_kwargs) -> SamplingParams:
+        """Build vLLM SamplingParams for the requested mode.
+
+        ``inference_kwargs`` are user overrides. We only *force* the settings
+        the estimator's contract depends on and use ``setdefault`` for the rest
+        -- the same pattern OpenAIVLM uses to force logprobs and HuggingFaceVLM
+        uses to default ``logits_to_keep=1``.
+        """
+        if generate:
+            # Text mode: do NOT bound max_tokens, so a model can reason as it
+            # sees fit (the OpenAI backend documents the same philosophy).
+            inference_kwargs.setdefault("temperature", 0.0)
+        else:
+            # Logprobs mode: one decode step is the memory-minimal default and
+            # the direct analog of HuggingFaceVLM's logits_to_keep=1. It is a
+            # setdefault, not a force, so a user may override it. Free-form
+            # reasoning belongs in text mode, not here.
+            inference_kwargs.setdefault("max_tokens", 1)
+            inference_kwargs.setdefault("temperature", 0.0)
+            # Force logprobs on (analog of OpenAIVLM forcing logprobs=True).
+            # -1 == full vocab; otherwise the configured top-k.
+            inference_kwargs["logprobs"] = (
+                -1 if self.num_logprobs is None else self.num_logprobs
+            )
+        return SamplingParams(**inference_kwargs)
+
+    def _to_vlm_output(self, output, generate: bool) -> VLMOutput:
+        """Convert one vLLM RequestOutput into a :class:`VLMOutput`."""
+        completion = output.outputs[0]
+        if generate:
+            return VLMOutput(token_probs=None, text=completion.text)
+
+        # Logprobs mode reads the distribution over the next answer token. With
+        # the default max_tokens=1 this is the only generated position and
+        # reproduces HuggingFaceVLM's single-forward next-token distribution.
+        logprobs_seq = getattr(completion, "logprobs", None)
+        if not logprobs_seq or logprobs_seq[0] is None:
+            # With logprobs forced and max_tokens>=1 this should never happen;
+            # treat it as an internal inconsistency rather than silently
+            # returning empty probabilities (see AGENTS.md error-handling rules).
+            raise RuntimeError(
+                "vLLM returned no logprobs for a request despite logprobs being "
+                "requested. This indicates an internal inconsistency in the vLLM "
+                "output; check the installed vLLM version and SamplingParams."
+            )
+
+        token_probs: dict[str, float] = {}
+        for logprob in logprobs_seq[0].values():
+            # Sum probabilities of duplicate decoded token strings, matching the
+            # dedup HuggingFaceVLM and OpenAIVLM perform.
+            token = logprob.decoded_token
+            token_probs[token] = token_probs.get(token, 0.0) + math.exp(logprob.logprob)
+
+        return VLMOutput(token_probs=token_probs, text=None)
