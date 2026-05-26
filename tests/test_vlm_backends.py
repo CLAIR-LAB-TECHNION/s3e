@@ -1020,3 +1020,13 @@ class TestVLLMBackendMocked:
 
         with pytest.raises(RuntimeError, match="returned no logprobs"):
             backend.query([], "q1")
+
+
+def test_vllm_backend_is_exported():
+    import s3e
+    from s3e.vlm import VLLMBackend as FromVlm
+    from s3e import VLLMBackend as FromTop
+
+    assert FromVlm is FromTop
+    assert "VLLMBackend" in s3e.__all__
+    assert "VLLMBackend" in s3e.vlm.__all__
