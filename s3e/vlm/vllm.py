@@ -209,7 +209,9 @@ class VLLMBackend(VLMBackend):
         token_probs: dict[str, float] = {}
         for logprob in logprobs_seq[0].values():
             # Sum probabilities of duplicate decoded token strings, matching the
-            # dedup HuggingFaceVLM and OpenAIVLM perform.
+            # dedup HuggingFaceVLM and OpenAIVLM perform. VLMOutput must keep
+            # the same token_probs shape across backends because calibration
+            # consumes this mapping directly.
             token = logprob.decoded_token
             token_probs[token] = token_probs.get(token, 0.0) + math.exp(logprob.logprob)
 
