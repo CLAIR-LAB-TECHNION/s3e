@@ -887,6 +887,16 @@ class TestVLLMBackendMocked:
 
     @patch("s3e.vlm.vllm.SamplingParams")
     @patch("s3e.vlm.vllm.LLM")
+    def test_empty_prompts_returns_empty_list_without_engine_call(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+
+        assert backend.query_batch([Image.new("RGB", (8, 8))], []) == []
+        mock_llm.chat.assert_not_called()
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
     def test_logprobs_mode_sampling_params_defaults(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -983,6 +993,21 @@ class TestVLLMBackendMocked:
 
         assert set(result.token_probs) == {"same"}
         assert result.token_probs["same"] == pytest.approx(0.65)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_missing_logprobs_raises_informative_error(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        completion = MagicMock()
+        completion.logprobs = None  # vLLM returned no logprobs
+        bad_output = MagicMock()
+        bad_output.outputs = [completion]
+        mock_llm.chat.return_value = [bad_output]
+
+        with pytest.raises(RuntimeError, match="no logprobs"):
+            backend.query([], "q1")
 
     @patch("s3e.vlm.vllm.SamplingParams")
     @patch("s3e.vlm.vllm.LLM")
