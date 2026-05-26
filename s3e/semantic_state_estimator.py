@@ -90,6 +90,11 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         batch_size: Number of queries per VLM batch call.
         additional_instructions: Extra text appended to the system prompt.
         vlm_kwargs: Extra kwargs for VLM construction (only when vlm is a string).
+        inference_kwargs: Extra kwargs forwarded to backend inference calls.
+        use_vllm: When ``vlm`` is a model-id string for a non-OpenAI model,
+            route it through the vLLM engine (:class:`VLLMBackend`) instead of
+            plain transformers. Ignored when ``vlm`` is a backend instance; an
+            ``OpenAI/`` model with ``use_vllm=True`` raises ``ValueError``.
     """
 
     def __init__(
@@ -110,12 +115,16 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         additional_instructions: str | None = None,
         vlm_kwargs: dict | None = None,
         inference_kwargs: dict | None = None,
+        use_vllm: bool = False,
     ):
         super().__init__(domain, problem, confidence)
 
         # --- VLM backend ---
+        # use_vllm only affects the string path; an explicit backend instance is
+        # used as-is.
+        self.use_vllm = use_vllm
         if isinstance(vlm, str):
-            self.vlm = self._build_vlm_from_string(vlm, vlm_kwargs or {})
+            self.vlm = self._build_vlm_from_string(vlm, vlm_kwargs or {}, use_vllm)
         else:
             self.vlm = vlm
         self.inference_kwargs = inference_kwargs or {}
@@ -193,14 +202,30 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         return compute_domain_fingerprint(self.up_problem)
 
     @staticmethod
-    def _build_vlm_from_string(vlm_id: str, vlm_kwargs: dict) -> VLMBackend:
-        """Construct a VLM backend from a model ID string."""
+    def _build_vlm_from_string(
+        vlm_id: str, vlm_kwargs: dict, use_vllm: bool = False
+    ) -> VLMBackend:
+        """Construct a VLM backend from a model ID string.
+
+        ``use_vllm`` routes a non-OpenAI model through the vLLM engine instead
+        of plain transformers. It is incompatible with ``OpenAI/`` models (which
+        run against the hosted API, not a local engine).
+        """
         if vlm_id.startswith(OPENAI_MODEL_IDENTIFIER):
+            if use_vllm:
+                raise ValueError(
+                    "use_vllm=True is not compatible with OpenAI/ models."
+                )
             from .vlm.openai import OpenAIVLM
+
             return OpenAIVLM(vlm_id, **vlm_kwargs)
-        else:
-            from .vlm.huggingface import HuggingFaceVLM
-            return HuggingFaceVLM(vlm_id, **vlm_kwargs)
+        if use_vllm:
+            from .vlm.vllm import VLLMBackend
+
+            return VLLMBackend(vlm_id, **vlm_kwargs)
+        from .vlm.huggingface import HuggingFaceVLM
+
+        return HuggingFaceVLM(vlm_id, **vlm_kwargs)
 
     def _validate_token_groups(self) -> None:
         overlaps = [
