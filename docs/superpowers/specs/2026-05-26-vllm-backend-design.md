@@ -273,7 +273,44 @@ Following the existing split in `tests/test_vlm_backends.py`:
 This honors AGENTS.md: `pytest -m "not slow"` stays the fast verification path
 and runs fully mocked, with no GPU or `vllm` install required.
 
-## Documentation touch-points
+## Documentation requirements
+
+**Every design choice in this spec must be documented directly in the code, in
+detail, so the next maintainer can make informed decisions about future design
+changes.** The spec lives outside the source tree; the code is what gets read
+when someone modifies the backend. Inline comments and docstrings must capture
+not just *what* the code does but *why* — the rationale and the alternative
+that was rejected — for each non-obvious choice. Concretely, document:
+
+- **Why `LLM.chat()` over `LLM.generate()` + `multi_modal_data`** — chat
+  delegates chat-template rendering and resolution-dependent image-placeholder
+  expansion to the model's own processor, which VLMs almost always ship; the
+  `generate()` path would force us to own per-model placeholder logic and risks
+  token/feature-count mismatches. Note the accepted limitation: a model without
+  a chat template is unsupported on this path.
+- **Why `max_tokens=1` is a `setdefault` (not forced) in logprobs mode** — it
+  is the memory-minimal default and the direct analog of `HuggingFaceVLM`'s
+  `logits_to_keep=1`, while remaining overridable. Note that free-form
+  reasoning is intended for text mode, which deliberately does not bound
+  `max_tokens` (matching the OpenAI backend's documented philosophy).
+- **Why `logprobs` is forced** in logprobs mode (the analog of the OpenAI
+  backend forcing `logprobs=True`).
+- **The `num_logprobs` → `max_logprobs` mapping** (`None` → `-1` = full vocab),
+  why both must be set at construction to stay consistent, and the full-vocab
+  OOM caveat.
+- **Why `tensor_parallel_size` defaults to the local GPU count** and that
+  multi-node is intentionally out of scope but reachable via `**engine_kwargs`.
+- **Why there is no `max_new_tokens` parameter** — it is dead state in
+  `HuggingFaceVLM` (stored, never forwarded), so it is not reproduced here.
+- **Why missing logprobs raises** rather than returning empty `token_probs` —
+  it is an internal-inconsistency edge case, not a normal path.
+- **The `import vllm` / module-name `vllm.py` safety note** (absolute imports;
+  mirrors `openai.py`).
+- **Token-probability dedup** (summing duplicate decoded tokens) matching the
+  other backends, and why `VLMOutput` must stay byte-for-byte compatible (Platt
+  calibration consumes `token_probs`).
+
+Additional touch-points:
 
 - `VLLMBackend` class + method docstrings (args, the full-vocab OOM caveat, the
   chat-template requirement).
@@ -283,4 +320,6 @@ and runs fully mocked, with no GPU or `vllm` install required.
 
 ## Open questions
 
-None. Design approved in brainstorming on 2026-05-26.
+None. Design approved in brainstorming on 2026-05-26, including: logprobs-mode
+behavior confirmed as specified; `LLM.chat()` accepted as the right convenience
+trade-off given VLMs' reliance on built-in chat templates for image handling.
