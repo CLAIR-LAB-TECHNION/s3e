@@ -90,6 +90,10 @@ class HuggingFaceVLM(VLMBackend):
         if not prompts:
             return []
 
+        # by default, only keep the last token's log probabilities to avoid OOM
+        if "logits_to_keep" not in inference_kwargs:
+            inference_kwargs["logits_to_keep"] = 1
+
         text_inputs = [
             self._render_prompt(images, prompt, system_prompt)
             for prompt in prompts
