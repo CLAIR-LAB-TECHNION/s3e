@@ -1040,23 +1040,32 @@ def test_vllm_backend_is_exported():
     reason="vLLM requires CUDA and an installed vllm package",
 )
 class TestVLLMBackendIntegration:
-    """Integration test with a tiny real model via vLLM.
+    """Integration test with a small real VLM via vLLM.
 
-    Requires a GPU and an installed `vllm`. Skipped otherwise. Run with:
-    pytest -m slow
+    Requires a GPU and an installed ``vllm``; skipped otherwise. The host must
+    also expose a CUDA dev toolchain (``nvcc`` + CUDA headers) because vLLM's
+    default logprobs sampler (FlashInfer) JIT-compiles a kernel on first use.
+    Run with: ``pytest -m slow``.
+
+    The model is the small ``SmolVLM-256M-Instruct`` rather than a degenerate
+    ``tiny-random`` stub: such stubs use a head dim (e.g. 4) below the minimum
+    that CUDA attention kernels accept, so they cannot actually run on a GPU.
+    ``enforce_eager=True`` skips torch.compile / CUDA-graph capture, keeping the
+    smoke test fast and free of compile-time backend surprises.
     """
 
-    TINY_VLM_ID = "katuni4ka/tiny-random-llava"
+    SMALL_VLM_ID = "HuggingFaceTB/SmolVLM-256M-Instruct"
 
     def test_loads_and_queries_logprobs(self):
         from s3e.vlm.vllm import VLLMBackend
 
         backend = VLLMBackend(
-            self.TINY_VLM_ID,
+            self.SMALL_VLM_ID,
             tensor_parallel_size=1,
             num_logprobs=2,
             gpu_memory_utilization=0.3,
-            max_model_len=2048,
+            max_model_len=4096,
+            enforce_eager=True,
         )
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
         result = backend.query([img], "Is this a test?")
