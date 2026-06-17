@@ -820,3 +820,43 @@ class TestVLLMBackendMocked:
 
         with pytest.raises(ImportError, match=r"pip install s3e\[vllm\]"):
             VLLMBackend("test/model")
+
+    def test_installed_vllm_import_failure_is_not_masked(self):
+        import builtins
+        import importlib
+        import sys
+
+        module_name = "s3e.vlm.vllm"
+        parent_module = sys.modules.get("s3e.vlm")
+        original_module = sys.modules.pop(module_name, None)
+        had_parent_attr = parent_module is not None and hasattr(parent_module, "vllm")
+        original_parent_attr = (
+            getattr(parent_module, "vllm", None) if had_parent_attr else None
+        )
+        if had_parent_attr:
+            delattr(parent_module, "vllm")
+
+        real_import = builtins.__import__
+
+        def import_with_broken_vllm(
+            name, globals=None, locals=None, fromlist=(), level=0
+        ):
+            if name == "vllm":
+                raise ModuleNotFoundError(
+                    "No module named 'vllm_dependency'", name="vllm_dependency"
+                )
+            return real_import(name, globals, locals, fromlist, level)
+
+        try:
+            with patch("builtins.__import__", side_effect=import_with_broken_vllm):
+                with pytest.raises(ModuleNotFoundError, match="vllm_dependency"):
+                    importlib.import_module(module_name)
+        finally:
+            sys.modules.pop(module_name, None)
+            if original_module is not None:
+                sys.modules[module_name] = original_module
+            if parent_module is not None:
+                if had_parent_attr:
+                    setattr(parent_module, "vllm", original_parent_attr)
+                elif hasattr(parent_module, "vllm"):
+                    delattr(parent_module, "vllm")

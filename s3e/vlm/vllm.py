@@ -25,7 +25,9 @@ from .backend import VLMBackend, VLMOutput
 
 try:
     from vllm import LLM, SamplingParams
-except ImportError:
+except ModuleNotFoundError as exc:
+    if exc.name != "vllm":
+        raise
     LLM = None  # type: ignore[assignment]
     SamplingParams = None  # type: ignore[assignment]
 
