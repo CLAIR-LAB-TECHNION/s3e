@@ -199,6 +199,10 @@ class VLLMBackend(VLMBackend):
         # reproduces HuggingFaceVLM's single-forward next-token distribution.
         logprobs_seq = completion.logprobs
         if not logprobs_seq or logprobs_seq[0] is None:
+            # With logprobs forced and max_tokens>=1 this should never happen.
+            # Treat it as an internal inconsistency rather than silently
+            # returning empty probabilities, because downstream calibration
+            # expects token_probs to be the requested next-token distribution.
             raise RuntimeError(
                 "vLLM returned no logprobs for a request despite logprobs being "
                 "requested. This indicates an internal inconsistency in the vLLM "
@@ -208,7 +212,10 @@ class VLLMBackend(VLMBackend):
         token_probs: dict[str, float] = {}
         for logprob in logprobs_seq[0].values():
             # Sum probabilities of duplicate decoded token strings, matching the
-            # dedup HuggingFaceVLM and OpenAIVLM perform.
+            # dedup HuggingFaceVLM and OpenAIVLM perform. Keeping the same
+            # VLMOutput.token_probs shape is important because Platt calibration
+            # consumes these per-token probabilities without backend-specific
+            # handling.
             token = logprob.decoded_token
             token_probs[token] = token_probs.get(token, 0.0) + math.exp(
                 logprob.logprob
