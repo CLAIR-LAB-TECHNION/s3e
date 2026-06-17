@@ -1056,6 +1056,7 @@ class TestVLLMBackendIntegration:
     TINY_VLM_ID = "katuni4ka/tiny-random-llava"
 
     def test_loads_and_queries_logprobs(self):
+        pytest.importorskip("vllm")
         from s3e.vlm.vllm import VLLMBackend
 
         backend = VLLMBackend(
