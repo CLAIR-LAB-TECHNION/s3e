@@ -710,3 +710,113 @@ class TestHuggingFaceVLMIntegration:
             all(prob >= 0 for prob in r.token_probs.values())
             for r in results
         )
+
+
+import math as _math  # noqa: E402  (module-level math for vLLM helpers)
+
+
+def _make_logprob(token, logprob):
+    """Build a mock vLLM Logprob (has .decoded_token and .logprob)."""
+    item = MagicMock()
+    item.decoded_token = token
+    item.logprob = logprob
+    return item
+
+
+def _make_logprobs_output(token_logprobs):
+    """Build a mock vLLM RequestOutput for logprobs mode.
+
+    token_logprobs: list of (token_str, logprob_float). Keyed by fake ids.
+    """
+    completion = MagicMock()
+    completion.logprobs = [
+        {idx: _make_logprob(tok, lp) for idx, (tok, lp) in enumerate(token_logprobs)}
+    ]
+    output = MagicMock()
+    output.outputs = [completion]
+    return output
+
+
+def _make_text_output(text):
+    """Build a mock vLLM RequestOutput for text mode."""
+    completion = MagicMock()
+    completion.text = text
+    output = MagicMock()
+    output.outputs = [completion]
+    return output
+
+
+class TestVLLMBackendMocked:
+    """Unit tests for VLLMBackend with vllm mocked out."""
+
+    @patch("torch.cuda.device_count", return_value=3)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_tensor_parallel_defaults_to_all_local_gpus(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model")
+
+        kwargs = mock_llm_cls.call_args.kwargs
+        assert kwargs["model"] == "test/model"
+        assert kwargs["tensor_parallel_size"] == 3
+
+    @patch("torch.cuda.device_count", return_value=8)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_tensor_parallel_explicit_override(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model", tensor_parallel_size=2)
+
+        assert mock_llm_cls.call_args.kwargs["tensor_parallel_size"] == 2
+
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_max_logprobs_full_vocab_by_default(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model")
+
+        assert mock_llm_cls.call_args.kwargs["max_logprobs"] == -1
+
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_max_logprobs_finite_when_num_logprobs_set(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model", num_logprobs=5)
+
+        assert mock_llm_cls.call_args.kwargs["max_logprobs"] == 5
+
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_engine_kwargs_forwarded(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model", gpu_memory_utilization=0.5, max_model_len=2048)
+
+        kwargs = mock_llm_cls.call_args.kwargs
+        assert kwargs["gpu_memory_utilization"] == 0.5
+        assert kwargs["max_model_len"] == 2048
+
+    @patch("s3e.vlm.vllm.SamplingParams", None)
+    @patch("s3e.vlm.vllm.LLM", None)
+    def test_missing_vllm_raises_install_guidance(self):
+        from s3e.vlm.vllm import VLLMBackend
+
+        with pytest.raises(ImportError, match=r"pip install s3e\[vllm\]"):
+            VLLMBackend("test/model")
