@@ -710,3 +710,33 @@ class TestHuggingFaceVLMIntegration:
             all(prob >= 0 for prob in r.token_probs.values())
             for r in results
         )
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="vLLM requires CUDA")
+class TestVLLMBackendIntegration:
+    """Integration test with a tiny real model via vLLM.
+
+    Requires a GPU and an installed `vllm`. Skipped otherwise. Run with:
+    pytest -m slow
+    """
+
+    TINY_VLM_ID = "katuni4ka/tiny-random-llava"
+
+    def test_loads_and_queries_logprobs(self):
+        from s3e.vlm.vllm import VLLMBackend
+
+        backend = VLLMBackend(
+            self.TINY_VLM_ID,
+            tensor_parallel_size=1,
+            num_logprobs=2,
+            gpu_memory_utilization=0.3,
+            max_model_len=2048,
+        )
+        img = Image.new("RGB", (64, 64), color=(128, 128, 128))
+        result = backend.query([img], "Is this a test?")
+
+        assert isinstance(result, VLMOutput)
+        assert isinstance(result.token_probs, dict)
+        assert 0 < len(result.token_probs) <= 2
+        assert all(p >= 0 for p in result.token_probs.values())
