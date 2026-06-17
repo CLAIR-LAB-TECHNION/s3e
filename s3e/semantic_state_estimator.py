@@ -118,6 +118,15 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
     ):
         super().__init__(domain, problem, confidence)
 
+        if not isinstance(use_vllm, bool):
+            if inference_kwargs is None and isinstance(use_vllm, dict):
+                inference_kwargs = use_vllm
+                use_vllm = False
+            else:
+                raise TypeError(
+                    "use_vllm must be a bool; pass inference kwargs as a dict."
+                )
+
         # --- VLM backend ---
         # use_vllm only affects the string path; an explicit backend instance is
         # used as-is.

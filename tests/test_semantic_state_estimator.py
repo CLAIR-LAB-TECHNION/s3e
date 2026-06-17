@@ -2636,3 +2636,37 @@ class TestUseVllmRouting:
             use_vllm=True,
         )
         assert est.vlm is fake
+
+    def test_legacy_positional_inference_kwargs_remains_supported(self):
+        fake = FakeVLM()
+        inference_kwargs = {"temperature": 0.0}
+        est = SemanticStateEstimator(
+            BLOCKSWORLD_DOMAIN,
+            BLOCKSWORLD_PROBLEM,
+            fake,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0.5,
+            "single",
+            "logprobs",
+            8,
+            None,
+            None,
+            inference_kwargs,
+        )
+
+        assert est.use_vllm is False
+        assert est.inference_kwargs == inference_kwargs
+
+    def test_non_bool_use_vllm_rejects_non_dict_legacy_value(self):
+        with pytest.raises(TypeError, match="use_vllm must be a bool"):
+            SemanticStateEstimator(
+                BLOCKSWORLD_DOMAIN,
+                BLOCKSWORLD_PROBLEM,
+                FakeVLM(),
+                use_vllm="true",
+            )
