@@ -929,6 +929,37 @@ class TestVLLMBackendMocked:
         assert set(result.token_probs) == {"same"}
         assert result.token_probs["same"] == pytest.approx(0.65)
 
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_text_mode_returns_text_and_no_token_probs(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _make_text_output("yes"),
+            _make_text_output("no"),
+        ]
+
+        results = backend.query_batch([], ["q1", "q2"], generate=True)
+
+        assert [r.text for r in results] == ["yes", "no"]
+        assert all(r.token_probs is None for r in results)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_text_mode_does_not_bound_or_request_logprobs(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [_make_text_output("yes")]
+
+        backend.query_batch([], ["q1"], generate=True)
+
+        kwargs = mock_sp_cls.call_args.kwargs
+        assert "max_tokens" not in kwargs  # model may reason freely
+        assert "logprobs" not in kwargs
+        assert kwargs["temperature"] == 0.0
+
     @patch("s3e.vlm.vllm.SamplingParams", None)
     @patch("s3e.vlm.vllm.LLM", None)
     def test_missing_vllm_raises_install_guidance(self):
