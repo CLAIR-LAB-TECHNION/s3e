@@ -16,7 +16,7 @@ See the README for full documentation and examples.
 from .state_estimator import StateEstimator, ProbabilisticStateEstimator
 from .semantic_state_estimator import PredicatePredictionDetails, SemanticStateEstimator
 from .calibration import CalibrationExample, PlattCalibrationSample
-from .vlm import VLMBackend, VLMOutput, HuggingFaceVLM, OpenAIVLM
+from .vlm import VLMBackend, VLMOutput, HuggingFaceVLM, OpenAIVLM, VLLMBackend
 from .translation import (
     QueryTranslator,
     IdentityTranslator,
@@ -38,6 +38,7 @@ __all__ = [
     "VLMOutput",
     "HuggingFaceVLM",
     "OpenAIVLM",
+    "VLLMBackend",
     "QueryTranslator",
     "IdentityTranslator",
     "PrewrittenTranslator",

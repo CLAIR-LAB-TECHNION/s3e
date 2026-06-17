@@ -1032,3 +1032,13 @@ class TestVLLMBackendMocked:
                     setattr(parent_module, "vllm", original_parent_attr)
                 elif hasattr(parent_module, "vllm"):
                     delattr(parent_module, "vllm")
+
+
+def test_vllm_backend_is_exported():
+    import s3e
+    from s3e.vlm import VLLMBackend as FromVlm
+    from s3e import VLLMBackend as FromTop
+
+    assert FromVlm is FromTop
+    assert "VLLMBackend" in s3e.__all__
+    assert "VLLMBackend" in s3e.vlm.__all__
