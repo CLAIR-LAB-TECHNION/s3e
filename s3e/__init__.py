@@ -16,7 +16,7 @@ See the README for full documentation and examples.
 from .state_estimator import StateEstimator, ProbabilisticStateEstimator
 from .semantic_state_estimator import PredicatePredictionDetails, SemanticStateEstimator
 from .calibration import CalibrationExample, PlattCalibrationSample
-from .vlm import VLMBackend, VLMOutput, HuggingFaceVLM, OpenAIVLM, VLLMBackend
+from .vlm import VLMBackend, VLMOutput, HuggingFaceVLM, OpenAIVLM
 from .translation import (
     QueryTranslator,
     IdentityTranslator,
@@ -45,3 +45,12 @@ __all__ = [
     "TemplateTranslator",
     "LLMTranslator",
 ]
+
+
+def __getattr__(name: str):
+    """Lazily expose optional integrations without importing their packages."""
+    if name == "VLLMBackend":
+        from .vlm import VLLMBackend
+
+        return VLLMBackend
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

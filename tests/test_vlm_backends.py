@@ -1044,6 +1044,48 @@ def test_vllm_backend_is_exported():
     assert "VLLMBackend" in s3e.vlm.__all__
 
 
+def test_import_s3e_does_not_touch_broken_vllm_dependency():
+    import subprocess
+    import sys
+
+    script = """
+import builtins
+
+real_import = builtins.__import__
+
+
+def import_with_broken_vllm(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "vllm":
+        raise ModuleNotFoundError(
+            "No module named 'vllm_dependency'", name="vllm_dependency"
+        )
+    return real_import(name, globals, locals, fromlist, level)
+
+
+builtins.__import__ = import_with_broken_vllm
+
+import s3e
+
+assert "VLLMBackend" in s3e.__all__
+
+try:
+    from s3e import VLLMBackend  # noqa: F401
+except ModuleNotFoundError as exc:
+    assert exc.name == "vllm_dependency", exc.name
+else:
+    raise AssertionError("Explicit VLLMBackend access should surface broken vLLM")
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="vLLM requires CUDA")
 class TestVLLMBackendIntegration:
