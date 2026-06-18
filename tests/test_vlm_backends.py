@@ -712,6 +712,380 @@ class TestHuggingFaceVLMIntegration:
         )
 
 
+import math as _math  # noqa: E402  (module-level math for vLLM helpers)
+
+
+def _make_logprob(token, logprob):
+    """Build a mock vLLM Logprob (has .decoded_token and .logprob)."""
+    item = MagicMock()
+    item.decoded_token = token
+    item.logprob = logprob
+    return item
+
+
+def _make_logprobs_output(token_logprobs):
+    """Build a mock vLLM RequestOutput for logprobs mode.
+
+    token_logprobs: list of (token_str, logprob_float). Keyed by fake ids.
+    """
+    completion = MagicMock()
+    completion.logprobs = [
+        {idx: _make_logprob(tok, lp) for idx, (tok, lp) in enumerate(token_logprobs)}
+    ]
+    output = MagicMock()
+    output.outputs = [completion]
+    return output
+
+
+def _make_text_output(text):
+    """Build a mock vLLM RequestOutput for text mode."""
+    completion = MagicMock()
+    completion.text = text
+    output = MagicMock()
+    output.outputs = [completion]
+    return output
+
+
+class TestVLLMBackendMocked:
+    """Unit tests for VLLMBackend with vllm mocked out."""
+
+    def _make_backend(self, mock_llm_cls, num_logprobs=None):
+        """Construct a VLLMBackend whose engine is the mocked LLM instance."""
+        from s3e.vlm.vllm import VLLMBackend
+
+        mock_llm = MagicMock()
+        mock_llm_cls.return_value = mock_llm
+        with patch("torch.cuda.device_count", return_value=1):
+            backend = VLLMBackend("test/model", num_logprobs=num_logprobs)
+        return backend, mock_llm
+
+    @patch("torch.cuda.device_count", return_value=3)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_tensor_parallel_defaults_to_all_local_gpus(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model")
+
+        kwargs = mock_llm_cls.call_args.kwargs
+        assert kwargs["model"] == "test/model"
+        assert kwargs["tensor_parallel_size"] == 3
+
+    @patch("torch.cuda.device_count", return_value=8)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_tensor_parallel_explicit_override(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model", tensor_parallel_size=2)
+
+        assert mock_llm_cls.call_args.kwargs["tensor_parallel_size"] == 2
+
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_max_logprobs_full_vocab_by_default(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model")
+
+        assert mock_llm_cls.call_args.kwargs["max_logprobs"] == -1
+
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_max_logprobs_finite_when_num_logprobs_set(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model", num_logprobs=5)
+
+        assert mock_llm_cls.call_args.kwargs["max_logprobs"] == 5
+
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_engine_kwargs_forwarded(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count
+    ):
+        from s3e.vlm.vllm import VLLMBackend
+
+        VLLMBackend("test/model", gpu_memory_utilization=0.5, max_model_len=2048)
+
+        kwargs = mock_llm_cls.call_args.kwargs
+        assert kwargs["gpu_memory_utilization"] == 0.5
+        assert kwargs["max_model_len"] == 2048
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_query_batch_builds_one_chat_call_with_conversation_structure(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _make_logprobs_output([("yes", _math.log(0.8))]),
+            _make_logprobs_output([("no", _math.log(0.6))]),
+        ]
+        img = Image.new("RGB", (64, 64))
+
+        results = backend.query_batch([img], ["q1", "q2"], system_prompt="sys")
+
+        assert mock_llm.chat.call_count == 1
+        conversations = mock_llm.chat.call_args.args[0]
+        assert len(conversations) == 2
+        first = conversations[0]
+        assert first[0] == {"role": "system", "content": "sys"}
+        assert first[1]["role"] == "user"
+        assert first[1]["content"][0]["type"] == "image_pil"
+        assert first[1]["content"][0]["image_pil"] is img
+        assert first[1]["content"][-1] == {"type": "text", "text": "q1"}
+        assert len(results) == 2
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_query_batch_omits_system_message_when_absent(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
+
+        backend.query_batch([], ["q1"])
+
+        conversation = mock_llm.chat.call_args.args[0][0]
+        assert all(m["role"] != "system" for m in conversation)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_empty_prompts_returns_empty_list_without_engine_call(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+
+        assert backend.query_batch([Image.new("RGB", (8, 8))], []) == []
+        mock_llm.chat.assert_not_called()
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_missing_logprobs_raises_informative_error(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        completion = MagicMock()
+        completion.logprobs = None  # vLLM returned no logprobs
+        bad_output = MagicMock()
+        bad_output.outputs = [completion]
+        mock_llm.chat.return_value = [bad_output]
+
+        with pytest.raises(RuntimeError, match="no logprobs"):
+            backend.query([], "q1")
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_logprobs_mode_sampling_params_defaults(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls, num_logprobs=None)
+        mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
+
+        backend.query_batch([], ["q1"])
+
+        kwargs = mock_sp_cls.call_args.kwargs
+        assert kwargs["max_tokens"] == 1
+        assert kwargs["temperature"] == 0.0
+        assert kwargs["logprobs"] == -1
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_logprobs_value_follows_num_logprobs(self, mock_llm_cls, mock_sp_cls):
+        backend, mock_llm = self._make_backend(mock_llm_cls, num_logprobs=4)
+        mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
+
+        backend.query_batch([], ["q1"])
+
+        assert mock_sp_cls.call_args.kwargs["logprobs"] == 4
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_max_tokens_is_overridable_in_logprobs_mode(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
+
+        backend.query_batch([], ["q1"], max_tokens=7)
+
+        assert mock_sp_cls.call_args.kwargs["max_tokens"] == 7
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_logprobs_extraction_converts_to_probabilities(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _make_logprobs_output([("yes", _math.log(0.7)), ("no", _math.log(0.3))])
+        ]
+
+        result = backend.query([], "q1")
+
+        assert result.text is None
+        assert result.token_probs["yes"] == pytest.approx(0.7)
+        assert result.token_probs["no"] == pytest.approx(0.3)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_logprobs_extraction_sums_duplicate_tokens(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _make_logprobs_output([("same", _math.log(0.4)), ("same", _math.log(0.25))])
+        ]
+
+        result = backend.query([], "q1")
+
+        assert set(result.token_probs) == {"same"}
+        assert result.token_probs["same"] == pytest.approx(0.65)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_text_mode_returns_text_and_no_token_probs(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _make_text_output("yes"),
+            _make_text_output("no"),
+        ]
+
+        results = backend.query_batch([], ["q1", "q2"], generate=True)
+
+        assert [r.text for r in results] == ["yes", "no"]
+        assert all(r.token_probs is None for r in results)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_text_mode_does_not_bound_or_request_logprobs(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [_make_text_output("yes")]
+
+        backend.query_batch([], ["q1"], generate=True)
+
+        kwargs = mock_sp_cls.call_args.kwargs
+        assert "max_tokens" not in kwargs  # model may reason freely
+        assert "logprobs" not in kwargs
+        assert kwargs["temperature"] == 0.0
+
+    @patch("s3e.vlm.vllm.SamplingParams", None)
+    @patch("s3e.vlm.vllm.LLM", None)
+    def test_missing_vllm_raises_install_guidance(self):
+        from s3e.vlm.vllm import VLLMBackend
+
+        with pytest.raises(ImportError, match=r"pip install s3e\[vllm\]"):
+            VLLMBackend("test/model")
+
+    def test_installed_vllm_import_failure_is_not_masked(self):
+        import builtins
+        import importlib
+        import sys
+
+        module_name = "s3e.vlm.vllm"
+        parent_module = sys.modules.get("s3e.vlm")
+        original_module = sys.modules.pop(module_name, None)
+        had_parent_attr = parent_module is not None and hasattr(parent_module, "vllm")
+        original_parent_attr = (
+            getattr(parent_module, "vllm", None) if had_parent_attr else None
+        )
+        if had_parent_attr:
+            delattr(parent_module, "vllm")
+
+        real_import = builtins.__import__
+
+        def import_with_broken_vllm(
+            name, globals=None, locals=None, fromlist=(), level=0
+        ):
+            if name == "vllm":
+                raise ModuleNotFoundError(
+                    "No module named 'vllm_dependency'", name="vllm_dependency"
+                )
+            return real_import(name, globals, locals, fromlist, level)
+
+        try:
+            with patch("builtins.__import__", side_effect=import_with_broken_vllm):
+                with pytest.raises(ModuleNotFoundError, match="vllm_dependency"):
+                    importlib.import_module(module_name)
+        finally:
+            sys.modules.pop(module_name, None)
+            if original_module is not None:
+                sys.modules[module_name] = original_module
+            if parent_module is not None:
+                if had_parent_attr:
+                    setattr(parent_module, "vllm", original_parent_attr)
+                elif hasattr(parent_module, "vllm"):
+                    delattr(parent_module, "vllm")
+
+
+def test_vllm_backend_is_exported():
+    import s3e
+    from s3e.vlm import VLLMBackend as FromVlm
+    from s3e import VLLMBackend as FromTop
+
+    assert FromVlm is FromTop
+    assert "VLLMBackend" in s3e.__all__
+    assert "VLLMBackend" in s3e.vlm.__all__
+
+
+def test_import_s3e_does_not_touch_broken_vllm_dependency():
+    import subprocess
+    import sys
+
+    script = """
+import builtins
+
+real_import = builtins.__import__
+
+
+def import_with_broken_vllm(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "vllm":
+        raise ModuleNotFoundError(
+            "No module named 'vllm_dependency'", name="vllm_dependency"
+        )
+    return real_import(name, globals, locals, fromlist, level)
+
+
+builtins.__import__ = import_with_broken_vllm
+
+import s3e
+
+assert "VLLMBackend" in s3e.__all__
+
+try:
+    from s3e import VLLMBackend  # noqa: F401
+except ModuleNotFoundError as exc:
+    assert exc.name == "vllm_dependency", exc.name
+else:
+    raise AssertionError("Explicit VLLMBackend access should surface broken vLLM")
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="vLLM requires CUDA")
 class TestVLLMBackendIntegration:
@@ -724,6 +1098,7 @@ class TestVLLMBackendIntegration:
     TINY_VLM_ID = "katuni4ka/tiny-random-llava"
 
     def test_loads_and_queries_logprobs(self):
+        pytest.importorskip("vllm")
         from s3e.vlm.vllm import VLLMBackend
 
         backend = VLLMBackend(

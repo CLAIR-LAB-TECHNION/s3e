@@ -38,9 +38,19 @@ __all__ = [
     "VLMOutput",
     "HuggingFaceVLM",
     "OpenAIVLM",
+    "VLLMBackend",
     "QueryTranslator",
     "IdentityTranslator",
     "PrewrittenTranslator",
     "TemplateTranslator",
     "LLMTranslator",
 ]
+
+
+def __getattr__(name: str):
+    """Lazily expose optional integrations without importing their packages."""
+    if name == "VLLMBackend":
+        from .vlm import VLLMBackend
+
+        return VLLMBackend
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
