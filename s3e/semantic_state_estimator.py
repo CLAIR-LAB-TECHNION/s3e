@@ -70,6 +70,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
     Combines a :class:`VLMBackend` with a :class:`QueryTranslator` to
     estimate the boolean truth values of PDDL predicates from images.
 
+    All configuration arguments after ``vlm`` are keyword-only.
+
     Args:
         domain: PDDL domain as a file path or string.
         problem: PDDL problem as a file path or string.
@@ -101,6 +103,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         domain: str,
         problem: str,
         vlm: Union[VLMBackend, str],
+        *,
         query_translator: QueryTranslator | None = None,
         system_prompt: str | None = None,
         user_prompt_template: str | None = None,
@@ -117,15 +120,6 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         inference_kwargs: dict | None = None,
     ):
         super().__init__(domain, problem, confidence)
-
-        if not isinstance(use_vllm, bool):
-            if inference_kwargs is None and isinstance(use_vllm, dict):
-                inference_kwargs = use_vllm
-                use_vllm = False
-            else:
-                raise TypeError(
-                    "use_vllm must be a bool; pass inference kwargs as a dict."
-                )
 
         # --- VLM backend ---
         # use_vllm only affects the string path; an explicit backend instance is
