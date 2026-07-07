@@ -1,5 +1,7 @@
 """Tests for VLM backends."""
 
+import importlib.util
+
 import pytest
 from PIL import Image
 
@@ -1087,18 +1089,28 @@ else:
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="vLLM requires CUDA")
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or importlib.util.find_spec("vllm") is None,
+    reason="vLLM requires CUDA and an installed vllm package",
+)
 class TestVLLMBackendIntegration:
-    """Integration test with a tiny real model via vLLM.
+    """Integration test with a small real VLM via vLLM.
 
-    Requires a GPU and an installed `vllm`. Skipped otherwise. Run with:
-    pytest -m slow
+    Requires a GPU and an installed ``vllm``; skipped otherwise. The host must
+    also expose a CUDA dev toolchain (``nvcc`` + CUDA headers) because vLLM's
+    default logprobs sampler (FlashInfer) JIT-compiles a kernel on first use.
+    Run with: ``pytest -m slow``.
+
+    The model is the small ``SmolVLM-256M-Instruct`` rather than a degenerate
+    ``tiny-random`` stub: such stubs use a head dim (e.g. 4) below the minimum
+    that CUDA attention kernels accept, so they cannot actually run on a GPU.
+    ``enforce_eager=True`` skips torch.compile / CUDA-graph capture, keeping the
+    smoke test fast and free of compile-time backend surprises.
     """
 
-    TINY_VLM_ID = "katuni4ka/tiny-random-llava"
+    SMALL_VLM_ID = "HuggingFaceTB/SmolVLM-256M-Instruct"
 
     def test_loads_and_queries_logprobs(self):
-        pytest.importorskip("vllm")
         from s3e.vlm.vllm import VLLMBackend
 
         # num_logprobs=None exercises the full-vocab path (max_logprobs=-1 /
@@ -1106,11 +1118,12 @@ class TestVLLMBackendIntegration:
         # and makes the token-string assertions below deterministic: the full
         # vocabulary necessarily contains the tokens they look for.
         backend = VLLMBackend(
-            self.TINY_VLM_ID,
+            self.SMALL_VLM_ID,
             tensor_parallel_size=1,
             num_logprobs=None,
             gpu_memory_utilization=0.3,
-            max_model_len=2048,
+            max_model_len=4096,
+            enforce_eager=True,
         )
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
         result = backend.query([img], "Is this a test?")

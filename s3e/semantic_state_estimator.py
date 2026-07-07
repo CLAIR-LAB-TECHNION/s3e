@@ -96,6 +96,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             route it through the vLLM engine (:class:`VLLMBackend`) instead of
             plain transformers. Ignored when ``vlm`` is a backend instance; an
             ``OpenAI/`` model with ``use_vllm=True`` raises ``ValueError``.
+        inference_kwargs: Extra kwargs forwarded to backend inference calls.
     """
 
     def __init__(

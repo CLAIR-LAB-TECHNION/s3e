@@ -189,7 +189,7 @@ For OpenAI-backed models, install the optional dependency and use an `OpenAI/`-p
 Key arguments:
 
 - `domain`, `problem`: PDDL domain and problem, provided either as strings or file paths.
-- `vlm`: a `VLMBackend` instance or a model string. Strings prefixed with `OpenAI/` select the OpenAI backend; all other strings select the HuggingFace backend.
+- `vlm`: a `VLMBackend` instance or a model string. Strings prefixed with `OpenAI/` select the OpenAI backend; all other strings select the HuggingFace backend by default. For non-OpenAI model strings, pass `use_vllm=True` to select the vLLM backend instead.
 - `query_translator`: translation strategy used to convert grounded predicates into queries.
 - `confidence`: default threshold used when converting probabilities into booleans.
 - `multi_image_strategy`: either `"single"` or `"average"`.
@@ -202,12 +202,15 @@ Key arguments:
 - `inference_kwargs`: per-query inference arguments forwarded to backend `query/query_batch` calls.
   - For OpenAI models, these are request arguments for `chat.completions.create` (for example `temperature`, `max_completion_tokens`).
   - For HuggingFace models, these are forwarded to `model(...)` in logprobs mode and `model.generate(...)` in generation mode.
+  - For vLLM models, these are forwarded to `vllm.SamplingParams` (for example `temperature`, `max_tokens`).
+- `use_vllm`: route a non-OpenAI model string through vLLM instead of HuggingFace. Ignored when `vlm` is already a backend instance; invalid with `OpenAI/` model strings.
 
 `vlm_kwargs` and `inference_kwargs` are intentionally different:
 
 - `vlm_kwargs` configure backend/client construction.
   - OpenAI backend: forwarded to `openai.OpenAI(...)` (for example `api_key`, `base_url`, `timeout`).
   - HuggingFace backend: forwarded to backend/model construction (for example `device_map`, `torch_dtype`, `attn_implementation`).
+  - vLLM backend (`use_vllm=True`): forwarded to `vllm.LLM(...)` (for example `tensor_parallel_size`, `gpu_memory_utilization`, `max_model_len`).
 - `inference_kwargs` configure runtime inference and are forwarded on every query.
 
 Example:

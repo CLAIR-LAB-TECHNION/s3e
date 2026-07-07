@@ -111,10 +111,10 @@ class VLLMBackend(VLMBackend):
 
     def query(
         self,
-        images,
-        prompt,
-        system_prompt=None,
-        generate=False,
+        images: list,
+        prompt: str,
+        system_prompt: str | None = None,
+        generate: bool = False,
         **inference_kwargs,
     ) -> VLMOutput:
         """Send a single query to the vLLM engine."""
@@ -124,10 +124,10 @@ class VLLMBackend(VLMBackend):
 
     def query_batch(
         self,
-        images,
-        prompts,
-        system_prompt=None,
-        generate=False,
+        images: list,
+        prompts: list[str],
+        system_prompt: str | None = None,
+        generate: bool = False,
         **inference_kwargs,
     ) -> list[VLMOutput]:
         """Send multiple prompts against the same images in one batched call.
@@ -165,7 +165,7 @@ class VLLMBackend(VLMBackend):
         outputs = self.llm.chat(conversations, sampling_params)
         return [self._to_vlm_output(output, generate) for output in outputs]
 
-    def _build_sampling_params(self, generate, **inference_kwargs):
+    def _build_sampling_params(self, generate: bool, **inference_kwargs) -> "SamplingParams":
         """Build vLLM SamplingParams for the requested mode.
 
         ``inference_kwargs`` are user overrides. We only *force* the settings
@@ -191,7 +191,7 @@ class VLLMBackend(VLMBackend):
             )
         return SamplingParams(**inference_kwargs)
 
-    def _to_vlm_output(self, output, generate):
+    def _to_vlm_output(self, output, generate: bool) -> VLMOutput:
         """Convert one vLLM RequestOutput into a :class:`VLMOutput`."""
         completion = output.outputs[0]
         if generate:
