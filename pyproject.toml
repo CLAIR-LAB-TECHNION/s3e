@@ -30,7 +30,9 @@ dependencies = [
 
 [project.optional-dependencies]
 openai = ["openai"]
-vllm = ["vllm"]
+# VLLMBackend relies on SamplingParams(logprobs=-1) / LLM(max_logprobs=-1)
+# for full-vocab logprobs, added in vLLM 0.11.0 (vllm-project/vllm#25031).
+vllm = ["vllm>=0.11.0"]
 calibration = ["scikit-learn"]
 dev = ["pytest"]
 

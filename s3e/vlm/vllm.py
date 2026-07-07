@@ -15,6 +15,9 @@ design with full context):
   pattern ``openai.py`` already relies on.
 * ``vllm`` is an optional dependency, imported lazily so importing s3e never
   requires it. Construction raises a helpful :class:`ImportError` when missing.
+* Requires vLLM >= 0.11.0: full-vocab logprobs via ``SamplingParams(logprobs=-1)``
+  and ``LLM(max_logprobs=-1)`` landed in 0.11.0 (vllm-project/vllm#25031); older
+  engines reject ``-1`` at construction. The pin lives in ``pyproject.toml``.
 """
 
 import math
