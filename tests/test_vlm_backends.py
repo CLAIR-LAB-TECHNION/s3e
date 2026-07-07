@@ -1,6 +1,7 @@
 """Tests for VLM backends."""
 
 import importlib.util
+import os
 
 import pytest
 from PIL import Image
@@ -1111,6 +1112,14 @@ class TestVLLMBackendIntegration:
     SMALL_VLM_ID = "HuggingFaceTB/SmolVLM-256M-Instruct"
 
     def test_loads_and_queries_logprobs(self):
+        # Evaluating this class's skipif guard (torch.cuda.is_available()) at
+        # collection time initializes CUDA in the pytest process. vLLM's engine
+        # core subprocess uses the fork start method by default, and CUDA
+        # cannot re-initialize in a forked child ("Cannot re-initialize CUDA in
+        # forked subprocess"), so force spawn. setdefault keeps any explicit
+        # user choice.
+        os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+
         from s3e.vlm.vllm import VLLMBackend
 
         # num_logprobs=None exercises the full-vocab path (max_logprobs=-1 /
