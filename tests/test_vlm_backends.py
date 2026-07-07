@@ -1101,10 +1101,14 @@ class TestVLLMBackendIntegration:
         pytest.importorskip("vllm")
         from s3e.vlm.vllm import VLLMBackend
 
+        # num_logprobs=None exercises the full-vocab path (max_logprobs=-1 /
+        # logprobs=-1, the vLLM >= 0.11.0 feature the pyproject pin exists for)
+        # and makes the token-string assertions below deterministic: the full
+        # vocabulary necessarily contains the tokens they look for.
         backend = VLLMBackend(
             self.TINY_VLM_ID,
             tensor_parallel_size=1,
-            num_logprobs=2,
+            num_logprobs=None,
             gpu_memory_utilization=0.3,
             max_model_len=2048,
         )
@@ -1113,5 +1117,13 @@ class TestVLLMBackendIntegration:
 
         assert isinstance(result, VLMOutput)
         assert isinstance(result.token_probs, dict)
-        assert 0 < len(result.token_probs) <= 2
+        assert len(result.token_probs) > 2  # full-vocab distribution
         assert all(p >= 0 for p in result.token_probs.values())
+
+        # Token-string parity with HuggingFaceVLM: keys must be decoded text
+        # (e.g. "Yes"), not raw tokenizer symbols ("▁Yes" / "ĠYes"). The
+        # estimator matches token_probs keys against plain strings like
+        # "Yes"/"true", so a raw-symbol format would silently zero out the
+        # true/false token masses instead of failing loudly — catch it here.
+        assert "Yes" in result.token_probs
+        assert not any(key.startswith(("▁", "Ġ")) for key in result.token_probs)
