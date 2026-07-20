@@ -8,6 +8,7 @@ values (or probabilities) compatible with planning systems.
 
 import json
 import math
+import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Union
@@ -95,7 +96,8 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         use_vllm: When ``vlm`` is a model-id string for a non-OpenAI model,
             route it through the vLLM engine (:class:`VLLMBackend`) instead of
             plain transformers. Ignored when ``vlm`` is a backend instance; an
-            ``OpenAI/`` model with ``use_vllm=True`` raises ``ValueError``.
+            ``OpenAI/`` model with ``use_vllm=True`` warns and ignores
+            ``use_vllm``.
         inference_kwargs: Extra kwargs forwarded to backend inference calls.
     """
 
@@ -213,13 +215,15 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         """Construct a VLM backend from a model ID string.
 
         ``use_vllm`` routes a non-OpenAI model through the vLLM engine instead
-        of plain transformers. It is incompatible with ``OpenAI/`` models (which
-        run against the hosted API, not a local engine).
+        of plain transformers. It is ignored (with a warning) for ``OpenAI/``
+        models, which run against the hosted API, not a local engine.
         """
         if vlm_id.startswith(OPENAI_MODEL_IDENTIFIER):
             if use_vllm:
-                raise ValueError(
-                    "use_vllm=True is not compatible with OpenAI/ models."
+                warnings.warn(
+                    "use_vllm=True is not compatible with OpenAI/ models; "
+                    "ignoring use_vllm and using the hosted OpenAI API.",
+                    stacklevel=2,
                 )
             from .vlm.openai import OpenAIVLM
 

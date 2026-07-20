@@ -2618,14 +2618,19 @@ class TestUseVllmRouting:
         )
         assert est.vlm is mock_instance
 
-    def test_use_vllm_with_openai_model_raises(self):
-        with pytest.raises(ValueError, match="not compatible with OpenAI"):
-            SemanticStateEstimator(
-                BLOCKSWORLD_DOMAIN,
-                BLOCKSWORLD_PROBLEM,
-                vlm="OpenAI/gpt-4o",
-                use_vllm=True,
-            )
+    def test_use_vllm_with_openai_model_warns(self):
+        with patch("s3e.vlm.openai.OpenAIVLM") as mock_backend:
+            mock_instance = MagicMock()
+            mock_backend.return_value = mock_instance
+            with pytest.warns(UserWarning, match="not compatible with OpenAI"):
+                est = SemanticStateEstimator(
+                    BLOCKSWORLD_DOMAIN,
+                    BLOCKSWORLD_PROBLEM,
+                    vlm="OpenAI/gpt-4o",
+                    use_vllm=True,
+                )
+        mock_backend.assert_called_once_with("OpenAI/gpt-4o")
+        assert est.vlm is mock_instance
 
     def test_use_vllm_ignored_when_instance_passed(self):
         fake = FakeVLM()
