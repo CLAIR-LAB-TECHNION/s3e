@@ -9,6 +9,7 @@ import torch
 import numpy as np
 
 from .backend import VLMBackend, VLMOutput
+from .token_index import build_token_reverse_index
 
 # transformers 5.x renamed AutoModelForVision2Seq to AutoModelForImageTextToText
 _AutoModelClass = None
@@ -45,6 +46,8 @@ class HuggingFaceVLM(VLMBackend):
         attn_implementation: Attention implementation to use. ``None`` uses default.
         num_logprobs: Number of top tokens to include in token_probs. ``None``
             returns probabilities for all tokens. Defaults to ``None``.
+            Irrelevant when a query passes ``interest_tokens``: that path
+            gathers exact masses at known token ids and never truncates.
         max_new_tokens: Maximum number of new tokens to generate. Defaults to 10.
         skip_pad_invariance_check: Skip the one-time check that padded batches
             reproduce unbatched answers, for models already known to be
@@ -69,6 +72,7 @@ class HuggingFaceVLM(VLMBackend):
         self.num_logprobs = num_logprobs
         self.max_new_tokens = max_new_tokens
         self._pad_invariance_checked = bool(skip_pad_invariance_check)
+        self._token_reverse_index: dict[str, list[int]] | None = None
 
         if torch_dtype is None:
             torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
@@ -91,12 +95,35 @@ class HuggingFaceVLM(VLMBackend):
         if tokenizer is not None:
             tokenizer.padding_side = "left"
 
-    def query(self, images, prompt, system_prompt=None, generate=False, **inference_kwargs):
+    def query(
+        self,
+        images,
+        prompt,
+        system_prompt=None,
+        generate=False,
+        interest_tokens=None,
+        **inference_kwargs,
+    ):
         """Send a single query to the HuggingFace VLM."""
-        results = self.query_batch(images, [prompt], system_prompt, generate, **inference_kwargs)
+        results = self.query_batch(
+            images,
+            [prompt],
+            system_prompt,
+            generate,
+            interest_tokens=interest_tokens,
+            **inference_kwargs,
+        )
         return results[0]
 
-    def query_batch(self, images, prompts, system_prompt=None, generate=False, **inference_kwargs):
+    def query_batch(
+        self,
+        images,
+        prompts,
+        system_prompt=None,
+        generate=False,
+        interest_tokens=None,
+        **inference_kwargs,
+    ):
         """Send multiple queries against the same images."""
         if not prompts:
             return []
@@ -115,7 +142,12 @@ class HuggingFaceVLM(VLMBackend):
             inputs = self._prepare_inputs(text_inputs, batched_images)
         except Exception:
             return self._query_batch_sequential(
-                images, prompts, system_prompt, generate, **inference_kwargs
+                images,
+                prompts,
+                system_prompt,
+                generate,
+                interest_tokens=interest_tokens,
+                **inference_kwargs,
             )
 
         if generate:
@@ -127,10 +159,7 @@ class HuggingFaceVLM(VLMBackend):
 
         probs = self._forward_next_token_probs(inputs, **inference_kwargs)
         self._check_pad_invariance(images, text_inputs, inputs, probs, **inference_kwargs)
-        return [
-            VLMOutput(token_probs=token_probs, text=None)
-            for token_probs in self._format_token_probs(probs)
-        ]
+        return self._outputs_from_probs(probs, interest_tokens)
 
     def _query_batch_sequential(
         self,
@@ -138,6 +167,7 @@ class HuggingFaceVLM(VLMBackend):
         prompts,
         system_prompt=None,
         generate=False,
+        interest_tokens=None,
         **inference_kwargs,
     ):
         """Correctness fallback for processors that cannot batch inputs."""
@@ -148,14 +178,88 @@ class HuggingFaceVLM(VLMBackend):
 
             if generate:
                 generated_text = self._generate_text(inputs, **inference_kwargs)[0]
-                token_probs = None
+                results.append(VLMOutput(token_probs=None, text=generated_text))
             else:
-                token_probs = self._format_token_probs(
-                    self._forward_next_token_probs(inputs, **inference_kwargs)
-                )[0]
-                generated_text = None
+                probs = self._forward_next_token_probs(inputs, **inference_kwargs)
+                results.append(self._outputs_from_probs(probs, interest_tokens)[0])
+        return results
 
-            results.append(VLMOutput(token_probs=token_probs, text=generated_text))
+    def _outputs_from_probs(self, probs, interest_tokens):
+        """Build one VLMOutput per probability row.
+
+        With ``interest_tokens``, mass is gathered at precomputed ids and
+        nothing is detokenized; otherwise the legacy full/top-k path decodes
+        the returned distribution into strings.
+        """
+        if interest_tokens is not None:
+            return [
+                VLMOutput(
+                    token_probs=token_probs,
+                    text=None,
+                    argmax_in_interest=argmax_in_interest,
+                )
+                for token_probs, argmax_in_interest in self._gather_interest_probs(
+                    probs, interest_tokens
+                )
+            ]
+        return [
+            VLMOutput(token_probs=token_probs, text=None)
+            for token_probs in self._format_token_probs(probs)
+        ]
+
+    def _get_token_reverse_index(self, vocab_size: int) -> dict[str, list[int]]:
+        """Build (once) and return the decoded-string -> ids index.
+
+        The logits row can be longer than the tokenizer's vocabulary (padded
+        embedding matrices); ids beyond the tokenizer cannot decode to an
+        interest token, so the index is capped at the tokenizer length when
+        it is known.
+        """
+        if self._token_reverse_index is None:
+            vocab_limit = vocab_size
+            tokenizer = getattr(self.processor, "tokenizer", None)
+            if tokenizer is not None:
+                try:
+                    tokenizer_len = len(tokenizer)
+                except TypeError:
+                    tokenizer_len = 0
+                if tokenizer_len > 0:
+                    vocab_limit = min(vocab_limit, tokenizer_len)
+            self._token_reverse_index = build_token_reverse_index(
+                self._decode_token_ids, vocab_limit
+            )
+        return self._token_reverse_index
+
+    def _gather_interest_probs(self, probs, interest_tokens):
+        """Sum each row's mass over the ids decoding to each interest token.
+
+        Returns one ``(token_probs, argmax_in_interest)`` pair per row.
+        Exact: no top-k truncation, and duplicate ids decoding to the same
+        string are summed just like the full-vocabulary string path.
+        """
+        index = self._get_token_reverse_index(int(probs.shape[-1]))
+        interest = list(dict.fromkeys(interest_tokens))
+
+        all_ids: list[int] = []
+        spans: list[tuple[str, int, int]] = []
+        for token in interest:
+            ids = [i for i in index.get(token, []) if i < probs.shape[-1]]
+            spans.append((token, len(all_ids), len(all_ids) + len(ids)))
+            all_ids.extend(ids)
+
+        selected = probs[:, all_ids].cpu() if all_ids else None
+        argmax_ids = probs.argmax(dim=-1).cpu().tolist()
+        interest_id_set = set(all_ids)
+
+        results = []
+        for row in range(probs.shape[0]):
+            token_probs = {
+                token: (
+                    float(selected[row, start:end].sum()) if end > start else 0.0
+                )
+                for token, start, end in spans
+            }
+            results.append((token_probs, argmax_ids[row] in interest_id_set))
         return results
 
     def _render_prompt(self, images, prompt, system_prompt=None):

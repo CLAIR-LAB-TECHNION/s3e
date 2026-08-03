@@ -522,6 +522,176 @@ class TestHuggingFaceVLMMocked:
         assert set(results[0].token_probs) == {"tok2", "tok3"}
         assert set(results[1].token_probs) == {"tok0", "tok1"}
 
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_interest_tokens_return_exact_masses_and_bypass_topk(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor([[[0.0, 1.0, 2.0, 3.0]]], dtype=torch.float32)
+        # num_logprobs=2 would drop tok0 on the legacy top-k path; the
+        # interest gather must be exact regardless.
+        vlm, _, _ = self._make_mock_hf_components(
+            mock_model_cls,
+            mock_proc_cls,
+            logits=logits,
+            vlm_kwargs={"num_logprobs": 2},
+        )
+
+        result = vlm.query([], "q1", interest_tokens=["tok0", "tok3"])
+
+        expected_probs = torch.softmax(logits[0, -1, :].float(), dim=-1)
+        assert set(result.token_probs) == {"tok0", "tok3"}
+        assert result.token_probs["tok0"] == pytest.approx(expected_probs[0].item())
+        assert result.token_probs["tok3"] == pytest.approx(expected_probs[3].item())
+        assert result.argmax_in_interest is True
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_interest_argmax_false_when_top_token_outside_interest(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor([[[0.0, 1.0, 2.0, 3.0]]], dtype=torch.float32)
+        vlm, _, _ = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, logits=logits
+        )
+
+        result = vlm.query([], "q1", interest_tokens=["tok0"])
+
+        assert result.argmax_in_interest is False
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_interest_unknown_token_gets_zero_mass(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor([[[0.0, 1.0, 2.0, 3.0]]], dtype=torch.float32)
+        vlm, _, _ = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, logits=logits
+        )
+
+        result = vlm.query([], "q1", interest_tokens=["tok1", "unknown"])
+
+        assert result.token_probs["unknown"] == 0.0
+        expected_probs = torch.softmax(logits[0, -1, :].float(), dim=-1)
+        assert result.token_probs["tok1"] == pytest.approx(expected_probs[1].item())
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_interest_reverse_index_is_built_once(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor([[[0.0, 1.0, 2.0, 3.0]]], dtype=torch.float32)
+        vlm, _, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, logits=logits
+        )
+
+        vlm.query([], "q1", interest_tokens=["tok0"])
+        decode_calls_after_first = (
+            mock_processor.batch_decode.call_count
+            + mock_processor.decode.call_count
+        )
+        vlm.query([], "q2", interest_tokens=["tok0"])
+        decode_calls_after_second = (
+            mock_processor.batch_decode.call_count
+            + mock_processor.decode.call_count
+        )
+
+        assert decode_calls_after_second == decode_calls_after_first
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_interest_sums_duplicate_ids_decoding_to_same_string(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor([[[0.0, 1.0, 2.0, 3.0]]], dtype=torch.float32)
+        vlm, _, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, logits=logits
+        )
+        mock_processor.decode.side_effect = None
+        mock_processor.decode.return_value = "same"
+        mock_processor.batch_decode.side_effect = None
+        mock_processor.batch_decode.return_value = ["same", "same", "same", "same"]
+
+        result = vlm.query([], "q1", interest_tokens=["same"])
+
+        assert result.token_probs["same"] == pytest.approx(1.0)
+        assert result.argmax_in_interest is True
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_interest_batch_rows_get_row_wise_masses_and_flags(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor(
+            [
+                [[0.0, 1.0, 2.0]],
+                [[2.0, 1.0, 0.0]],
+            ],
+            dtype=torch.float32,
+        )
+        vlm, _, _ = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, logits=logits
+        )
+
+        results = vlm.query_batch([], ["q1", "q2"], interest_tokens=["tok2"])
+
+        expected_probs = torch.softmax(logits[:, -1, :].float(), dim=-1)
+        assert results[0].token_probs["tok2"] == pytest.approx(
+            expected_probs[0, 2].item()
+        )
+        assert results[1].token_probs["tok2"] == pytest.approx(
+            expected_probs[1, 2].item()
+        )
+        assert results[0].argmax_in_interest is True
+        assert results[1].argmax_in_interest is False
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_interest_respected_by_sequential_fallback(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        logits = torch.tensor([[[0.0, 1.0]]], dtype=torch.float32)
+        vlm, _, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, logits=logits
+        )
+        img = Image.new("RGB", (64, 64))
+
+        def processor_call(*, text, images, return_tensors, padding):
+            del images, return_tensors, padding
+            if isinstance(text, list):
+                raise ValueError("nested image batches unsupported")
+            return {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+
+        mock_processor.side_effect = processor_call
+
+        results = vlm.query_batch([img], ["q1", "q2"], interest_tokens=["tok1"])
+
+        assert all(set(r.token_probs) == {"tok1"} for r in results)
+        assert all(r.argmax_in_interest is True for r in results)
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_generate_mode_ignores_interest_tokens(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        input_ids = torch.ones(1, 3, dtype=torch.long)
+        vlm, mock_model, mock_processor = self._make_mock_hf_components(
+            mock_model_cls, mock_proc_cls, input_ids=input_ids
+        )
+        mock_model.generate.return_value = torch.tensor(
+            [[1, 2, 3, 10]], dtype=torch.long
+        )
+        mock_processor.batch_decode.side_effect = None
+        mock_processor.batch_decode.return_value = ["yes"]
+
+        result = vlm.query(
+            [], "q1", generate=True, interest_tokens=["tok0"]
+        )
+
+        assert result.text == "yes"
+        assert result.token_probs is None
+        assert result.argmax_in_interest is None
+
     def _make_ragged_length_hf_components(
         self, mock_model_cls, mock_proc_cls, **vlm_kwargs
     ):
@@ -923,6 +1093,27 @@ class TestHuggingFaceVLMIntegration:
         assert isinstance(result.token_probs, dict)
         assert len(result.token_probs) > 0
         assert all(p >= 0 for p in result.token_probs.values())
+
+    def test_interest_tokens_parity_with_full_vocab(self):
+        """Interest-mode masses must equal the full-vocabulary path's."""
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu")
+        img = Image.new("RGB", (64, 64), color=(128, 128, 128))
+        prompt = "Is this a test?"
+        interest = ["Yes", "No", "yes", "no"]
+
+        full = vlm.query([img], prompt)
+        gathered = vlm.query([img], prompt, interest_tokens=interest)
+
+        assert set(gathered.token_probs) == set(interest)
+        for token in interest:
+            assert gathered.token_probs[token] == pytest.approx(
+                full.token_probs.get(token, 0.0), abs=1e-9
+            )
+        assert gathered.argmax_in_interest == (
+            max(full.token_probs, key=full.token_probs.get) in set(interest)
+        )
 
     def test_query_batch(self):
         from s3e.vlm.huggingface import HuggingFaceVLM
