@@ -208,9 +208,21 @@ class TestHuggingFaceVLMMocked:
         mock_processor.batch_decode.side_effect = batch_decode_tokens
 
         if logits is not None:
-            mock_output = MagicMock()
-            mock_output.logits = logits
-            mock_model.return_value = mock_output
+            # Mirror the real transformers contract: logits_to_keep=n returns
+            # only the final n sequence positions. A mock that ignores it would
+            # hand back full-sequence logits the model never actually produces.
+            def forward(*args, logits_to_keep=0, **kwargs):
+                del args, kwargs
+                sliced = (
+                    logits
+                    if not isinstance(logits_to_keep, int) or logits_to_keep == 0
+                    else logits[:, -logits_to_keep:, :]
+                )
+                mock_output = MagicMock()
+                mock_output.logits = sliced
+                return mock_output
+
+            mock_model.side_effect = forward
 
         vlm = HuggingFaceVLM("test/model", **(vlm_kwargs or {}))
         return vlm, mock_model, mock_processor
@@ -396,37 +408,137 @@ class TestHuggingFaceVLMMocked:
         assert set(results[0].token_probs) == {"tok2", "tok3"}
         assert set(results[1].token_probs) == {"tok0", "tok1"}
 
+    def _make_ragged_length_hf_components(
+        self, mock_model_cls, mock_proc_cls, **vlm_kwargs
+    ):
+        """Mock a model whose prediction depends on the last real prompt token.
+
+        Prompt ``qN`` tokenizes to ``2 + N`` copies of token ``100 + N``, so
+        rows have genuinely different lengths and each row has a distinct
+        correct answer, making a misread pad position observably wrong.
+        """
+        from s3e.vlm.huggingface import HuggingFaceVLM
+
+        vocab_size = 8
+        pad_id = 0
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+        mock_model.config.is_encoder_decoder = False
+
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+        mock_processor.tokenizer.padding_side = "right"
+
+        def tokenize(text):
+            index = int(text[-1])
+            return [100 + index] * (2 + index)
+
+        def run_processor(text=None, images=None, **kwargs):
+            del images, kwargs
+            texts = [text] if isinstance(text, str) else list(text)
+            rows = [tokenize(item) for item in texts]
+            width = max(len(row) for row in rows)
+            left = mock_processor.tokenizer.padding_side == "left"
+
+            input_ids, attention_mask = [], []
+            for row in rows:
+                pad = [pad_id] * (width - len(row))
+                input_ids.append(pad + row if left else row + pad)
+                mask = [0] * len(pad)
+                attention_mask.append(
+                    mask + [1] * len(row) if left else [1] * len(row) + mask
+                )
+
+            return {
+                "input_ids": torch.tensor(input_ids, dtype=torch.long),
+                "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            }
+
+        def forward(input_ids=None, logits_to_keep=0, **kwargs):
+            del kwargs
+            batch, length = input_ids.shape
+            logits = torch.zeros((batch, length, vocab_size), dtype=torch.float32)
+            for b in range(batch):
+                for t in range(length):
+                    logits[b, t, int(input_ids[b, t]) % vocab_size] = 50.0
+            if isinstance(logits_to_keep, int) and logits_to_keep > 0:
+                logits = logits[:, -logits_to_keep:, :]
+            output = MagicMock()
+            output.logits = logits
+            return output
+
+        mock_processor.side_effect = run_processor
+        mock_processor.apply_chat_template.side_effect = (
+            lambda messages, **kwargs: f"chat:{messages[-1]['content'][-1]['text']}"
+        )
+        mock_processor.batch_decode.side_effect = lambda seqs, **kwargs: [
+            f"tok{int(torch.as_tensor(seq).flatten()[0])}" for seq in seqs
+        ]
+        mock_model.side_effect = forward
+
+        return HuggingFaceVLM("test/model", **vlm_kwargs), mock_model
+
     @patch("s3e.vlm.huggingface.AutoProcessor")
     @patch("s3e.vlm.huggingface._AutoModelClass")
-    def test_query_batch_uses_attention_mask_for_last_prompt_token(
+    def test_batched_queries_agree_with_unbatched(
         self, mock_model_cls, mock_proc_cls
     ):
-        logits = torch.zeros((2, 4, 4), dtype=torch.float32)
-        logits[0, 2, 2] = 10.0
-        logits[0, 3, 0] = 20.0
-        logits[1, 3, 1] = 10.0
-        vlm, _, mock_processor = self._make_mock_hf_components(
-            mock_model_cls,
-            mock_proc_cls,
-            logits=logits,
-            input_ids=torch.ones(2, 4, dtype=torch.long),
-            vlm_kwargs={"num_logprobs": 1},
+        """The invariant the padding bug violated: batching must not change answers."""
+        vlm, mock_model = self._make_ragged_length_hf_components(
+            mock_model_cls, mock_proc_cls
         )
-        mock_processor.return_value = {
-            "input_ids": torch.ones(2, 4, dtype=torch.long),
-            "attention_mask": torch.tensor(
-                [
-                    [1, 1, 1, 0],
-                    [1, 1, 1, 1],
-                ],
-                dtype=torch.long,
-            ),
-        }
+        prompts = ["q0", "q1", "q2"]
 
-        results = vlm.query_batch([], ["short", "long"])
+        unbatched = [vlm.query([], prompt).token_probs for prompt in prompts]
+        batched = [out.token_probs for out in vlm.query_batch([], prompts)]
 
-        assert set(results[0].token_probs) == {"tok2"}
-        assert set(results[1].token_probs) == {"tok1"}
+        assert batched == unbatched
+        # each row answers with its own last real token, not a neighbour's
+        assert [max(probs, key=probs.get) for probs in batched] == [
+            "tok4",
+            "tok5",
+            "tok6",
+        ]
+
+        # 3 unbatched + 1 batched + 1 invariance-check rerun of the shortest row
+        assert mock_model.call_count == 5
+        vlm.query_batch([], prompts)
+        assert mock_model.call_count == 6  # the check does not run again
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_right_padded_batch_fails_the_pad_invariance_check(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """A processor that right-pads despite the configured side is caught.
+
+        Right padding puts a pad token at the final position of every short
+        row, so the batched answer diverges from the row's unbatched answer
+        and must be rejected rather than returned.
+        """
+        vlm, _ = self._make_ragged_length_hf_components(mock_model_cls, mock_proc_cls)
+        vlm.processor.tokenizer.padding_side = "right"
+
+        with pytest.raises(ValueError, match="under padding"):
+            vlm.query_batch([], ["q0", "q1", "q2"])
+
+    @patch("s3e.vlm.huggingface.AutoProcessor")
+    @patch("s3e.vlm.huggingface._AutoModelClass")
+    def test_pad_invariance_check_can_be_skipped(self, mock_model_cls, mock_proc_cls):
+        vlm, mock_model = self._make_ragged_length_hf_components(
+            mock_model_cls, mock_proc_cls, skip_pad_invariance_check=True
+        )
+
+        results = vlm.query_batch([], ["q0", "q1", "q2"])
+
+        assert mock_model.call_count == 1  # no verification forward
+        assert [max(r.token_probs, key=r.token_probs.get) for r in results] == [
+            "tok4",
+            "tok5",
+            "tok6",
+        ]
 
     @patch("s3e.vlm.huggingface.AutoProcessor")
     @patch("s3e.vlm.huggingface._AutoModelClass")

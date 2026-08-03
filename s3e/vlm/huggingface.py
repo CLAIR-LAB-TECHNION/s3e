@@ -46,6 +46,9 @@ class HuggingFaceVLM(VLMBackend):
         num_logprobs: Number of top tokens to include in token_probs. ``None``
             returns probabilities for all tokens. Defaults to ``None``.
         max_new_tokens: Maximum number of new tokens to generate. Defaults to 10.
+        skip_pad_invariance_check: Skip the one-time check that padded batches
+            reproduce unbatched answers, for models already known to be
+            pad-invariant. Defaults to False.
         **model_kwargs: Additional kwargs for from_pretrained(). ``max_new_tokens``
             is consumed from this mapping and used for text generation.
     """
@@ -58,12 +61,14 @@ class HuggingFaceVLM(VLMBackend):
         attn_implementation: str | None = None,
         num_logprobs: int | None = None,
         max_new_tokens: int = 10,
+        skip_pad_invariance_check: bool = False,
         **model_kwargs,
     ):
         _check_hf_imports()
         self.model_id = model_id
         self.num_logprobs = num_logprobs
         self.max_new_tokens = max_new_tokens
+        self._pad_invariance_checked = bool(skip_pad_invariance_check)
 
         if torch_dtype is None:
             torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
@@ -79,6 +84,12 @@ class HuggingFaceVLM(VLMBackend):
         self.model = _AutoModelClass.from_pretrained(model_id, **load_kwargs)
         self.processor = AutoProcessor.from_pretrained(model_id)
         self.model.eval()
+
+        # Batched inference reads logits[:, -1, :]; left padding makes that
+        # position the last real token of every row.
+        tokenizer = getattr(self.processor, "tokenizer", None)
+        if tokenizer is not None:
+            tokenizer.padding_side = "left"
 
     def query(self, images, prompt, system_prompt=None, generate=False, **inference_kwargs):
         """Send a single query to the HuggingFace VLM."""
@@ -114,10 +125,11 @@ class HuggingFaceVLM(VLMBackend):
                 for generated_text in generated_texts
             ]
 
-        token_probs_batch = self._get_next_token_probs(inputs, **inference_kwargs)
+        probs = self._forward_next_token_probs(inputs, **inference_kwargs)
+        self._check_pad_invariance(images, text_inputs, inputs, probs, **inference_kwargs)
         return [
             VLMOutput(token_probs=token_probs, text=None)
-            for token_probs in token_probs_batch
+            for token_probs in self._format_token_probs(probs)
         ]
 
     def _query_batch_sequential(
@@ -138,8 +150,8 @@ class HuggingFaceVLM(VLMBackend):
                 generated_text = self._generate_text(inputs, **inference_kwargs)[0]
                 token_probs = None
             else:
-                token_probs = self._get_next_token_probs(
-                    inputs, **inference_kwargs
+                token_probs = self._format_token_probs(
+                    self._forward_next_token_probs(inputs, **inference_kwargs)
                 )[0]
                 generated_text = None
 
@@ -200,36 +212,49 @@ class HuggingFaceVLM(VLMBackend):
         messages.append({"role": "user", "content": user_content})
         return messages
 
-    def _select_next_token_logits(self, logits, inputs):
-        """Select logits after the last non-padding token in each batch row."""
-        attention_mask = inputs.get("attention_mask")
-        if (
-            isinstance(attention_mask, torch.Tensor)
-            and attention_mask.ndim == 2
-            and tuple(attention_mask.shape) == tuple(logits.shape[:2])
-        ):
-            mask = attention_mask.to(device=logits.device).bool()
-            positions = torch.arange(logits.shape[1], device=logits.device).expand(
-                logits.shape[0], -1
-            )
-            last_indices = positions.masked_fill(~mask, -1).max(dim=1).values
-            last_indices = torch.where(
-                last_indices >= 0,
-                last_indices,
-                torch.full_like(last_indices, logits.shape[1] - 1),
-            )
-            batch_indices = torch.arange(logits.shape[0], device=logits.device)
-            return logits[batch_indices, last_indices, :]
+    def _forward_next_token_probs(self, inputs, **inference_kwargs):
+        """Run the model and return next-token probabilities for each row.
 
-        return logits[:, -1, :]
-
-    def _get_next_token_probs(self, inputs, **inference_kwargs):
+        The final logit position is the last real token of every row because
+        the tokenizer pads on the left.
+        """
         with torch.inference_mode():
             outputs = self.model(**inputs, **inference_kwargs)
+        return torch.softmax(outputs.logits[:, -1, :].float(), dim=-1)
 
-        logits = self._select_next_token_logits(outputs.logits, inputs).float()
-        probs = torch.softmax(logits, dim=-1)
+    def _check_pad_invariance(
+        self, images, text_inputs, inputs, batched_probs, **inference_kwargs
+    ):
+        """One-time check that padding does not change a row's answer.
 
+        Reruns the most-padded row of the first padded batch on its own and
+        compares the two distributions, catching models whose answers depend
+        on where padding sits (e.g. learned absolute position embeddings, or
+        a processor that ignores ``padding_side``).
+        """
+        if self._pad_invariance_checked:
+            return
+        attention_mask = inputs.get("attention_mask")
+        if not isinstance(attention_mask, torch.Tensor) or attention_mask.ndim != 2:
+            return
+        if bool(attention_mask.all()):
+            return
+
+        row = int(attention_mask.sum(dim=1).argmin())
+        row_inputs = self._prepare_inputs(text_inputs[row], images if images else None)
+        solo_probs = self._forward_next_token_probs(row_inputs, **inference_kwargs)[0]
+
+        max_diff = float((solo_probs - batched_probs[row]).abs().max())
+        if max_diff > 0.05:
+            raise ValueError(
+                f"{self.model_id} changes its next-token distribution under "
+                f"padding (max probability difference {max_diff:.3f}), so "
+                f"batched results cannot be trusted. Use batch_size=1."
+            )
+        self._pad_invariance_checked = True
+
+    def _format_token_probs(self, probs):
+        """Convert per-row probability tensors into token->probability dicts."""
         if self.num_logprobs is None:
             selected_probs = probs
             selected_indices = torch.arange(
