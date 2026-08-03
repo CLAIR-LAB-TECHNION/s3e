@@ -30,3 +30,28 @@ def build_token_reverse_index(
     for token_id, token_str in enumerate(decoded):
         index.setdefault(token_str, []).append(token_id)
     return index
+
+
+def decode_single_token_ids(tokenizer, token_ids: list[int]) -> list[str]:
+    """Decode each id independently, preferring batch decoding.
+
+    Same semantics as ``HuggingFaceVLM._decode_token_ids``, for tokenizer
+    objects (rather than processors): every id becomes its own one-token
+    sequence so decoded strings never merge across ids.
+    """
+    if not token_ids:
+        return []
+
+    batch_decode = getattr(tokenizer, "batch_decode", None)
+    if callable(batch_decode):
+        try:
+            decoded = batch_decode(
+                [[int(token_id)] for token_id in token_ids],
+                skip_special_tokens=False,
+            )
+            if len(decoded) == len(token_ids):
+                return list(decoded)
+        except Exception:
+            pass
+
+    return [tokenizer.decode([int(token_id)]) for token_id in token_ids]

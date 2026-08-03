@@ -25,6 +25,7 @@ import math
 import torch
 
 from .backend import VLMBackend, VLMOutput
+from .token_index import build_token_reverse_index, decode_single_token_ids
 
 try:
     from vllm import LLM, SamplingParams
@@ -64,6 +65,14 @@ class VLLMBackend(VLMBackend):
             mirroring :class:`HuggingFaceVLM`. This maps to vLLM ``logprobs=-1``
             with the engine built using ``max_logprobs=-1`` -- note the docs' OOM
             caveat for full-vocab logprobs. A finite ``k`` returns the top ``k``.
+            With ``interest_tokens`` queries this stays the throughput knob:
+            ``None`` keeps the id-matched masses exact over the full
+            vocabulary (at the cost of a Python loop over every returned
+            entry), while a finite ``k`` bounds the omitted interest mass by
+            the ``k``-th ranked probability. Interest mode also requests
+            ``detokenize=False``; whether the installed vLLM honors it for
+            logprobs can be smoke-tested by checking that returned
+            ``Logprob.decoded_token`` values are ``None``.
         **engine_kwargs: Forwarded verbatim to the ``vllm.LLM`` constructor
             (e.g. ``gpu_memory_utilization``, ``dtype``, ``max_model_len``,
             ``quantization``), mirroring how :class:`HuggingFaceVLM` forwards
@@ -89,6 +98,7 @@ class VLLMBackend(VLMBackend):
         _check_vllm_installed()
         self.model_id = model_id
         self.num_logprobs = num_logprobs
+        self._token_reverse_index: dict[str, list[int]] | None = None
 
         # Default to every locally visible GPU so the user does not have to
         # specify a count; an explicit value always wins. max(..., 1) keeps a
@@ -115,11 +125,17 @@ class VLLMBackend(VLMBackend):
         prompt: str,
         system_prompt: str | None = None,
         generate: bool = False,
+        interest_tokens=None,
         **inference_kwargs,
     ) -> VLMOutput:
         """Send a single query to the vLLM engine."""
         return self.query_batch(
-            images, [prompt], system_prompt, generate, **inference_kwargs
+            images,
+            [prompt],
+            system_prompt,
+            generate,
+            interest_tokens=interest_tokens,
+            **inference_kwargs,
         )[0]
 
     def query_batch(
@@ -128,6 +144,7 @@ class VLLMBackend(VLMBackend):
         prompts: list[str],
         system_prompt: str | None = None,
         generate: bool = False,
+        interest_tokens=None,
         **inference_kwargs,
     ) -> list[VLMOutput]:
         """Send multiple prompts against the same images in one batched call.
@@ -142,7 +159,10 @@ class VLLMBackend(VLMBackend):
         if not prompts:
             return []
 
-        sampling_params = self._build_sampling_params(generate, **inference_kwargs)
+        interest_mode = interest_tokens is not None and not generate
+        sampling_params = self._build_sampling_params(
+            generate, interest_mode, **inference_kwargs
+        )
 
         # Every prompt shares the same images, so build the image content once
         # and reuse it across the per-prompt conversations.
@@ -163,9 +183,14 @@ class VLLMBackend(VLMBackend):
         # chat() accepts a batched list of conversations and returns outputs in
         # input order.
         outputs = self.llm.chat(conversations, sampling_params)
-        return [self._to_vlm_output(output, generate) for output in outputs]
+        return [
+            self._to_vlm_output(output, generate, interest_tokens)
+            for output in outputs
+        ]
 
-    def _build_sampling_params(self, generate: bool, **inference_kwargs) -> "SamplingParams":
+    def _build_sampling_params(
+        self, generate: bool, interest_mode: bool = False, **inference_kwargs
+    ) -> "SamplingParams":
         """Build vLLM SamplingParams for the requested mode.
 
         ``inference_kwargs`` are user overrides. We only *force* the settings
@@ -189,9 +214,21 @@ class VLLMBackend(VLMBackend):
             inference_kwargs["logprobs"] = (
                 -1 if self.num_logprobs is None else self.num_logprobs
             )
+            if interest_mode and "stop" not in inference_kwargs:
+                # Interest tokens are matched by token id, so the returned
+                # logprob entries never need decoded strings. Skipping
+                # detokenization removes vLLM's per-id string conversion on
+                # the output-processor thread — the dominant cost of
+                # full-vocabulary logprobs. Engines that ignore the flag for
+                # logprobs still return id-keyed entries, so results stay
+                # correct either way, just slower. Stop strings require
+                # detokenization, so an explicit ``stop`` wins.
+                inference_kwargs.setdefault("detokenize", False)
         return SamplingParams(**inference_kwargs)
 
-    def _to_vlm_output(self, output, generate: bool) -> VLMOutput:
+    def _to_vlm_output(
+        self, output, generate: bool, interest_tokens=None
+    ) -> VLMOutput:
         """Convert one vLLM RequestOutput into a :class:`VLMOutput`."""
         completion = output.outputs[0]
         if generate:
@@ -212,6 +249,9 @@ class VLLMBackend(VLMBackend):
                 "output; check the installed vLLM version and SamplingParams."
             )
 
+        if interest_tokens is not None:
+            return self._interest_output(logprobs_seq[0], interest_tokens)
+
         token_probs: dict[str, float] = {}
         for logprob in logprobs_seq[0].values():
             # Sum probabilities of duplicate decoded token strings, matching the
@@ -225,3 +265,49 @@ class VLLMBackend(VLMBackend):
             )
 
         return VLMOutput(token_probs=token_probs, text=None)
+
+    def _interest_output(self, logprob_entries, interest_tokens) -> VLMOutput:
+        """Build a VLMOutput by matching id-keyed logprob entries.
+
+        Matching by token id (the logprobs dict key) instead of
+        ``decoded_token`` works with ``detokenize=False`` output and sums
+        duplicate ids decoding to the same string, exactly like the
+        string-keyed path.
+        """
+        interest = list(dict.fromkeys(interest_tokens))
+        id_map = self._get_interest_id_map(interest)
+
+        token_probs = {token: 0.0 for token in interest}
+        best_id = None
+        best_logprob = -math.inf
+        for token_id, logprob in logprob_entries.items():
+            if logprob.logprob > best_logprob:
+                best_id, best_logprob = token_id, logprob.logprob
+            token = id_map.get(token_id)
+            if token is not None:
+                token_probs[token] += math.exp(logprob.logprob)
+
+        return VLMOutput(
+            token_probs=token_probs,
+            text=None,
+            argmax_in_interest=best_id in id_map,
+        )
+
+    def _get_token_reverse_index(self) -> dict[str, list[int]]:
+        """Build (once) the decoded-string -> ids index from the tokenizer."""
+        if self._token_reverse_index is None:
+            tokenizer = self.llm.get_tokenizer()
+            self._token_reverse_index = build_token_reverse_index(
+                lambda ids: decode_single_token_ids(tokenizer, ids),
+                len(tokenizer),
+            )
+        return self._token_reverse_index
+
+    def _get_interest_id_map(self, interest: list[str]) -> dict[int, str]:
+        """Map each vocabulary id decoding to an interest token onto it."""
+        index = self._get_token_reverse_index()
+        id_map: dict[int, str] = {}
+        for token in interest:
+            for token_id in index.get(token, []):
+                id_map[token_id] = token
+        return id_map

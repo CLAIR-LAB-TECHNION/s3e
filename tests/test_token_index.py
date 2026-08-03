@@ -1,6 +1,11 @@
 """Tests for the token reverse-index helper."""
 
-from s3e.vlm.token_index import build_token_reverse_index
+from unittest.mock import MagicMock
+
+from s3e.vlm.token_index import (
+    build_token_reverse_index,
+    decode_single_token_ids,
+)
 
 
 class TestBuildTokenReverseIndex:
@@ -30,3 +35,24 @@ class TestBuildTokenReverseIndex:
 
     def test_zero_vocab_returns_empty_index(self):
         assert build_token_reverse_index(lambda ids: [], 0) == {}
+
+
+class TestDecodeSingleTokenIds:
+    def test_prefers_batch_decode_with_one_id_per_sequence(self):
+        tokenizer = MagicMock()
+        tokenizer.batch_decode.return_value = ["a", "b"]
+
+        assert decode_single_token_ids(tokenizer, [3, 7]) == ["a", "b"]
+        sequences = tokenizer.batch_decode.call_args.args[0]
+        assert sequences == [[3], [7]]
+        assert tokenizer.batch_decode.call_args.kwargs["skip_special_tokens"] is False
+
+    def test_falls_back_to_per_id_decode_when_batch_decode_fails(self):
+        tokenizer = MagicMock()
+        tokenizer.batch_decode.side_effect = TypeError("no batch decode")
+        tokenizer.decode.side_effect = lambda ids, **kwargs: f"tok{ids[0]}"
+
+        assert decode_single_token_ids(tokenizer, [1, 2]) == ["tok1", "tok2"]
+
+    def test_empty_ids(self):
+        assert decode_single_token_ids(MagicMock(), []) == []

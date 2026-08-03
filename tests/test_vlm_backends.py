@@ -1166,6 +1166,37 @@ def _make_text_output(text):
     return output
 
 
+def _make_id_logprobs_output(id_logprobs):
+    """Build a mock vLLM RequestOutput keyed by explicit token ids.
+
+    Mirrors ``detokenize=False`` output: ``decoded_token`` is None and the
+    logprobs dict keys are real token ids.
+    """
+    completion = MagicMock()
+    completion.logprobs = [
+        {
+            token_id: _make_logprob(None, logprob)
+            for token_id, logprob in id_logprobs.items()
+        }
+    ]
+    output = MagicMock()
+    output.outputs = [completion]
+    return output
+
+
+def _make_id_tokenizer(vocab):
+    """Build a mock tokenizer whose id ``i`` decodes to ``vocab[i]``."""
+    tokenizer = MagicMock()
+    tokenizer.__len__.return_value = len(vocab)
+    tokenizer.batch_decode.side_effect = lambda sequences, **kwargs: [
+        vocab[sequence[0]] for sequence in sequences
+    ]
+    tokenizer.decode.side_effect = lambda ids, **kwargs: vocab[
+        ids[0] if isinstance(ids, list) else ids
+    ]
+    return tokenizer
+
+
 class TestVLLMBackendMocked:
     """Unit tests for VLLMBackend with vllm mocked out."""
 
@@ -1404,6 +1435,143 @@ class TestVLLMBackendMocked:
         assert "max_tokens" not in kwargs  # model may reason freely
         assert "logprobs" not in kwargs
         assert kwargs["temperature"] == 0.0
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_interest_mode_requests_detokenize_false(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(["yes", "no"])
+        mock_llm.chat.return_value = [
+            _make_id_logprobs_output({0: _math.log(0.8), 1: _math.log(0.2)})
+        ]
+
+        backend.query([], "q1", interest_tokens=["yes", "no"])
+
+        kwargs = mock_sp_cls.call_args.kwargs
+        assert kwargs["detokenize"] is False
+        assert kwargs["logprobs"] == -1
+        assert kwargs["max_tokens"] == 1
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_no_interest_mode_does_not_touch_detokenize(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
+
+        backend.query([], "q1")
+
+        assert "detokenize" not in mock_sp_cls.call_args.kwargs
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_interest_matches_by_token_id_and_backfills(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(
+            ["yes", "no", "maybe"]
+        )
+        mock_llm.chat.return_value = [
+            _make_id_logprobs_output(
+                {0: _math.log(0.6), 1: _math.log(0.3), 2: _math.log(0.1)}
+            )
+        ]
+
+        result = backend.query([], "q1", interest_tokens=["yes", "no", "null"])
+
+        assert set(result.token_probs) == {"yes", "no", "null"}
+        assert result.token_probs["yes"] == pytest.approx(0.6)
+        assert result.token_probs["no"] == pytest.approx(0.3)
+        assert result.token_probs["null"] == 0.0
+        assert result.argmax_in_interest is True
+        assert result.text is None
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_interest_sums_duplicate_ids_decoding_to_same_string(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(["yes", "yes"])
+        mock_llm.chat.return_value = [
+            _make_id_logprobs_output({0: _math.log(0.4), 1: _math.log(0.2)})
+        ]
+
+        result = backend.query([], "q1", interest_tokens=["yes"])
+
+        assert result.token_probs["yes"] == pytest.approx(0.6)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_interest_argmax_false_when_top_id_outside_interest(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(["maybe", "yes"])
+        mock_llm.chat.return_value = [
+            _make_id_logprobs_output({0: _math.log(0.5), 1: _math.log(0.4)})
+        ]
+
+        result = backend.query([], "q1", interest_tokens=["yes"])
+
+        assert result.argmax_in_interest is False
+        assert result.token_probs["yes"] == pytest.approx(0.4)
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_interest_reverse_index_is_built_once(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        tokenizer = _make_id_tokenizer(["yes", "no"])
+        mock_llm.get_tokenizer.return_value = tokenizer
+        mock_llm.chat.return_value = [
+            _make_id_logprobs_output({0: _math.log(0.8), 1: _math.log(0.2)})
+        ]
+
+        backend.query([], "q1", interest_tokens=["yes"])
+        backend.query([], "q2", interest_tokens=["yes"])
+
+        assert mock_llm.get_tokenizer.call_count == 1
+        assert tokenizer.batch_decode.call_count == 1
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_interest_with_stop_strings_keeps_detokenization(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        """detokenize=False forbids stop strings, so stop wins."""
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(["yes"])
+        mock_llm.chat.return_value = [
+            _make_id_logprobs_output({0: _math.log(0.8)})
+        ]
+
+        backend.query([], "q1", interest_tokens=["yes"], stop=["\n"])
+
+        assert "detokenize" not in mock_sp_cls.call_args.kwargs
+
+    @patch("s3e.vlm.vllm.SamplingParams")
+    @patch("s3e.vlm.vllm.LLM")
+    def test_generate_mode_ignores_interest_tokens(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [_make_text_output("yes")]
+
+        result = backend.query([], "q1", generate=True, interest_tokens=["yes"])
+
+        assert result.text == "yes"
+        assert result.token_probs is None
+        assert result.argmax_in_interest is None
+        kwargs = mock_sp_cls.call_args.kwargs
+        assert "detokenize" not in kwargs
+        assert "logprobs" not in kwargs
+        mock_llm.get_tokenizer.assert_not_called()
 
     @patch("s3e.vlm.vllm.SamplingParams", None)
     @patch("s3e.vlm.vllm.LLM", None)
