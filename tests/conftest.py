@@ -50,22 +50,40 @@ class FakeVLM(VLMBackend):
         self.received_system_prompts: list[str | None] = []
         self.received_generate_flags: list[bool] = []
         self.received_inference_kwargs: list[dict] = []
+        self.received_interest_tokens: list[list[str] | None] = []
 
     def query(
-        self, images, prompt, system_prompt=None, generate=False, **inference_kwargs
+        self,
+        images,
+        prompt,
+        system_prompt=None,
+        generate=False,
+        interest_tokens=None,
+        **inference_kwargs,
     ):
         self.call_count += 1
         self.received_prompts.append(prompt)
         self.received_system_prompts.append(system_prompt)
         self.received_generate_flags.append(generate)
         self.received_inference_kwargs.append(dict(inference_kwargs))
+        self.received_interest_tokens.append(
+            None if interest_tokens is None else list(interest_tokens)
+        )
 
         # Check for per-prompt overrides
-        for substring, probs in self.per_prompt_probs.items():
+        probs = dict(self.token_probs)
+        for substring, override in self.per_prompt_probs.items():
             if substring in prompt:
-                return VLMOutput(token_probs=dict(probs), text=self.text)
+                probs = dict(override)
+                break
 
-        return VLMOutput(token_probs=dict(self.token_probs), text=self.text)
+        argmax_in_interest = None
+        if interest_tokens is not None and probs:
+            argmax_in_interest = max(probs, key=probs.get) in set(interest_tokens)
+
+        return VLMOutput(
+            token_probs=probs, text=self.text, argmax_in_interest=argmax_in_interest
+        )
 
 
 @pytest.fixture

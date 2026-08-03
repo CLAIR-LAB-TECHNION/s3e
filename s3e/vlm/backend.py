@@ -6,6 +6,7 @@ standardizes their return values.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from PIL.Image import Image
@@ -17,11 +18,21 @@ class VLMOutput:
 
     Attributes:
         token_probs: Mapping of token strings to their probabilities.
+            When the query was made with ``interest_tokens``, the keys are
+            exactly those tokens (tokens absent from the model's vocabulary
+            or returned distribution get probability 0.0); otherwise the
+            keys are whatever distribution the backend returns.
         text: The generated text response, if available.
+        argmax_in_interest: Whether the model's single most likely next
+            token is one of the requested ``interest_tokens``. ``None``
+            when the query did not request interest tokens. A ``False``
+            here means the model answered outside the expected token set,
+            so the reported masses cover almost none of the distribution.
     """
 
     token_probs: dict[str, float] = field(default_factory=dict)
     text: str | None = None
+    argmax_in_interest: bool | None = None
 
 
 class VLMBackend(ABC):
@@ -29,6 +40,14 @@ class VLMBackend(ABC):
 
     Subclasses must implement :meth:`query`. The :meth:`query_batch` method
     has a default sequential implementation that can be overridden.
+
+    The ``interest_tokens`` contract: when a caller passes a sequence of
+    token strings, the backend reports probability mass for exactly those
+    strings (summing over every vocabulary id that decodes to the string,
+    normalized over the full vocabulary) instead of materializing a full or
+    top-k distribution. This is semantics-free data — backends never learn
+    what the tokens mean — and lets each backend skip decoding the rest of
+    the vocabulary.
     """
 
     @abstractmethod
@@ -38,6 +57,7 @@ class VLMBackend(ABC):
         prompt: str,
         system_prompt: str | None = None,
         generate: bool = False,
+        interest_tokens: Sequence[str] | None = None,
         **inference_kwargs,
     ) -> VLMOutput:
         """Send a single query to the VLM."""
@@ -49,10 +69,21 @@ class VLMBackend(ABC):
         prompts: list[str],
         system_prompt: str | None = None,
         generate: bool = False,
+        interest_tokens: Sequence[str] | None = None,
         **inference_kwargs,
     ) -> list[VLMOutput]:
         """Send multiple queries against the same set of images.
 
         Default implementation calls :meth:`query` sequentially.
         """
-        return [self.query(images, p, system_prompt, generate, **inference_kwargs) for p in prompts]
+        return [
+            self.query(
+                images,
+                p,
+                system_prompt,
+                generate,
+                interest_tokens=interest_tokens,
+                **inference_kwargs,
+            )
+            for p in prompts
+        ]

@@ -38,6 +38,14 @@ class TestVLMOutput:
         output = VLMOutput(token_probs={"yes": 0.9}, text="yes")
         assert output.text == "yes"
 
+    def test_argmax_in_interest_defaults_to_none(self):
+        output = VLMOutput(token_probs={"yes": 0.9})
+        assert output.argmax_in_interest is None
+
+    def test_argmax_in_interest_is_settable(self):
+        output = VLMOutput(token_probs={"yes": 0.9}, argmax_in_interest=True)
+        assert output.argmax_in_interest is True
+
 
 class TestVLMBackend:
     def test_query_returns_vlm_output(self):
@@ -77,6 +85,30 @@ class TestVLMBackend:
         img = Image.new("RGB", (64, 64))
         vlm.query_batch([img], ["q1", "q2"], system_prompt="Be helpful.")
         assert vlm.received_system_prompts == ["Be helpful.", "Be helpful."]
+
+    def test_query_batch_forwards_interest_tokens(self):
+        class TrackingVLM(VLMBackend):
+            def __init__(self):
+                self.received_interest_tokens = []
+
+            def query(
+                self,
+                images,
+                prompt,
+                system_prompt=None,
+                generate=False,
+                interest_tokens=None,
+                **inference_kwargs,
+            ):
+                del generate
+                del inference_kwargs
+                self.received_interest_tokens.append(interest_tokens)
+                return VLMOutput(token_probs={"yes": 0.5})
+
+        vlm = TrackingVLM()
+        img = Image.new("RGB", (64, 64))
+        vlm.query_batch([img], ["q1", "q2"], interest_tokens=["yes", "no"])
+        assert vlm.received_interest_tokens == [["yes", "no"], ["yes", "no"]]
 
 
 from unittest.mock import MagicMock, patch
@@ -149,6 +181,88 @@ class TestOpenAIVLM:
         img = Image.new("RGB", (64, 64))
         results = vlm.query_batch([img], ["q1", "q2"])
         assert len(results) == 2
+
+    @patch("s3e.vlm.openai.openai")
+    def test_interest_tokens_filter_and_backfill(self, mock_openai_module):
+        import math
+
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._make_mock_response(
+            [
+                ("yes", math.log(0.6)),
+                ("no", math.log(0.3)),
+                ("maybe", math.log(0.1)),
+            ]
+        )
+
+        vlm = OpenAIVLM("gpt-4o")
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query(
+            [img], "Is A on B?", interest_tokens=["yes", "no", "null"]
+        )
+
+        assert set(result.token_probs) == {"yes", "no", "null"}
+        assert result.token_probs["yes"] == pytest.approx(0.6)
+        assert result.token_probs["no"] == pytest.approx(0.3)
+        assert result.token_probs["null"] == 0.0
+        assert result.argmax_in_interest is True
+
+    @patch("s3e.vlm.openai.openai")
+    def test_interest_argmax_false_when_top_entry_outside_interest(
+        self, mock_openai_module
+    ):
+        import math
+
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+        # Deliberately unsorted: the highest-probability entry is listed
+        # second, so an implementation that trusts list order is caught.
+        mock_client.chat.completions.create.return_value = self._make_mock_response(
+            [("yes", math.log(0.4)), ("maybe", math.log(0.5))]
+        )
+
+        vlm = OpenAIVLM("gpt-4o")
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query([img], "Is A on B?", interest_tokens=["yes", "no"])
+
+        assert result.argmax_in_interest is False
+        assert result.token_probs["yes"] == pytest.approx(0.4)
+
+    @patch("s3e.vlm.openai.openai")
+    def test_interest_tokens_sum_duplicate_entries(self, mock_openai_module):
+        import math
+
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._make_mock_response(
+            [("yes", math.log(0.3)), ("yes", math.log(0.2))]
+        )
+
+        vlm = OpenAIVLM("gpt-4o")
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query([img], "Is A on B?", interest_tokens=["yes"])
+
+        assert result.token_probs["yes"] == pytest.approx(0.5)
+
+    @patch("s3e.vlm.openai.openai")
+    def test_no_interest_tokens_keeps_full_dict_and_none_flag(
+        self, mock_openai_module
+    ):
+        import math
+
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._make_mock_response(
+            [("yes", math.log(0.6)), ("maybe", math.log(0.4))]
+        )
+
+        vlm = OpenAIVLM("gpt-4o")
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query([img], "Is A on B?")
+
+        assert set(result.token_probs) == {"yes", "maybe"}
+        assert result.argmax_in_interest is None
 
 
 import torch

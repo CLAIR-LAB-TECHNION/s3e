@@ -54,7 +54,14 @@ from .vlm.backend import VLMBackend, VLMOutput
 
 @dataclass(frozen=True)
 class PredicatePredictionDetails:
-    """Raw and calibrated probability details for one predicate prediction."""
+    """Raw and calibrated probability details for one predicate prediction.
+
+    ``argmax_in_interest`` mirrors :attr:`VLMOutput.argmax_in_interest`:
+    ``False`` means the model's most likely next token was outside the
+    configured true/false/null token groups, so the masses above cover
+    almost none of the model's distribution. ``None`` means the backend
+    was not asked to report it (e.g. text-match mode).
+    """
 
     raw_probability: float
     calibrated_probability: float | None
@@ -63,6 +70,7 @@ class PredicatePredictionDetails:
     raw_false_mass: float
     raw_none_mass: float
     none_is_max_raw: bool
+    argmax_in_interest: bool | None = None
 
 
 class SemanticStateEstimator(ProbabilisticStateEstimator):
@@ -319,6 +327,14 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 if all(value is not None for value in calibrated_probabilities)
                 else None
             )
+            # A single off-interest image taints the averaged prediction, so
+            # the aggregate flag is the conjunction over reporting images.
+            argmax_flags = [
+                d.argmax_in_interest
+                for d in items
+                if d.argmax_in_interest is not None
+            ]
+            argmax_in_interest = all(argmax_flags) if argmax_flags else None
             result[pred] = PredicatePredictionDetails(
                 raw_probability=float(np.clip(
                     np.mean([d.raw_probability for d in items]), 0.0, 1.0,
@@ -330,6 +346,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 raw_none_mass=raw_none_mass,
                 none_is_max_raw=raw_none_mass > raw_true_mass
                 and raw_none_mass > raw_false_mass,
+                argmax_in_interest=argmax_in_interest,
             )
         return result
 
@@ -359,7 +376,11 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         images: list[Image],
         predicates: list[str] | None = None,
     ) -> dict[str, VLMOutput]:
-        """Get the full VLMOutput for each grounded predicate.
+        """Get the VLMOutput for each grounded predicate.
+
+        In logprobs mode, ``token_probs`` contains exactly the configured
+        true/false/null tokens (the backend is asked for only those via
+        ``interest_tokens``), not a full distribution.
 
         Args:
             images: List of PIL images representing the current state.
@@ -374,6 +395,16 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         ]
         predicates = list(queries.keys())
 
+        # In logprobs mode the backend only needs mass for the configured
+        # token groups, so it can skip materializing (and detokenizing) the
+        # rest of the vocabulary. Text-match mode reads generated text, not
+        # token probabilities, so it requests nothing.
+        interest_tokens = (
+            None
+            if self._generate_mode
+            else self.true_tokens + self.false_tokens + self.null_tokens
+        )
+
         results: dict[str, VLMOutput] = {}
         num_batches = math.ceil(len(prompts) / self.batch_size)
         for i in range(num_batches):
@@ -384,6 +415,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 batch_prompts,
                 system_prompt=self.system_prompt,
                 generate=self._generate_mode,
+                interest_tokens=interest_tokens,
                 **self.inference_kwargs
             )
             for pred, output in zip(batch_preds, outputs):
@@ -849,6 +881,14 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             if raw_total == 0
             else grouped_log_odds(output.token_probs, self.true_tokens, self.false_tokens)
         )
+        if output.argmax_in_interest is False:
+            warnings.warn(
+                "The VLM's most likely next token is outside the configured "
+                "true/false/null interest tokens; the reported masses cover "
+                "almost none of the model's distribution. Check the prompt "
+                "and token group configuration.",
+                stacklevel=2,
+            )
         return PredicatePredictionDetails(
             raw_probability=raw_probability,
             calibrated_probability=None,
@@ -858,6 +898,7 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
             raw_none_mass=raw_none_mass,
             none_is_max_raw=raw_none_mass > raw_true_mass
             and raw_none_mass > raw_false_mass,
+            argmax_in_interest=output.argmax_in_interest,
         )
 
     def prediction_details_from_raw(

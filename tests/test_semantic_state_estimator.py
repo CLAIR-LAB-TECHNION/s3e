@@ -744,6 +744,81 @@ class TestPredictionDetailsFromRaw:
         assert not hasattr(se, "probabilities_from_raw")
 
 
+class TestInterestTokens:
+    def test_logprobs_mode_passes_interest_tokens_to_backend(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            null_tokens=["null"],
+        )
+
+        se.estimate_probabilities(single_image)
+
+        expected = se.true_tokens + se.false_tokens + se.null_tokens
+        assert vlm.received_interest_tokens
+        assert all(
+            tokens == expected for tokens in vlm.received_interest_tokens
+        )
+
+    def test_text_match_mode_passes_no_interest_tokens(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(text="true")
+        se = SemanticStateEstimator(
+            blocksworld_domain,
+            blocksworld_problem,
+            vlm=vlm,
+            probability_method="text_match",
+        )
+
+        se(single_image)
+
+        assert vlm.received_interest_tokens
+        assert all(tokens is None for tokens in vlm.received_interest_tokens)
+
+    def test_argmax_in_interest_propagates_to_details(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"true": 0.8, "false": 0.2})
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=vlm
+        )
+
+        details = se.estimate_prediction_details(single_image)
+
+        assert details
+        assert all(d.argmax_in_interest is True for d in details.values())
+
+    def test_argmax_outside_interest_warns_and_propagates_false(
+        self, single_image, blocksworld_domain, blocksworld_problem
+    ):
+        vlm = FakeVLM(token_probs={"banana": 0.9, "true": 0.06, "false": 0.04})
+        se = SemanticStateEstimator(
+            blocksworld_domain, blocksworld_problem, vlm=vlm
+        )
+
+        with pytest.warns(UserWarning, match="interest"):
+            details = se.estimate_prediction_details(single_image)
+
+        assert all(d.argmax_in_interest is False for d in details.values())
+
+    def test_details_default_argmax_field_is_none(self):
+        details = PredicatePredictionDetails(
+            raw_probability=0.5,
+            calibrated_probability=None,
+            score=0.0,
+            raw_true_mass=0.0,
+            raw_false_mass=0.0,
+            raw_none_mass=0.0,
+            none_is_max_raw=False,
+        )
+        assert details.argmax_in_interest is None
+
+
 class TestPlattCalibrationDataPersistence:
     def _save_payload(self, tmp_path, se):
         path = tmp_path / "platt-calibration-data.json"

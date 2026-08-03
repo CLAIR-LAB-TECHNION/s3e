@@ -51,7 +51,15 @@ class OpenAIVLM(VLMBackend):
         self.model_id = model_id.removeprefix(OPENAI_MODEL_IDENTIFIER)
         self._client = openai.OpenAI(**client_kwargs)
 
-    def query(self, images, prompt, system_prompt=None, generate=False, **inference_kwargs):
+    def query(
+        self,
+        images,
+        prompt,
+        system_prompt=None,
+        generate=False,
+        interest_tokens=None,
+        **inference_kwargs,
+    ):
         """Send a query to the OpenAI API."""
         # no need to differentiate between generation and logprobs modes here since the API can return both in one call
         del generate
@@ -80,10 +88,16 @@ class OpenAIVLM(VLMBackend):
         )
 
         # Extract token probabilities from first generated token
-        token_probs = self._extract_token_probs(response)
+        token_probs, argmax_in_interest = self._extract_token_probs(
+            response, interest_tokens
+        )
         text = response.choices[0].message.content
 
-        return VLMOutput(token_probs=token_probs, text=text)
+        return VLMOutput(
+            token_probs=token_probs,
+            text=text,
+            argmax_in_interest=argmax_in_interest,
+        )
     
     def _set_inference_kwargs_defaults(self, inference_kwargs):
         # force inference loggprobs regardless of what the user passed.
@@ -95,12 +109,30 @@ class OpenAIVLM(VLMBackend):
         inference_kwargs.setdefault("temperature", 0.0)
 
     @staticmethod
-    def _extract_token_probs(response) -> dict[str, float]:
-        """Extract token probabilities from an OpenAI response."""
+    def _extract_token_probs(
+        response, interest_tokens=None
+    ) -> tuple[dict[str, float], bool | None]:
+        """Extract token probabilities from an OpenAI response.
+
+        Without ``interest_tokens``, returns every returned token string and
+        ``None`` for the argmax flag. With ``interest_tokens``, returns
+        exactly those tokens (0.0 when absent from the returned top
+        logprobs) plus whether the single highest-logprob entry is an
+        interest token.
+        """
         top_logprobs = response.choices[0].logprobs.content[0].top_logprobs
 
         tok_to_prob: dict[str, float] = defaultdict(float)
         for item in top_logprobs:
             tok_to_prob[item.token] += float(np.exp(item.logprob))
 
-        return dict(tok_to_prob)
+        if interest_tokens is None:
+            return dict(tok_to_prob), None
+
+        # dict.fromkeys dedups while preserving the caller's ordering.
+        interest = list(dict.fromkeys(interest_tokens))
+        token_probs = {token: tok_to_prob.get(token, 0.0) for token in interest}
+        # max over entries, not list order: the API does not guarantee that
+        # top_logprobs is sorted.
+        best = max(top_logprobs, key=lambda item: item.logprob)
+        return token_probs, best.token in set(interest)
