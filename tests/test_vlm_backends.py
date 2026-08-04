@@ -1701,7 +1701,8 @@ class TestVLLMBackendIntegration:
 
     SMALL_VLM_ID = "HuggingFaceTB/SmolVLM-256M-Instruct"
 
-    def test_loads_and_queries_logprobs(self):
+    @pytest.fixture(scope="class")
+    def backend(self):
         # Evaluating this class's skipif guard (torch.cuda.is_available()) at
         # collection time initializes CUDA in the pytest process. vLLM's engine
         # core subprocess uses the fork start method by default, and CUDA
@@ -1716,14 +1717,19 @@ class TestVLLMBackendIntegration:
         # logprobs=-1, the vLLM >= 0.11.0 feature the pyproject pin exists for)
         # and makes the token-string assertions below deterministic: the full
         # vocabulary necessarily contains the tokens they look for.
-        backend = VLLMBackend(
+        # Prefix caching is off so repeated queries with the same prompt (the
+        # parity test) recompute their logits identically.
+        return VLLMBackend(
             self.SMALL_VLM_ID,
             tensor_parallel_size=1,
             num_logprobs=None,
             gpu_memory_utilization=0.3,
             max_model_len=4096,
             enforce_eager=True,
+            enable_prefix_caching=False,
         )
+
+    def test_loads_and_queries_logprobs(self, backend):
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
         result = backend.query([img], "Is this a test?")
 
@@ -1739,3 +1745,21 @@ class TestVLLMBackendIntegration:
         # true/false token masses instead of failing loudly — catch it here.
         assert "Yes" in result.token_probs
         assert not any(key.startswith(("▁", "Ġ")) for key in result.token_probs)
+
+    def test_interest_tokens_parity_with_full_vocab(self, backend):
+        """Interest-mode masses must equal the full-vocabulary path's."""
+        img = Image.new("RGB", (64, 64), color=(128, 128, 128))
+        prompt = "Is this a test?"
+        interest = ["Yes", "No", "yes", "no"]
+
+        full = backend.query([img], prompt)
+        gathered = backend.query([img], prompt, interest_tokens=interest)
+
+        assert set(gathered.token_probs) == set(interest)
+        for token in interest:
+            assert gathered.token_probs[token] == pytest.approx(
+                full.token_probs.get(token, 0.0), abs=1e-9
+            )
+        assert gathered.argmax_in_interest == (
+            max(full.token_probs, key=full.token_probs.get) in set(interest)
+        )

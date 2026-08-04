@@ -77,9 +77,13 @@ class FakeVLM(VLMBackend):
                 probs = dict(override)
                 break
 
+        # Honor the interest_tokens contract like the real backends: report
+        # mass for exactly the requested tokens, plus the argmax flag.
         argmax_in_interest = None
-        if interest_tokens is not None and probs:
-            argmax_in_interest = max(probs, key=probs.get) in set(interest_tokens)
+        if interest_tokens is not None:
+            if probs:
+                argmax_in_interest = max(probs, key=probs.get) in set(interest_tokens)
+            probs = {token: probs.get(token, 0.0) for token in dict.fromkeys(interest_tokens)}
 
         return VLMOutput(
             token_probs=probs, text=self.text, argmax_in_interest=argmax_in_interest
