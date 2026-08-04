@@ -247,7 +247,9 @@ class HuggingFaceVLM(VLMBackend):
             spans.append((token, len(all_ids), len(all_ids) + len(ids)))
             all_ids.extend(ids)
 
-        selected = probs[:, all_ids].cpu() if all_ids else None
+        # float64 so summing duplicate ids matches the full-vocab path, which
+        # accumulates Python floats.
+        selected = probs[:, all_ids].double().cpu() if all_ids else None
         argmax_ids = probs.argmax(dim=-1).cpu().tolist()
         interest_id_set = set(all_ids)
 
