@@ -25,7 +25,12 @@ from .translation import (
     LLMTranslator,
 )
 
-__version__ = "0.3.1"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("s3e")
+except PackageNotFoundError:  # not installed, e.g. running from source tree
+    __version__ = "0.0.0.dev0"
 
 __all__ = [
     "StateEstimator",
