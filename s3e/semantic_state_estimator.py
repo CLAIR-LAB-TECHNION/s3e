@@ -135,7 +135,6 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
         # --- VLM backend ---
         # use_vllm only affects the string path; an explicit backend instance is
         # used as-is.
-        self.use_vllm = use_vllm
         if isinstance(vlm, str):
             self.vlm = self._build_vlm_from_string(
                 vlm, vlm_kwargs or {}, use_vllm
@@ -231,7 +230,9 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                 warnings.warn(
                     "use_vllm=True is not compatible with OpenAI/ models; "
                     "ignoring use_vllm and using the hosted OpenAI API.",
-                    stacklevel=2,
+                    # 3 = the caller of SemanticStateEstimator(...), skipping
+                    # this helper and __init__.
+                    stacklevel=3,
                 )
             from .vlm.openai import OpenAIVLM
 

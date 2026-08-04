@@ -203,7 +203,7 @@ Key arguments:
   - For OpenAI models, these are request arguments for `chat.completions.create` (for example `temperature`, `max_completion_tokens`).
   - For HuggingFace models, these are forwarded to `model(...)` in logprobs mode and `model.generate(...)` in generation mode.
   - For vLLM models, these are forwarded to `vllm.SamplingParams` (for example `temperature`, `max_tokens`).
-- `use_vllm`: route a non-OpenAI model string through vLLM instead of HuggingFace. Ignored when `vlm` is already a backend instance; invalid with `OpenAI/` model strings.
+- `use_vllm`: route a non-OpenAI model string through vLLM instead of HuggingFace. Ignored when `vlm` is already a backend instance; ignored (with a warning) for `OpenAI/` model strings.
 
 `vlm_kwargs` and `inference_kwargs` are intentionally different:
 
