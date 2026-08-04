@@ -1135,11 +1135,12 @@ class TestHuggingFaceVLMIntegration:
 import math as _math  # noqa: E402  (module-level math for vLLM helpers)
 
 
-def _make_logprob(token, logprob):
-    """Build a mock vLLM Logprob (has .decoded_token and .logprob)."""
+def _make_logprob(token, logprob, rank=None):
+    """Build a mock vLLM Logprob (has .decoded_token, .logprob and .rank)."""
     item = MagicMock()
     item.decoded_token = token
     item.logprob = logprob
+    item.rank = rank
     return item
 
 
@@ -1169,13 +1170,17 @@ def _make_text_output(text):
 def _make_id_logprobs_output(id_logprobs):
     """Build a mock vLLM RequestOutput keyed by explicit token ids.
 
-    Mirrors ``detokenize=False`` output: ``decoded_token`` is None and the
-    logprobs dict keys are real token ids.
+    Mirrors ``detokenize=False`` output: ``decoded_token`` is None, the
+    logprobs dict keys are real token ids, and every entry carries its
+    vocab ``rank`` (1 = highest probability), as real vLLM entries do.
     """
+    ranked_ids = sorted(id_logprobs, key=id_logprobs.get, reverse=True)
     completion = MagicMock()
     completion.logprobs = [
         {
-            token_id: _make_logprob(None, logprob)
+            token_id: _make_logprob(
+                None, logprob, rank=ranked_ids.index(token_id) + 1
+            )
             for token_id, logprob in id_logprobs.items()
         }
     ]

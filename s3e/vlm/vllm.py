@@ -65,11 +65,10 @@ class VLLMBackend(VLMBackend):
             mirroring :class:`HuggingFaceVLM`. This maps to vLLM ``logprobs=-1``
             with the engine built using ``max_logprobs=-1`` -- note the docs' OOM
             caveat for full-vocab logprobs. A finite ``k`` returns the top ``k``.
-            With ``interest_tokens`` queries this stays the throughput knob:
+            With ``interest_tokens`` queries this stays the exactness knob:
             ``None`` keeps the id-matched masses exact over the full
-            vocabulary (at the cost of a Python loop over every returned
-            entry), while a finite ``k`` bounds the omitted interest mass by
-            the ``k``-th ranked probability. Interest mode also requests
+            vocabulary, while a finite ``k`` bounds the omitted interest
+            mass by the ``k``-th ranked probability. Interest mode also requests
             ``detokenize=False``; whether the installed vLLM honors it for
             logprobs can be smoke-tested by checking that returned
             ``Logprob.decoded_token`` values are ``None``.
@@ -267,30 +266,35 @@ class VLLMBackend(VLMBackend):
         return VLMOutput(token_probs=token_probs, text=None)
 
     def _interest_output(self, logprob_entries, interest_tokens) -> VLMOutput:
-        """Build a VLMOutput by matching id-keyed logprob entries.
+        """Build a VLMOutput by looking up interest ids in the logprob entries.
 
         Matching by token id (the logprobs dict key) instead of
         ``decoded_token`` works with ``detokenize=False`` output and sums
         duplicate ids decoding to the same string, exactly like the
-        string-keyed path.
+        string-keyed path. vLLM ranks every returned entry (rank 1 = the
+        model's most likely token, always included), so both the masses and
+        the argmax flag come from interest-id lookups alone -- no scan of
+        the returned distribution.
         """
-        interest = list(dict.fromkeys(interest_tokens))
-        id_map = self._get_interest_id_map(interest)
+        index = self._get_token_reverse_index()
 
-        token_probs = {token: 0.0 for token in interest}
-        best_id = None
-        best_logprob = -math.inf
-        for token_id, logprob in logprob_entries.items():
-            if logprob.logprob > best_logprob:
-                best_id, best_logprob = token_id, logprob.logprob
-            token = id_map.get(token_id)
-            if token is not None:
-                token_probs[token] += math.exp(logprob.logprob)
+        token_probs: dict[str, float] = {}
+        argmax_in_interest = False
+        for token in dict.fromkeys(interest_tokens):
+            mass = 0.0
+            for token_id in index.get(token, []):
+                entry = logprob_entries.get(token_id)
+                if entry is None:
+                    continue
+                mass += math.exp(entry.logprob)
+                if entry.rank == 1:
+                    argmax_in_interest = True
+            token_probs[token] = mass
 
         return VLMOutput(
             token_probs=token_probs,
             text=None,
-            argmax_in_interest=best_id in id_map,
+            argmax_in_interest=argmax_in_interest,
         )
 
     def _get_token_reverse_index(self) -> dict[str, list[int]]:
@@ -302,12 +306,3 @@ class VLLMBackend(VLMBackend):
                 len(tokenizer),
             )
         return self._token_reverse_index
-
-    def _get_interest_id_map(self, interest: list[str]) -> dict[int, str]:
-        """Map each vocabulary id decoding to an interest token onto it."""
-        index = self._get_token_reverse_index()
-        id_map: dict[int, str] = {}
-        for token in interest:
-            for token_id in index.get(token, []):
-                id_map[token_id] = token
-        return id_map
