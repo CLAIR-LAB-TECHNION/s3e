@@ -10,8 +10,6 @@ from pathlib import Path
 from ..engine.results import EPS
 from .base import Calibrator
 
-CALIBRATION_SCHEMA_VERSION = 1
-PLATT_CALIBRATION_DATA_SCHEMA_VERSION = 1
 GLOBAL_CALIBRATION_KEY = "__global__"
 
 
@@ -22,72 +20,6 @@ class PlattParameters:
     sample_count: int
     positive_count: int
     negative_count: int
-
-
-@dataclass(frozen=True)
-class PlattScalingProfile:
-    scope: str
-    probability_method: str
-    true_tokens: list[str]
-    false_tokens: list[str]
-    domain_fingerprint: str
-    score_kind: str
-    groups: dict[str, PlattParameters]
-    schema_version: int = CALIBRATION_SCHEMA_VERSION
-
-    def to_dict(self) -> dict:
-        return {
-            "format_version": self.schema_version,
-            "schema_version": self.schema_version,
-            "scope": self.scope,
-            "probability_method": self.probability_method,
-            "true_tokens": list(self.true_tokens),
-            "false_tokens": list(self.false_tokens),
-            "domain_fingerprint": self.domain_fingerprint,
-            "score_kind": self.score_kind,
-            "groups": {
-                key: {
-                    "a": value.a,
-                    "b": value.b,
-                    "sample_count": value.sample_count,
-                    "positive_count": value.positive_count,
-                    "negative_count": value.negative_count,
-                }
-                for key, value in self.groups.items()
-            },
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "PlattScalingProfile":
-        schema_version = int(data["schema_version"])
-        if schema_version != CALIBRATION_SCHEMA_VERSION:
-            raise ValueError(f"Unsupported calibration schema version: {schema_version}")
-        return cls(
-            schema_version=schema_version,
-            scope=data["scope"],
-            probability_method=data["probability_method"],
-            true_tokens=list(data["true_tokens"]),
-            false_tokens=list(data["false_tokens"]),
-            domain_fingerprint=data["domain_fingerprint"],
-            score_kind=data["score_kind"],
-            groups={
-                key: PlattParameters(
-                    a=float(value["a"]),
-                    b=float(value["b"]),
-                    sample_count=int(value["sample_count"]),
-                    positive_count=int(value["positive_count"]),
-                    negative_count=int(value["negative_count"]),
-                )
-                for key, value in data["groups"].items()
-            },
-        )
-
-    def save(self, path: str | Path) -> None:
-        Path(path).write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n")
-
-    @classmethod
-    def load(cls, path: str | Path) -> "PlattScalingProfile":
-        return cls.from_dict(json.loads(Path(path).read_text()))
 
 
 def grouped_log_odds(

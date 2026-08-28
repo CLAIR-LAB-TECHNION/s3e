@@ -196,6 +196,12 @@ class SemanticStateEstimator:
         inference_kwargs: "dict | None" = None,
     ) -> PredictionSet:
         """Estimate the selected predicates; returns a lazy PredictionSet."""
+        if calibrator is not None and self.engine.scoring != "logprobs":
+            raise ValueError(
+                "calibrator requires scoring='logprobs'; this estimator uses "
+                f"scoring={self.engine.scoring!r} — calibration over text-match "
+                "masses produces meaningless probabilities"
+            )
         selected = self._select(predicates)
         queries = [self.queries[p] for p in selected]
         # Distinct queries only: predicates that translate to the same query

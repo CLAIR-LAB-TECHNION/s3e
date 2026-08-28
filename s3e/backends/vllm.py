@@ -2,8 +2,9 @@
 
 A :class:`VLMBackend` implementation that runs a local HuggingFace
 vision-language model through `vLLM <https://docs.vllm.ai/>`_ for transparent,
-high-throughput, single-node multi-GPU inference. Selected by passing
-``use_vllm=True`` to :class:`SemanticStateEstimator` with a non-OpenAI model id.
+high-throughput, single-node multi-GPU inference. Construct
+``VLLMBackend(...)`` explicitly and pass it as the ``vlm`` argument to
+:class:`QueryEngine` or :class:`SemanticStateEstimator`.
 
 Design notes (kept in code on purpose so future maintainers can change the
 design with full context):

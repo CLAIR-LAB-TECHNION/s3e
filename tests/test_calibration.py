@@ -8,7 +8,6 @@ from unified_planning.io import PDDLReader
 from s3e.calibration import CalibrationExample, CalibrationSample
 from s3e.calibration.platt import (
     PlattParameters,
-    PlattScalingProfile,
     apply_platt_scaling,
     grouped_log_odds,
 )
@@ -39,50 +38,6 @@ class TestSigmoidApplication:
         probability = apply_platt_scaling(0.7, params)
         expected = 1.0 / (1.0 + math.exp(1.5 * 0.7 - 0.5))
         assert probability == pytest.approx(expected)
-
-
-_MINIMAL_DOMAIN = (
-    "(define (domain blocksworld) (:requirements :strips) (:predicates (p)))"
-)
-
-
-class TestProfileSerialization:
-    def test_profile_round_trips_through_dict(self):
-        profile = PlattScalingProfile(
-            scope="global",
-            probability_method="logprobs",
-            true_tokens=["true"],
-            false_tokens=["false"],
-            domain_fingerprint=compute_domain_fingerprint(_MINIMAL_DOMAIN),
-            score_kind="grouped_log_odds",
-            groups={
-                "__global__": PlattParameters(
-                    a=0.9,
-                    b=-0.2,
-                    sample_count=6,
-                    positive_count=2,
-                    negative_count=4,
-                )
-            },
-        )
-        restored = PlattScalingProfile.from_dict(profile.to_dict())
-        assert restored == profile
-
-    def test_rejects_unsupported_schema_version(self):
-        profile = PlattScalingProfile(
-            scope="global",
-            probability_method="logprobs",
-            true_tokens=["true"],
-            false_tokens=["false"],
-            domain_fingerprint=compute_domain_fingerprint(_MINIMAL_DOMAIN),
-            score_kind="grouped_log_odds",
-            groups={},
-        )
-        payload = profile.to_dict()
-        payload["schema_version"] = 99
-
-        with pytest.raises(ValueError, match="Unsupported calibration schema version: 99"):
-            PlattScalingProfile.from_dict(payload)
 
 
 class TestCalibrationSample:

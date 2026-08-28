@@ -99,3 +99,11 @@ class TestMissingDependencyErrors:
             ["sklearn"],
             "calibration",
         )
+
+    def test_llm_translator_hf_path_names_hf_extra(self):
+        self.check(
+            "from s3e import LLMTranslator\n"
+            "LLMTranslator('not-openai/some-model')",
+            ["transformers", "torch"],
+            "hf",
+        )

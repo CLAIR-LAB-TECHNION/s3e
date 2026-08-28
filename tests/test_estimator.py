@@ -123,6 +123,13 @@ class TestEstimate:
         results = make_estimator().estimate(images, calibrator=HalfCalibrator())
         assert all(p.probability == 0.5 for p in results.values())
 
+    def test_calibrator_rejected_when_scoring_is_text_match(self, images):
+        fake = FakeVLM()
+        estimator = make_estimator(fake, scoring="text_match")
+        with pytest.raises(ValueError, match="logprobs"):
+            estimator.estimate(images, calibrator=object())
+        assert fake.calls == []
+
 
 class TestSetProblem:
     def test_regrounds_without_touching_backend(self, images):
