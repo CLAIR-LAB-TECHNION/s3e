@@ -79,6 +79,9 @@ class TestPayloadFields:
 
 class TestBackendDetectionWithoutVllm:
     def test_isinstance_check_without_importing_vllm(self):
+        # Another test in the session may already have imported vllm; the
+        # guarantee here is that the isinstance check itself never does.
+        vllm_already_loaded = "vllm" in sys.modules
         backend = FakeVLM()
         assert isinstance(backend, VLMBackend)
-        assert "vllm" not in sys.modules  # the check itself must not import it
+        assert ("vllm" in sys.modules) == vllm_already_loaded
