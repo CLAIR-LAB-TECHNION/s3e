@@ -97,9 +97,13 @@ class TemplateTranslator(QueryTranslator):
     def __init__(self, templates: dict[str, str]):
         self.templates = templates
 
-    def translate(self, predicates, domain, problem):
+    def translate(self, predicates, domain=None, problem=None):
         result: dict[str, str] = {}
-        predicate_arg_names = _predicate_argument_names(domain, problem)
+        predicate_arg_names = (
+            _predicate_argument_names(domain, problem)
+            if domain is not None and problem is not None
+            else {}
+        )
 
         for pred in predicates:
             name, args = _parse_predicate(pred)

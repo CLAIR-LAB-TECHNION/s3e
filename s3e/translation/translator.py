@@ -14,8 +14,12 @@ class QueryTranslator(ABC):
     def translate(
         self,
         predicates: list[str],
-        domain: str,
-        problem: str,
+        domain: str | None = None,
+        problem: str | None = None,
     ) -> dict[str, str]:
-        """Translate grounded predicates to query strings."""
+        """Translate grounded predicates to query strings.
+
+        ``domain``/``problem`` provide optional PDDL context; translators
+        that can work without it must accept ``None``.
+        """
         ...

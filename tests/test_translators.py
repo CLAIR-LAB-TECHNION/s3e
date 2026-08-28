@@ -229,3 +229,34 @@ class TestLLMTranslatorIntegration:
         assert isinstance(result, dict)
         assert len(result) == 2
         assert all(isinstance(v, str) and len(v) > 0 for v in result.values())
+
+
+class TestPddlFreeTranslation:
+    def test_identity_without_domain(self):
+        from s3e.translation import IdentityTranslator
+
+        result = IdentityTranslator().translate(["on(a,b)"])
+        assert result == {"on(a,b)": "on(a,b)"}
+
+    def test_template_positional_without_domain(self):
+        from s3e.translation import TemplateTranslator
+
+        translator = TemplateTranslator({"on": "Is {0} on {1}?"})
+        result = translator.translate(["on(a,b)"])
+        assert result == {"on(a,b)": "Is a on b?"}
+
+    def test_template_custom_names_without_domain(self):
+        from s3e.translation import TemplateTranslator
+
+        translator = TemplateTranslator({"on": "Is {top} on {bottom}?"})
+        result = translator.translate(["on(a,b)"])
+        assert result == {"on(a,b)": "Is a on b?"}
+
+    def test_llm_translator_requires_domain(self):
+        from s3e.translation import LLMTranslator
+
+        translator = LLMTranslator.__new__(LLMTranslator)  # skip client setup
+        import pytest
+
+        with pytest.raises(ValueError, match="domain"):
+            translator.translate(["on(a,b)"])
