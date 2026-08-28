@@ -4,25 +4,27 @@
 
 ## Overview
 
-`s3e` is a Python package for estimating grounded PDDL state predicates from images using vision-language models (VLMs).
+`s3e` estimates grounded PDDL state predicates from images using vision-language models (VLMs). It is built as concentric, independently usable layers:
 
-It is designed for workflows that need to connect visual observations to symbolic planning. Given a PDDL domain and problem, `s3e` enumerates grounded predicates, translates them into model-friendly queries, and returns either boolean state assignments, per-predicate probabilities, or normalized model outputs suitable for inspection and debugging.
+1. **Backends** (`s3e.backends`) — a uniform `VLMBackend` interface over HuggingFace, OpenAI, and vLLM models.
+2. **Engine** (`s3e.engine`) — `QueryEngine`: images + free-form queries + an answer space → `Prediction`s. No PDDL involved.
+3. **Calibration** (`s3e.calibration`) — fit a Platt-scaling calibrator on labeled examples, offline and VLM-free after data collection.
+4. **PDDL facade** (`s3e.estimator`) — `SemanticStateEstimator`: grounds a PDDL domain/problem into predicates, translates them into queries, and drives a `QueryEngine`.
 
-The package integrates naturally with Unified Planning / PDDL-based systems and supports both HuggingFace and OpenAI-backed VLMs, as well as custom backends.
+Each layer works standalone: you can use `QueryEngine` to answer arbitrary visual questions without PDDL, or use `SemanticStateEstimator.from_pddl` for the full predicate-grounding workflow.
 
-For a longer tutorial, see the [tutorial notebook](docs/s3e_walkthrough.ipynb).
+For a longer tutorial, see the [tutorial notebook](docs/s3e_walkthrough.ipynb) (currently being rewritten for this API — see the notebook's leading cell).
 
 ## Features
 
-- Estimate boolean symbolic states or probabilistic predicate values from one or more images.
-- Parse PDDL domains and problems from strings or `.pddl` files.
-- Automatically ground predicates over the current problem objects.
+- Answer free-form visual queries against a pluggable answer space (`BinaryAnswers`, `CategoricalAnswers`) with logprob or text-match scoring.
+- Parse PDDL domains and problems from strings or `.pddl` files, and ground predicates over the problem's objects.
 - Translate predicates with pluggable strategies: `IdentityTranslator`, `TemplateTranslator`, `PrewrittenTranslator`, and `LLMTranslator`.
-- Use HuggingFace VLMs, OpenAI VLMs, or custom implementations via the `VLMBackend` interface.
-- Support multi-image estimation with either single-pass or per-image averaging.
-- Expose normalized `VLMOutput` objects for prompt tuning and backend inspection.
+- Use HuggingFace VLMs, OpenAI VLMs, vLLM-backed local models, or custom `VLMBackend` implementations.
+- Query one scene at a time, or average predictions across several scenes of the same state (`estimate_averaged` / `PredictionSet.average`).
+- Lazy, cached derivations on results: probability, argmax answer, null-domination, confidence — computed on demand, never re-running inference.
+- Offline calibration: collect VLM scores once, then fit/refit/apply a calibrator without querying the model again.
 - Convert estimated states back into Unified Planning-compatible state objects.
-- Cache LLM-generated predicate translations for reuse across runs.
 
 ## Installation
 
@@ -38,36 +40,71 @@ For a longer tutorial, see the [tutorial notebook](docs/s3e_walkthrough.ipynb).
 ```bash
 git clone https://github.com/CLAIR-LAB-TECHNION/s3e.git
 cd s3e
-pip install -e .
+pip install -e ".[pddl,hf]"
 ```
 
 You can also install directly from the GitHub repository without cloning:
 
 ```bash
-pip install "git+https://github.com/CLAIR-LAB-TECHNION/s3e.git"
+pip install "git+https://github.com/CLAIR-LAB-TECHNION/s3e.git#egg=s3e[pddl,hf]"
 ```
 
-### Optional dependencies
-
-Install OpenAI support:
+A bare `pip install s3e` installs only the core (`Pillow`, `numpy`, `tqdm`): the engine, result objects, answer spaces, and non-LLM translators, with no heavy dependencies. Add extras for the pieces you need:
 
 ```bash
-pip install -e '.[openai]'
-```
-
-Install development dependencies:
-
-```bash
-pip install -e '.[dev]'
+pip install -e ".[pddl]"          # PDDL grounding (SemanticStateEstimator.from_pddl)
+pip install -e ".[hf]"            # HuggingFace VLM backend
+pip install -e ".[openai]"        # OpenAI VLM backend
+pip install -e ".[vllm]"          # local multi-GPU inference via vLLM
+pip install -e ".[calibration]"   # Platt-scaling calibration (scikit-learn)
+pip install -e ".[all]"           # everything except vllm (platform-constrained)
+pip install -e ".[dev]"           # pytest + s3e[all], for contributing
 ```
 
 Optional acceleration for supported HuggingFace models:
 
 FlashAttention installation is platform- and hardware-dependent. If your chosen model and environment support it, follow the [installation guide](https://github.com/dao-ailab/flash-attention?tab=readme-ov-file#installation-and-features) to set it up.
 
-## Quick Start / Usage
+## Quick Start
 
-The example below uses a small HuggingFace model and template-based predicate translation.
+### Engine-only: answer a visual question, no PDDL
+
+`QueryEngine` is the PDDL-free heart of `s3e`: images + queries + an answer space → predictions.
+
+```python
+from PIL import Image
+
+from s3e import QueryEngine
+
+engine = QueryEngine("HuggingFaceTB/SmolVLM-256M-Instruct")
+
+scene = [Image.open("kitchen.png")]
+predictions = engine.ask(scene, ["Is the stove on?", "Is the fridge door open?"])
+
+print(predictions["Is the stove on?"].probability)   # P(true), e.g. 0.83
+print(predictions.to_state())                        # {'Is the stove on?': True, ...}
+```
+
+### Categorical answers
+
+Answer spaces are not limited to yes/no. `CategoricalAnswers` scores an arbitrary set of labeled options:
+
+```python
+from s3e import CategoricalAnswers, QueryEngine
+
+engine = QueryEngine(
+    "HuggingFaceTB/SmolVLM-256M-Instruct",
+    answers=CategoricalAnswers(["red", "green", "blue"]),
+)
+predictions = engine.ask(scene, ["What color is the mug?"])
+
+print(predictions["What color is the mug?"].answer)         # e.g. "red"
+print(predictions["What color is the mug?"].distribution())  # {"red": 0.7, "green": 0.2, "blue": 0.1}
+```
+
+### Full workflow: `SemanticStateEstimator.from_pddl`
+
+`SemanticStateEstimator` grounds a PDDL domain/problem into predicates, translates them into queries with a pluggable `QueryTranslator`, and drives a `QueryEngine`.
 
 ```python
 from PIL import Image
@@ -101,45 +138,64 @@ translator = TemplateTranslator(
     }
 )
 
-estimator = SemanticStateEstimator(
+estimator = SemanticStateEstimator.from_pddl(
     domain_pddl,
     problem_pddl,
     vlm="HuggingFaceTB/SmolVLM-256M-Instruct",
-    query_translator=translator,
-    user_prompt_template="Answer yes or no only: {query}",
+    translator=translator,
 )
 
 images = [Image.open("scene.png")]
 
-state = estimator(images)
-probabilities = estimator.estimate_probabilities(images)
+state = estimator(images)                # dict[str, bool | None]
+results = estimator.estimate(images)     # PredictionSet: full detail per predicate
+probabilities = results.probabilities()  # dict[str, float]
 
 print(state)
 print(probabilities)
 ```
 
-You can also inspect normalized backend outputs directly:
+Query only a subset of predicates (relevant-atom masking), or average across several scenes depicting the same state:
 
 ```python
-raw_outputs = estimator.estimate_raw(images)
-print(raw_outputs["on(a,b)"])
+subset_state = estimator.estimate(images, predicates=["on(a,b)", "clear(a)"]).to_state()
+
+scenes = [[Image.open("scene-1.png")], [Image.open("scene-2.png")]]
+averaged = estimator.estimate_averaged(scenes)
 ```
 
-### Reusing Platt calibration predictions
-
-Platt scaling is available in `probability_method="logprobs"` mode when
-`scikit-learn` is installed:
-
-```bash
-pip install -e '.[calibration]'
-```
-
-The expensive part of calibration is querying the VLM on labeled examples.
-You can collect those prediction scores once, save them, and fit or refit the
-Platt profile later without querying the VLM again:
+Inspect the normalized backend output behind a prediction with `keep_raw=True`:
 
 ```python
-from s3e import CalibrationExample
+results = estimator.estimate(images, keep_raw=True)
+print(results["on(a,b)"].raw)   # VLMOutput: token_probs, text, argmax_in_interest
+```
+
+Convert the boolean state back into a Unified Planning state object:
+
+```python
+up_state = estimator.to_up_state(state)
+```
+
+For OpenAI-backed models, install the optional dependency (`pip install -e ".[openai]"`) and use an `OpenAI/`-prefixed model ID, e.g. `vlm="OpenAI/gpt-4o"`. For local multi-GPU inference, construct `VLLMBackend(...)` explicitly and pass the instance as `vlm=`:
+
+```python
+from s3e import SemanticStateEstimator, VLLMBackend
+
+vlm = VLLMBackend("Qwen/Qwen2-VL-7B-Instruct", tensor_parallel_size=2)
+estimator = SemanticStateEstimator.from_pddl(
+    domain_pddl, problem_pddl, vlm=vlm, translator=translator,
+)
+```
+
+### Calibration
+
+Calibration is a self-contained pipeline over prediction data, in `s3e.calibration`. It never touches estimator internals, and the expensive step (querying the VLM on labeled examples) is separate from fitting, which is cheap and offline:
+
+```python
+from PIL import Image
+
+from s3e import CalibrationExample, CalibrationSet, PlattCalibrator
 
 examples = [
     CalibrationExample(
@@ -149,97 +205,89 @@ examples = [
             "clear(a)": True,
             "clear(b)": False,
         },
-    )
+    ),
 ]
 
-calibration_data = estimator.collect_platt_scaling_data(examples)
-estimator.save_platt_scaling_data(calibration_data, "platt-calibration-data.json")
+# Expensive: queries the VLM once per example.
+data = CalibrationSet.collect(estimator, examples)
+data.save("calibration-data.json")
 
-reused_data = estimator.load_platt_scaling_data("platt-calibration-data.json")
-estimator.fit_platt_scaling_from_data(reused_data, scope="global")
-estimator.save_platt_scaling("platt-profile.json")
+# Cheap and VLM-free from here on, any time later:
+data = CalibrationSet.load("calibration-data.json")
+calibrator = PlattCalibrator.fit(data, scope="lifted")
+calibrator.save("platt-profile.json")
+
+calibrator = PlattCalibrator.load("platt-profile.json")
+calibrated_results = calibrator.apply(results)                       # new PredictionSet
+calibrated_state = estimator.estimate(images, calibrator=calibrator).to_state()
 ```
 
-`collect_platt_scaling_data()` performs VLM inference. `fit_platt_scaling_from_data()`
-only consumes saved scores and labels. The convenience method
-`fit_platt_scaling()` still works and delegates through the same fit-from-data
-path internally, so both workflows produce profiles with the same grouping and
-validation behavior.
-
-For `scope="lifted"` across multiple problem instances, include each
-`CalibrationExample.problem` so saved samples carry the problem string needed to
-recover the lifted predicate key.
-
-To convert the boolean state back into a Unified Planning state object:
-
-```python
-from s3e.pddl.up_utils import state_dict_to_up_state
-
-up_state = state_dict_to_up_state(estimator.up_problem, state)
-```
-
-For OpenAI-backed models, install the optional dependency and use an `OpenAI/`-prefixed model ID, for example `"OpenAI/gpt-4o"`.
+`scope` groups samples for fitting: `"global"` (one calibrator for everything), `"lifted"` (one per predicate name, e.g. all `on(...)` instances share a fit), or `"grounded"` (one per fully-grounded predicate). When examples span multiple problem instances, set `CalibrationExample.problem` on each — `CalibrationSet.collect` re-grounds the estimator against that problem before querying it, and the saved sample carries the problem string alongside its score and label.
 
 ## API Reference / Configuration
 
-### Core estimator
+### `SemanticStateEstimator`
 
-`SemanticStateEstimator(domain, problem, vlm, ...)` is the main entry point.
+`SemanticStateEstimator(predicates, vlm=..., translator=...)` builds from an explicit predicate list; `SemanticStateEstimator.from_pddl(domain, problem, vlm=..., translator=...)` grounds predicates from PDDL. Key arguments:
 
-Key arguments:
-
-- `domain`, `problem`: PDDL domain and problem, provided either as strings or file paths.
-- `vlm`: a `VLMBackend` instance or a model string. Strings prefixed with `OpenAI/` select the OpenAI backend; all other strings select the HuggingFace backend by default. For non-OpenAI model strings, pass `use_vllm=True` to select the vLLM backend instead.
-- `query_translator`: translation strategy used to convert grounded predicates into queries.
-- `confidence`: default threshold used when converting probabilities into booleans.
-- `multi_image_strategy`: either `"single"` or `"average"`.
-- `probability_method`: either `"logprobs"` or `"text_match"`.
-- `true_tokens`, `false_tokens`: optional token groups used for probability extraction.
-- `batch_size`: number of predicate queries grouped into each backend batch.
-- `user_prompt_template`: format string for each translated query; must contain `{query}`.
-- `additional_instructions`: additional text appended to the system prompt.
-- `vlm_kwargs`: keyword arguments forwarded when `vlm` is provided as a model string.
-- `inference_kwargs`: per-query inference arguments forwarded to backend `query/query_batch` calls.
-  - For OpenAI models, these are request arguments for `chat.completions.create` (for example `temperature`, `max_completion_tokens`).
-  - For HuggingFace models, these are forwarded to `model(...)` in logprobs mode and `model.generate(...)` in generation mode.
-  - For vLLM models, these are forwarded to `vllm.SamplingParams` (for example `temperature`, `max_tokens`).
-- `use_vllm`: route a non-OpenAI model string through vLLM instead of HuggingFace. Ignored when `vlm` is already a backend instance; ignored (with a warning) for `OpenAI/` model strings.
-
-`vlm_kwargs` and `inference_kwargs` are intentionally different:
-
-- `vlm_kwargs` configure backend/client construction.
-  - OpenAI backend: forwarded to `openai.OpenAI(...)` (for example `api_key`, `base_url`, `timeout`).
-  - HuggingFace backend: forwarded to backend/model construction (for example `device_map`, `torch_dtype`, `attn_implementation`).
-  - vLLM backend (`use_vllm=True`): forwarded to `vllm.LLM(...)` (for example `tensor_parallel_size`, `gpu_memory_utilization`, `max_model_len`).
-- `inference_kwargs` configure runtime inference and are forwarded on every query.
-
-Example:
-
-```python
-estimator = SemanticStateEstimator(
-    domain_pddl,
-    problem_pddl,
-    vlm="OpenAI/gpt-4o",
-    vlm_kwargs={"api_key": "..."},
-    inference_kwargs={"temperature": 0.2, "max_completion_tokens": 200},
-)
-```
-
-For HuggingFace generation mode (`probability_method="text_match"`), `s3e` applies a deterministic default (`do_sample=False`) unless overridden via `inference_kwargs`. No default generation cap is imposed; set `max_new_tokens` in `inference_kwargs` if you want an explicit cap.
+- `predicates` (constructor only): grounded predicate strings to estimate.
+- `domain`, `problem` (`from_pddl` only): PDDL domain and problem, as strings or `.pddl` file paths.
+- `vlm`: a `VLMBackend` instance or a model-id string (see `resolve_backend`). Strings prefixed with `OpenAI/` select `OpenAIVLM`; any other string selects `HuggingFaceVLM`. For vLLM, construct `VLLMBackend(...)` explicitly and pass the instance.
+- `translator`: predicate-to-query strategy (default: `IdentityTranslator`).
+- `answers`: the answer space (default: `BinaryAnswers()`; identity translation defaults to `BinaryAnswers("true", "false")`).
+- `confidence`: default threshold used by `__call__`/`to_state`.
+- `scoring`: `"logprobs"` (default) or `"text_match"`.
+- `system_prompt`, `prompt_template`, `additional_instructions`: prompt construction; `prompt_template` must contain `{query}`.
+- `true_tokens`, `false_tokens`, `null_tokens`: convenience overrides for the default binary answer space; ignored when `answers` is passed explicitly.
+- `batch_size`, `vlm_kwargs`, `inference_kwargs`: forwarded to the underlying `QueryEngine` (see below).
 
 Common methods:
 
-- `estimator(images) -> dict[str, bool]`: return a boolean symbolic state.
-- `estimate_probabilities(images) -> dict[str, float]`: return per-predicate probabilities.
-- `estimate_raw(images) -> dict[str, VLMOutput]`: return normalized backend outputs.
-- `swap_problem(domain, problem)`: rebuild the estimator for a new planning problem.
+- `estimator(images) -> dict[str, bool | None]`: estimate and threshold into a boolean state.
+- `estimator.estimate(images, *, predicates=None, calibrator=None, keep_raw=False, inference_kwargs=None) -> PredictionSet`: full per-predicate detail.
+- `estimator.estimate_averaged(scenes, **estimate_kwargs) -> PredictionSet`: estimate each scene separately and average the stored masses.
+- `estimator.set_problem(domain, problem)`: re-ground a new PDDL problem; the engine/backend is untouched.
+- `estimator.to_up_state(state)`: convert a boolean state dict into a Unified Planning state object (PDDL-built estimators only).
+
+### `QueryEngine`
+
+`QueryEngine(vlm, *, answers=None, scoring="logprobs", system_prompt=None, prompt_template="{query}", batch_size=8, inference_kwargs=None, vlm_kwargs=None)` is the PDDL-free engine `SemanticStateEstimator` is built on. `resolve_backend(vlm, **vlm_kwargs)` is the public model-string-to-backend factory it uses internally.
+
+- `engine.ask(images, queries, *, answers=None, scoring=None, inference_kwargs=None, keep_raw=False) -> PredictionSet`: answer each query about one scene (a list of images shown together).
+- `engine.ask_each(scenes, queries, **ask_kwargs) -> list[PredictionSet]`: run `ask` once per scene; combine with `PredictionSet.average(sets)`.
+
+`vlm_kwargs` and `inference_kwargs` are intentionally different:
+
+- `vlm_kwargs` configure backend/client construction, used only when `vlm` is a model string.
+  - OpenAI backend: forwarded to `openai.OpenAI(...)` (e.g. `api_key`, `base_url`, `timeout`).
+  - HuggingFace backend: forwarded to model construction (e.g. `device_map`, `torch_dtype`, `attn_implementation`).
+  - vLLM backend: pass these directly to `VLLMBackend(...)` (e.g. `tensor_parallel_size`, `gpu_memory_utilization`).
+- `inference_kwargs` configure runtime inference and are forwarded on every query.
+  - OpenAI: request arguments for `chat.completions.create` (e.g. `temperature`, `max_completion_tokens`).
+  - HuggingFace: forwarded to `model(...)` in logprobs mode and `model.generate(...)` in generation (`text_match`) mode.
+  - vLLM: forwarded to `vllm.SamplingParams` (e.g. `temperature`, `max_tokens`).
+
+### Answer spaces
+
+- `BinaryAnswers(true_label="yes", false_label="no", *, true_tokens=None, false_tokens=None, null_label="unknown", null_tokens=None)`: two options with boolean semantics.
+- `CategoricalAnswers(options, *, null_label="unknown", null_tokens=None)`: N options, given as labels or explicit `AnswerOption`s.
+- `AnswerOption(label, tokens)` / `AnswerOption.make(label, tokens=None)`: a label plus the token strings that express it; labels auto-expand into case/leading-whitespace variants when `tokens` is omitted.
+
+### Results
+
+`Prediction` (one query's outcome) and `PredictionSet` (an ordered mapping of query/predicate → `Prediction`) are both immutable, with lazily cached derivations:
+
+- `prediction.masses`, `.null_mass`: the stored raw data.
+- `prediction.probability`, `.answer`, `.null_dominated`, `.confident(threshold)`, `.distribution()`, `.score`: derived on demand.
+- `prediction_set.probabilities()`, `.to_state(confidence=0.5)`, `.where(predicate)`.
+- `prediction_set.to_dict()` / `PredictionSet.from_dict(d)`: backend-free round trip (e.g. for offline recalibration).
 
 ### Translators
 
 - `IdentityTranslator`: use grounded predicates as-is.
 - `TemplateTranslator`: format grounded predicates with per-predicate templates.
 - `PrewrittenTranslator`: provide explicit prompts for each grounded predicate.
-- `LLMTranslator`: generate natural-language prompts with an LLM and optionally cache them.
+- `LLMTranslator`: generate natural-language prompts with an LLM and optionally cache them (`cache_dir=...`).
 
 ### Environment variables and optional configuration
 
@@ -251,7 +299,7 @@ Common methods:
 Install development dependencies:
 
 ```bash
-pip install -e '.[dev]'
+pip install -e ".[dev]"
 ```
 
 Run the fast test loop:
