@@ -16,25 +16,24 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python",
 ]
-license = { file = "LICENSE.txt" }
+license = { file = "LICENSE" }
 dependencies = [
-    "torch",
-    "torchvision",
-    "transformers",
-    "accelerate",
-    "unified-planning>=1.3.0",
     "numpy",
     "tqdm",
     "Pillow",
 ]
 
 [project.optional-dependencies]
+hf = ["torch", "torchvision", "transformers", "accelerate"]
 openai = ["openai"]
 # VLLMBackend relies on SamplingParams(logprobs=-1) / LLM(max_logprobs=-1)
 # for full-vocab logprobs, added in vLLM 0.11.0 (vllm-project/vllm#25031).
 vllm = ["vllm>=0.11.0"]
+pddl = ["unified-planning>=1.3.0"]
 calibration = ["scikit-learn"]
-dev = ["pytest"]
+# Everything except vllm, which has hard platform constraints.
+all = ["s3e[hf,openai,pddl,calibration]"]
+dev = ["pytest", "s3e[all]"]
 
 [project.urls]
 Repository = "https://github.com/CLAIR-LAB-TECHNION/s3e"
