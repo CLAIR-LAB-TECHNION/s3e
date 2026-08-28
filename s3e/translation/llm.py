@@ -94,7 +94,6 @@ class LLMTranslator(QueryTranslator):
         self._hf_tokenizer = None
         if self._is_openai:
             require("openai", "openai", "LLMTranslator")
-            import openai  # noqa: F401  (import verified lazily, used in _openai_translate)
         else:
             from transformers import AutoModelForCausalLM, AutoTokenizer
             self._hf_tokenizer = AutoTokenizer.from_pretrained(model_id)

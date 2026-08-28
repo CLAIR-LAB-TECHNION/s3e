@@ -252,6 +252,13 @@ class TestPddlFreeTranslation:
         result = translator.translate(["on(a,b)"])
         assert result == {"on(a,b)": "Is a on b?"}
 
+    def test_prewritten_without_domain(self):
+        from s3e.translation import PrewrittenTranslator
+
+        translator = PrewrittenTranslator({"on(a,b)": "Is a on b?"})
+        result = translator.translate(["on(a,b)"])
+        assert result == {"on(a,b)": "Is a on b?"}
+
     def test_llm_translator_requires_domain(self):
         from s3e.translation import LLMTranslator
 
