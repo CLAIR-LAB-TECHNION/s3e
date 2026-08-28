@@ -8,6 +8,7 @@ from .answers import (
     ScoredMasses,
     expand_token_variants,
 )
+from .results import EPS, PREDICTION_SET_FORMAT_VERSION, Prediction, PredictionSet
 
 __all__ = [
     "AnswerOption",
@@ -16,4 +17,8 @@ __all__ = [
     "CategoricalAnswers",
     "ScoredMasses",
     "expand_token_variants",
+    "EPS",
+    "PREDICTION_SET_FORMAT_VERSION",
+    "Prediction",
+    "PredictionSet",
 ]
