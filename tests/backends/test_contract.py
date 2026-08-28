@@ -62,3 +62,34 @@ class TestFakeVLMContract(BackendContract):
     @pytest.fixture
     def make_backend(self):
         return lambda: FakeVLM(text="yes")
+
+
+def test_query_batch_honors_subclass_overriding_only_query():
+    """A FakeVLM subclass overriding only query() must be honored by
+    query_batch too, not bypassed by a direct output shortcut -- the
+    established idiom for one-off fakes elsewhere in this suite."""
+
+    class QueryOnlyFake(FakeVLM):
+        def query(self, images, prompt, system_prompt=None, generate=False,
+                   interest_tokens=None, **inference_kwargs):
+            return VLMOutput(token_probs={"custom": 1.0})
+
+    images = [make_blank_image()]
+    results = QueryOnlyFake().query_batch(images, ["a", "b"])
+
+    assert [r.token_probs for r in results] == [
+        {"custom": 1.0},
+        {"custom": 1.0},
+    ]
+
+
+def test_query_batch_still_records_one_call_per_batch():
+    """Routing per-prompt output through query() must not reintroduce a
+    per-prompt call entry; query_batch still records exactly one call
+    carrying the full batch's prompt list."""
+    fake = FakeVLM()
+    images = [make_blank_image()]
+
+    fake.query_batch(images, ["a", "b"])
+
+    assert [call["prompts"] for call in fake.calls] == [["a", "b"]]

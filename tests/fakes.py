@@ -25,6 +25,7 @@ class FakeVLM(VLMBackend):
         self.argmax_in_interest = argmax_in_interest
         self.calls: list[dict] = []
         self._scripted: dict[str, dict] = {}
+        self._suppress_call_recording = False
 
     def script_responses(self, mapping: dict[str, dict]) -> None:
         """Per-query overrides: prompt-substring -> token_probs mapping."""
@@ -67,8 +68,9 @@ class FakeVLM(VLMBackend):
 
     def query(self, images, prompt, system_prompt=None, generate=False,
               interest_tokens=None, **inference_kwargs):
-        self._record(images, [prompt], system_prompt, generate,
-                     interest_tokens, inference_kwargs)
+        if not self._suppress_call_recording:
+            self._record(images, [prompt], system_prompt, generate,
+                         interest_tokens, inference_kwargs)
         return self._output_for(prompt, generate, interest_tokens)
 
     def query_batch(self, images, prompts, system_prompt=None, generate=False,
@@ -79,11 +81,22 @@ class FakeVLM(VLMBackend):
         records the whole prompt list as a single call so batch-boundary
         assertions (e.g. ``QueryEngine``'s ``batch_size`` chunking) can be
         tested against the fake the same way they would against a real
-        batching backend.
+        batching backend. Each prompt's output is still produced by calling
+        :meth:`query` (with its own per-call recording suppressed for the
+        duration), not by bypassing it -- so a subclass overriding only
+        ``query`` (the established idiom for one-off fakes in this test
+        suite) is honored through ``query_batch`` too.
         """
         self._record(images, prompts, system_prompt, generate,
                      interest_tokens, inference_kwargs)
-        return [
-            self._output_for(prompt, generate, interest_tokens)
-            for prompt in prompts
-        ]
+        self._suppress_call_recording = True
+        try:
+            return [
+                self.query(
+                    images, prompt, system_prompt, generate,
+                    interest_tokens=interest_tokens, **inference_kwargs
+                )
+                for prompt in prompts
+            ]
+        finally:
+            self._suppress_call_recording = False
