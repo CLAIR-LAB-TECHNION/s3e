@@ -1,44 +1,59 @@
-"""s3e — Semantic State Estimation using vision-language models.
-
-This package provides tools for estimating the boolean truth values of
-PDDL predicates from images using vision-language models (VLMs).
+"""s3e — Semantic Symbolic State Estimation with vision-language models.
 
 Quick start::
 
-    from s3e import SemanticStateEstimator
+    from s3e import SemanticStateEstimator, TemplateTranslator
 
-    se = SemanticStateEstimator(domain_pddl, problem_pddl, vlm="Qwen/Qwen2-VL-7B-Instruct")
-    state = se(images)  # dict[str, bool | None]
-
-See the README for full documentation and examples.
+    estimator = SemanticStateEstimator.from_pddl(
+        domain_pddl, problem_pddl,
+        vlm="HuggingFaceTB/SmolVLM-256M-Instruct",
+        translator=TemplateTranslator({"on": "Is {0} on {1}?"}),
+    )
+    state = estimator(images)  # dict[str, bool | None]
 """
 
-from .state_estimator import StateEstimator, ProbabilisticStateEstimator
-from .semantic_state_estimator import PredicatePredictionDetails, SemanticStateEstimator
-from .calibration import CalibrationExample, PlattCalibrationSample
-from .backends import VLMBackend, VLMOutput, resolve_backend
-from .translation import (
-    QueryTranslator,
-    IdentityTranslator,
-    PrewrittenTranslator,
-    TemplateTranslator,
-    LLMTranslator,
-)
+from importlib.metadata import PackageNotFoundError, version
 
-from importlib.metadata import version, PackageNotFoundError
+from .backends import VLMBackend, VLMOutput, resolve_backend
+from .calibration import (
+    CalibrationExample,
+    CalibrationSample,
+    CalibrationSet,
+    Calibrator,
+    PlattCalibrator,
+)
+from .engine import (
+    AnswerOption,
+    AnswerSpace,
+    BinaryAnswers,
+    CategoricalAnswers,
+    Prediction,
+    PredictionSet,
+    QueryEngine,
+)
+from .estimator import SemanticStateEstimator
+from .translation import (
+    IdentityTranslator,
+    LLMTranslator,
+    PrewrittenTranslator,
+    QueryTranslator,
+    TemplateTranslator,
+)
 
 try:
     __version__ = version("s3e")
-except PackageNotFoundError:  # not installed, e.g. running from source tree
+except PackageNotFoundError:  # running from a source tree
     __version__ = "0.0.0.dev0"
 
 __all__ = [
-    "StateEstimator",
-    "ProbabilisticStateEstimator",
     "SemanticStateEstimator",
-    "PredicatePredictionDetails",
-    "CalibrationExample",
-    "PlattCalibrationSample",
+    "QueryEngine",
+    "AnswerOption",
+    "AnswerSpace",
+    "BinaryAnswers",
+    "CategoricalAnswers",
+    "Prediction",
+    "PredictionSet",
     "VLMBackend",
     "VLMOutput",
     "resolve_backend",
@@ -47,16 +62,21 @@ __all__ = [
     "VLLMBackend",
     "QueryTranslator",
     "IdentityTranslator",
-    "PrewrittenTranslator",
     "TemplateTranslator",
+    "PrewrittenTranslator",
     "LLMTranslator",
+    "Calibrator",
+    "PlattCalibrator",
+    "CalibrationSet",
+    "CalibrationSample",
+    "CalibrationExample",
 ]
 
 _LAZY_TOP_LEVEL = {"HuggingFaceVLM", "OpenAIVLM", "VLLMBackend"}
 
 
 def __getattr__(name: str):
-    """Lazily expose optional integrations without importing their packages."""
+    """Lazily expose optional backends without importing their packages."""
     if name in _LAZY_TOP_LEVEL:
         import s3e.backends as _backends
 

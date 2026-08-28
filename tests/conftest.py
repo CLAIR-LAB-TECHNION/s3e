@@ -1,9 +1,10 @@
-"""Shared test fixtures for s3e tests."""
+"""Shared test fixtures for s3e tests.
 
-import pytest
+The shared fake backend lives in ``tests/fakes.py`` (``FakeVLM``); this
+module holds sample PDDL and image helpers only.
+"""
+
 from PIL import Image
-
-from s3e.backends.backend import VLMBackend, VLMOutput
 
 
 # Minimal blocksworld PDDL
@@ -33,91 +34,6 @@ BLOCKSWORLD_PROBLEM = """
 """
 
 
-class FakeVLM(VLMBackend):
-    """A fake VLM that returns configurable token probabilities."""
-
-    def __init__(
-        self,
-        token_probs: dict[str, float] | None = None,
-        text: str | None = None,
-        per_prompt_probs: dict[str, dict[str, float]] | None = None,
-    ):
-        self.token_probs = token_probs or {"yes": 0.8, "no": 0.2}
-        self.text = text
-        self.per_prompt_probs = per_prompt_probs or {}
-        self.call_count = 0
-        self.received_prompts: list[str] = []
-        self.received_system_prompts: list[str | None] = []
-        self.received_generate_flags: list[bool] = []
-        self.received_inference_kwargs: list[dict] = []
-        self.received_interest_tokens: list[list[str] | None] = []
-
-    def query(
-        self,
-        images,
-        prompt,
-        system_prompt=None,
-        generate=False,
-        interest_tokens=None,
-        **inference_kwargs,
-    ):
-        self.call_count += 1
-        self.received_prompts.append(prompt)
-        self.received_system_prompts.append(system_prompt)
-        self.received_generate_flags.append(generate)
-        self.received_inference_kwargs.append(dict(inference_kwargs))
-        self.received_interest_tokens.append(
-            None if interest_tokens is None else list(interest_tokens)
-        )
-
-        # Check for per-prompt overrides
-        probs = dict(self.token_probs)
-        for substring, override in self.per_prompt_probs.items():
-            if substring in prompt:
-                probs = dict(override)
-                break
-
-        # Honor the interest_tokens contract like the real backends: report
-        # mass for exactly the requested tokens, plus the argmax flag.
-        argmax_in_interest = None
-        if interest_tokens is not None:
-            if probs:
-                argmax_in_interest = max(probs, key=probs.get) in set(interest_tokens)
-            probs = {token: probs.get(token, 0.0) for token in dict.fromkeys(interest_tokens)}
-
-        return VLMOutput(
-            token_probs=probs, text=self.text, argmax_in_interest=argmax_in_interest
-        )
-
-
-@pytest.fixture
-def fake_vlm():
-    """A FakeVLM with default 80% yes / 20% no probabilities."""
-    return FakeVLM()
-
-
-@pytest.fixture
-def fake_images():
-    """Two small blank RGB images."""
-    return [Image.new("RGB", (64, 64)), Image.new("RGB", (64, 64))]
-
-
-@pytest.fixture
-def single_image():
-    """A single small blank RGB image."""
-    return [Image.new("RGB", (64, 64))]
-
-
 def make_blank_image(size=(8, 8)):
     """Tiny RGB image for backend tests."""
     return Image.new("RGB", size, color=(127, 127, 127))
-
-
-@pytest.fixture
-def blocksworld_domain():
-    return BLOCKSWORLD_DOMAIN
-
-
-@pytest.fixture
-def blocksworld_problem():
-    return BLOCKSWORLD_PROBLEM

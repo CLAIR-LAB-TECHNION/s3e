@@ -5,9 +5,8 @@ import math
 import pytest
 from unified_planning.io import PDDLReader
 
-from s3e.calibration import (
-    CalibrationExample,
-    PlattCalibrationSample,
+from s3e.calibration import CalibrationExample, CalibrationSample
+from s3e.calibration.platt import (
     PlattParameters,
     PlattScalingProfile,
     apply_platt_scaling,
@@ -86,9 +85,9 @@ class TestProfileSerialization:
             PlattScalingProfile.from_dict(payload)
 
 
-class TestPlattCalibrationSample:
+class TestCalibrationSample:
     def test_round_trips_through_dict(self):
-        sample = PlattCalibrationSample(
+        sample = CalibrationSample(
             predicate="on(a,b)",
             score=1.25,
             label=True,
@@ -103,21 +102,21 @@ class TestPlattCalibrationSample:
             "label": True,
             "problem": "(define (problem bw-2) (:domain blocksworld))",
         }
-        assert PlattCalibrationSample.from_dict(payload) == sample
+        assert CalibrationSample.from_dict(payload) == sample
 
     def test_round_trips_without_problem(self):
-        sample = PlattCalibrationSample(
+        sample = CalibrationSample(
             predicate="clear(a)",
             score=-0.75,
             label=False,
         )
 
-        assert PlattCalibrationSample.from_dict(sample.to_dict()) == sample
+        assert CalibrationSample.from_dict(sample.to_dict()) == sample
 
     def test_is_reexported_from_package(self):
         import s3e
 
-        assert s3e.PlattCalibrationSample is PlattCalibrationSample
+        assert s3e.CalibrationSample is CalibrationSample
 
 
 def _make_blocksworld(

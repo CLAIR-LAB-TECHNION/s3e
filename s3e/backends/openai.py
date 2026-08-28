@@ -16,7 +16,7 @@ import numpy as np
 import openai
 
 from .backend import VLMBackend, VLMOutput
-from ..constants import OPENAI_MODEL_IDENTIFIER
+from .resolve import OPENAI_MODEL_IDENTIFIER
 
 MAX_ALLOWED_OPENAI_LOGPROBS = 20
 

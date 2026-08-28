@@ -3,7 +3,6 @@
 import re
 import string
 
-from ..pddl.up_utils import create_up_problem
 from .translator import QueryTranslator
 
 
@@ -23,6 +22,9 @@ def _parse_predicate(predicate_str: str) -> tuple[str, list[str]]:
 
 def _predicate_argument_names(domain: str, problem: str) -> dict[str, list[str]]:
     """Build predicate-name to argument-name mapping from the PDDL domain/problem."""
+    # Imported lazily so that importing s3e does not pull in Unified Planning.
+    from ..pddl.up_utils import create_up_problem
+
     up_problem = create_up_problem(domain, problem)
     return {
         fluent.name: [parameter.name for parameter in fluent.signature]

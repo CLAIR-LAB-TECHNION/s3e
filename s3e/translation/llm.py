@@ -9,8 +9,7 @@ from tqdm.auto import tqdm
 from .cache import make_cache_key, load_cache, save_cache
 from .translator import QueryTranslator
 from .._deps import require
-from ..constants import OPENAI_MODEL_IDENTIFIER
-from ..pddl.up_utils import create_up_problem, get_object_names_dict, get_all_grounded_predicates_for_objects
+from ..backends.resolve import OPENAI_MODEL_IDENTIFIER
 
 
 _NL_SYSTEM_PROMPT_TEMPLATE = """The following is a PDDL domain:
@@ -118,7 +117,10 @@ class LLMTranslator(QueryTranslator):
                 "PDDL-free estimation."
             )
 
-        # Build system prompt from PDDL context
+        # Build system prompt from PDDL context (Unified Planning is imported
+        # here so that importing s3e does not pull it in).
+        from ..pddl.up_utils import create_up_problem, get_object_names_dict
+
         up_problem = create_up_problem(domain, problem)
         objects = get_object_names_dict(up_problem)
         objects_by_type = "\n".join(
