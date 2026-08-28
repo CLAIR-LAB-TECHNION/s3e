@@ -4,6 +4,10 @@ This subpackage provides functions for working with PDDL domains and problems
 via the Unified Planning framework.
 """
 
+from .._deps import require
+
+require("unified_planning", "pddl", "PDDL support (s3e.pddl)")
+
 from .fingerprint import compute_domain_fingerprint
 from .up_utils import (
     create_up_problem,
