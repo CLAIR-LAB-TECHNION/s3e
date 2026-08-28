@@ -1230,7 +1230,16 @@ def _make_id_tokenizer(vocab):
 
 
 class TestVLLMBackendMocked:
-    """Unit tests for VLLMBackend with vllm mocked out."""
+    """Unit tests for VLLMBackend with vllm mocked out.
+
+    The engine is mocked, but importing ``s3e.backends.vllm`` still needs a
+    working ``vllm`` package (SamplingParams etc.), which the ``dev`` extra
+    deliberately omits — install ``s3e[dev-gpu]`` for these.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _requires_vllm(self):
+        pytest.importorskip("vllm", reason="vllm not installed (s3e[dev-gpu])")
 
     def _make_backend(self, mock_llm_cls, num_logprobs=None):
         """Construct a VLLMBackend whose engine is the mocked LLM instance."""
@@ -1687,6 +1696,7 @@ class TestVLLMBackendMocked:
 
 
 def test_vllm_backend_is_exported():
+    pytest.importorskip("vllm", reason="vllm not installed (s3e[dev-gpu])")
     import s3e
     from s3e.backends import VLLMBackend as FromVlm
     from s3e import VLLMBackend as FromTop

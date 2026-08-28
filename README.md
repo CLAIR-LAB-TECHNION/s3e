@@ -59,6 +59,7 @@ pip install -e ".[vllm]"          # local multi-GPU inference via vLLM
 pip install -e ".[calibration]"   # Platt-scaling calibration (scikit-learn)
 pip install -e ".[all]"           # everything except vllm (platform-constrained)
 pip install -e ".[dev]"           # pytest + s3e[all], for contributing
+pip install -e ".[dev-gpu]"       # dev + vllm, for contributing on CUDA hosts
 ```
 
 Optional acceleration for supported HuggingFace models:
@@ -299,7 +300,8 @@ Common methods:
 Install development dependencies:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev]"       # CPU: full fast suite; vLLM-dependent tests skip
+pip install -e ".[dev-gpu]"   # CUDA hosts: adds vllm for the vLLM test coverage
 ```
 
 Run the fast test loop:
