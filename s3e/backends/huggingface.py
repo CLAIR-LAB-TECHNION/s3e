@@ -5,34 +5,22 @@ HuggingFace's Auto classes and ``AutoProcessor`` to support any standard
 vision-language model (LLaVA, Qwen2-VL, InternVL, etc.).
 """
 
+from .._deps import require
+
+require("torch", "hf", "HuggingFaceVLM")
+
 import torch
 import numpy as np
+from transformers import AutoProcessor
 
 from .backend import VLMBackend, VLMOutput
 from .token_index import build_token_reverse_index
 
 # transformers 5.x renamed AutoModelForVision2Seq to AutoModelForImageTextToText
-_AutoModelClass = None
-AutoProcessor = None  # type: ignore[assignment]
-
 try:
-    from transformers import AutoProcessor  # type: ignore[no-redef]
-
-    try:
-        from transformers import AutoModelForImageTextToText as _AutoModelClass  # type: ignore[no-redef]
-    except ImportError:
-        from transformers import AutoModelForVision2Seq as _AutoModelClass  # type: ignore[no-redef]
+    from transformers import AutoModelForImageTextToText as _AutoModelClass
 except ImportError:
-    pass
-
-
-def _check_hf_imports() -> None:
-    if _AutoModelClass is None or AutoProcessor is None:
-        raise ImportError(
-            "Neither AutoModelForImageTextToText nor AutoModelForVision2Seq "
-            "are available in your version of transformers. "
-            "Install a compatible version with: pip install 'transformers>=4.36'"
-        )
+    from transformers import AutoModelForVision2Seq as _AutoModelClass
 
 
 class HuggingFaceVLM(VLMBackend):
@@ -67,7 +55,6 @@ class HuggingFaceVLM(VLMBackend):
         skip_pad_invariance_check: bool = False,
         **model_kwargs,
     ):
-        _check_hf_imports()
         self.model_id = model_id
         self.num_logprobs = num_logprobs
         self.max_new_tokens = max_new_tokens
@@ -206,6 +193,19 @@ class HuggingFaceVLM(VLMBackend):
             VLMOutput(token_probs=token_probs, text=None)
             for token_probs in self._format_token_probs(probs)
         ]
+
+    def unsupported_interest_tokens(self, tokens):
+        """Subset of ``tokens`` with no single-token surface form here.
+
+        Reuses the same reverse index (:meth:`_get_token_reverse_index`,
+        built once and cached) the interest-token gather path uses, sized
+        from the tokenizer's vocabulary -- the same cap that path applies
+        when the tokenizer length is known.
+        """
+        tokenizer = getattr(self.processor, "tokenizer", None)
+        vocab_size = len(tokenizer) if tokenizer is not None else 0
+        index = self._get_token_reverse_index(vocab_size)
+        return [t for t in dict.fromkeys(tokens) if t not in index]
 
     def _get_token_reverse_index(self, vocab_size: int) -> dict[str, list[int]]:
         """Build (once) and return the decoded-string -> ids index.

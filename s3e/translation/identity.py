@@ -6,5 +6,5 @@ from .translator import QueryTranslator
 class IdentityTranslator(QueryTranslator):
     """Translator that returns predicates as-is (no translation)."""
 
-    def translate(self, predicates, domain, problem):
+    def translate(self, predicates, domain=None, problem=None):
         return {pred: pred for pred in predicates}

@@ -5,15 +5,13 @@ import math
 import pytest
 from unified_planning.io import PDDLReader
 
-from s3e.calibration import (
-    CalibrationExample,
-    PlattCalibrationSample,
+from s3e.calibration import CalibrationExample, CalibrationSample
+from s3e.calibration.platt import (
     PlattParameters,
-    PlattScalingProfile,
     apply_platt_scaling,
-    compute_domain_fingerprint,
     grouped_log_odds,
 )
+from s3e.pddl.fingerprint import compute_domain_fingerprint
 
 
 class TestGroupedLogOdds:
@@ -42,53 +40,9 @@ class TestSigmoidApplication:
         assert probability == pytest.approx(expected)
 
 
-_MINIMAL_DOMAIN = (
-    "(define (domain blocksworld) (:requirements :strips) (:predicates (p)))"
-)
-
-
-class TestProfileSerialization:
-    def test_profile_round_trips_through_dict(self):
-        profile = PlattScalingProfile(
-            scope="global",
-            probability_method="logprobs",
-            true_tokens=["true"],
-            false_tokens=["false"],
-            domain_fingerprint=compute_domain_fingerprint(_MINIMAL_DOMAIN),
-            score_kind="grouped_log_odds",
-            groups={
-                "__global__": PlattParameters(
-                    a=0.9,
-                    b=-0.2,
-                    sample_count=6,
-                    positive_count=2,
-                    negative_count=4,
-                )
-            },
-        )
-        restored = PlattScalingProfile.from_dict(profile.to_dict())
-        assert restored == profile
-
-    def test_rejects_unsupported_schema_version(self):
-        profile = PlattScalingProfile(
-            scope="global",
-            probability_method="logprobs",
-            true_tokens=["true"],
-            false_tokens=["false"],
-            domain_fingerprint=compute_domain_fingerprint(_MINIMAL_DOMAIN),
-            score_kind="grouped_log_odds",
-            groups={},
-        )
-        payload = profile.to_dict()
-        payload["schema_version"] = 99
-
-        with pytest.raises(ValueError, match="Unsupported calibration schema version: 99"):
-            PlattScalingProfile.from_dict(payload)
-
-
-class TestPlattCalibrationSample:
+class TestCalibrationSample:
     def test_round_trips_through_dict(self):
-        sample = PlattCalibrationSample(
+        sample = CalibrationSample(
             predicate="on(a,b)",
             score=1.25,
             label=True,
@@ -103,21 +57,21 @@ class TestPlattCalibrationSample:
             "label": True,
             "problem": "(define (problem bw-2) (:domain blocksworld))",
         }
-        assert PlattCalibrationSample.from_dict(payload) == sample
+        assert CalibrationSample.from_dict(payload) == sample
 
     def test_round_trips_without_problem(self):
-        sample = PlattCalibrationSample(
+        sample = CalibrationSample(
             predicate="clear(a)",
             score=-0.75,
             label=False,
         )
 
-        assert PlattCalibrationSample.from_dict(sample.to_dict()) == sample
+        assert CalibrationSample.from_dict(sample.to_dict()) == sample
 
     def test_is_reexported_from_package(self):
         import s3e
 
-        assert s3e.PlattCalibrationSample is PlattCalibrationSample
+        assert s3e.CalibrationSample is CalibrationSample
 
 
 def _make_blocksworld(

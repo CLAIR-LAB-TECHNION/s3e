@@ -3,7 +3,7 @@
 import json
 import pytest
 
-from s3e.cache import make_cache_key, load_cache, save_cache
+from s3e.translation.cache import make_cache_key, load_cache, save_cache
 
 
 class TestMakeCacheKey:

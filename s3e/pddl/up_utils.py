@@ -97,3 +97,17 @@ def state_dict_to_up_state(
 ) -> UPState:
     """Convert a state dictionary to a Unified Planning state."""
     return UPState(convert_state_dict_to_up_compatible(up_problem, state_dict), up_problem)
+
+
+def parse_domain_problem(domain: str, problem: str) -> Problem:
+    """Parse a PDDL domain and problem (file paths or strings). Alias of
+    :func:`create_up_problem` under the public name."""
+    return create_up_problem(domain, problem)
+
+
+def ground_predicates(
+    up_problem: Problem, objects: Optional[dict[str, list[str]]] = None
+) -> list[str]:
+    """Enumerate all grounded predicate strings. Alias of
+    :func:`get_all_grounded_predicates_for_objects` under the public name."""
+    return get_all_grounded_predicates_for_objects(up_problem, objects)

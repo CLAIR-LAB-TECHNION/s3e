@@ -9,7 +9,7 @@ class PrewrittenTranslator(QueryTranslator):
     def __init__(self, queries: dict[str, str]):
         self.queries = queries
 
-    def translate(self, predicates, domain, problem):
+    def translate(self, predicates, domain=None, problem=None):
         missing = set(predicates) - set(self.queries)
         if missing:
             raise ValueError(

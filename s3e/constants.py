@@ -1,14 +1,9 @@
-"""Default prompts and token groups for s3e.
+"""Default system prompts for s3e.
 
-This module contains the default system prompts and token groups used by
-SemanticStateEstimator. Users can override any of these when constructing
-an estimator.
+Answer token groups live with the answer spaces (:mod:`s3e.engine.answers`)
+and the OpenAI model-id prefix lives with backend resolution
+(:mod:`s3e.backends.resolve`); this module holds prompts only.
 """
-
-# OpenAI model identifier prefix
-OPENAI_MODEL_IDENTIFIER = "OpenAI/"
-
-# --- Default system prompts ---
 
 SYSTEM_PROMPT_NO_TRANSLATION = """The following is a PDDL domain
 {domain}
@@ -26,11 +21,3 @@ SYSTEM_PROMPT_WITH_TRANSLATION = (
 SYSTEM_PROMPT_ADDITIONAL_INSTRUCTIONS = (
     "\nAdditional Instructions and clarifications:\n{additional_instructions}"
 )
-
-# --- Default token groups for probability extraction ---
-
-TRUE_TOKENS_NO_TRANSLATION = ["true", "True", "TRUE"]
-FALSE_TOKENS_NO_TRANSLATION = ["false", "False", "FALSE"]
-
-TRUE_TOKENS_WITH_TRANSLATION = ["yes", "Yes", "YES"]
-FALSE_TOKENS_WITH_TRANSLATION = ["no", "No", "NO"]

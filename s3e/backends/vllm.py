@@ -2,8 +2,9 @@
 
 A :class:`VLMBackend` implementation that runs a local HuggingFace
 vision-language model through `vLLM <https://docs.vllm.ai/>`_ for transparent,
-high-throughput, single-node multi-GPU inference. Selected by passing
-``use_vllm=True`` to :class:`SemanticStateEstimator` with a non-OpenAI model id.
+high-throughput, single-node multi-GPU inference. Construct
+``VLLMBackend(...)`` explicitly and pass it as the ``vlm`` argument to
+:class:`QueryEngine` or :class:`SemanticStateEstimator`.
 
 Design notes (kept in code on purpose so future maintainers can change the
 design with full context):
@@ -13,8 +14,9 @@ design with full context):
   ``transformers``). Python 3 uses absolute imports, so ``from vllm import ...``
   below resolves to the installed *package*, not this module -- the same safe
   pattern ``openai.py`` already relies on.
-* ``vllm`` is an optional dependency, imported lazily so importing s3e never
-  requires it. Construction raises a helpful :class:`ImportError` when missing.
+* ``vllm`` is an optional dependency; this module is imported lazily (from
+  ``s3e.backends``) so importing s3e never requires it. Importing this module
+  directly raises a helpful :class:`ImportError` when it is missing.
 * Requires vLLM >= 0.11.0: full-vocab logprobs via ``SamplingParams(logprobs=-1)``
   and ``LLM(max_logprobs=-1)`` landed in 0.11.0 (vllm-project/vllm#25031); older
   engines reject ``-1`` at construction. The pin lives in ``pyproject.toml``.
@@ -22,26 +24,15 @@ design with full context):
 
 import math
 
+from .._deps import require
+
+require("vllm", "vllm", "VLLMBackend")
+
 import torch
+from vllm import LLM, SamplingParams
 
 from .backend import VLMBackend, VLMOutput
 from .token_index import build_token_reverse_index, decode_single_token_ids
-
-try:
-    from vllm import LLM, SamplingParams
-except ModuleNotFoundError as exc:
-    if exc.name != "vllm":
-        raise
-    LLM = None  # type: ignore[assignment]
-    SamplingParams = None  # type: ignore[assignment]
-
-
-def _check_vllm_installed() -> None:
-    if LLM is None or SamplingParams is None:
-        raise ImportError(
-            "The 'vllm' package is required for VLLMBackend. "
-            "Install it with: pip install s3e[vllm]"
-        )
 
 
 class VLLMBackend(VLMBackend):
@@ -94,7 +85,6 @@ class VLLMBackend(VLMBackend):
         num_logprobs: int | None = None,
         **engine_kwargs,
     ):
-        _check_vllm_installed()
         self.model_id = model_id
         self.num_logprobs = num_logprobs
         self._token_reverse_index: dict[str, list[int]] | None = None
@@ -296,6 +286,16 @@ class VLLMBackend(VLMBackend):
             text=None,
             argmax_in_interest=argmax_in_interest,
         )
+
+    def unsupported_interest_tokens(self, tokens):
+        """Subset of ``tokens`` with no single-token surface form here.
+
+        Reuses the same reverse index (:meth:`_get_token_reverse_index`,
+        built once from the engine's tokenizer and cached) the interest-mode
+        id-lookup path uses.
+        """
+        index = self._get_token_reverse_index()
+        return [t for t in dict.fromkeys(tokens) if t not in index]
 
     def _get_token_reverse_index(self) -> dict[str, list[int]]:
         """Build (once) the decoded-string -> ids index from the tokenizer."""

@@ -6,26 +6,9 @@ import os
 import pytest
 from PIL import Image
 
-from s3e.vlm.backend import VLMBackend, VLMOutput
+from s3e.backends.backend import VLMBackend, VLMOutput
 
-
-class FakeVLM(VLMBackend):
-    """A fake VLM that returns configurable token probabilities."""
-
-    def __init__(
-        self, token_probs: dict[str, float] | None = None, text: str | None = None
-    ):
-        self.token_probs = token_probs or {"yes": 0.8, "no": 0.2}
-        self.text = text
-        self.call_count = 0
-
-    def query(
-        self, images, prompt, system_prompt=None, generate=False, **inference_kwargs
-    ):
-        del generate
-        del inference_kwargs
-        self.call_count += 1
-        return VLMOutput(token_probs=dict(self.token_probs), text=self.text)
+from fakes import FakeVLM
 
 
 class TestVLMOutput:
@@ -56,11 +39,31 @@ class TestVLMBackend:
         assert "yes" in result.token_probs
 
     def test_query_batch_default_loops(self):
-        vlm = FakeVLM()
+        # FakeVLM overrides query_batch (to mirror real backends' batching),
+        # so a minimal subclass defining only query() exercises the base
+        # class's default sequential query_batch implementation instead.
+        class SequentialOnlyVLM(VLMBackend):
+            def __init__(self):
+                self.calls: list[str] = []
+
+            def query(
+                self,
+                images,
+                prompt,
+                system_prompt=None,
+                generate=False,
+                interest_tokens=None,
+                **inference_kwargs,
+            ):
+                del images, system_prompt, generate, interest_tokens, inference_kwargs
+                self.calls.append(prompt)
+                return VLMOutput(token_probs={"yes": 0.7, "no": 0.2})
+
+        vlm = SequentialOnlyVLM()
         img = Image.new("RGB", (64, 64))
         results = vlm.query_batch([img], ["q1", "q2", "q3"])
         assert len(results) == 3
-        assert vlm.call_count == 3
+        assert len(vlm.calls) == 3
         assert all(isinstance(r, VLMOutput) for r in results)
 
     def test_query_batch_passes_system_prompt(self):
@@ -112,7 +115,7 @@ class TestVLMBackend:
 
 
 from unittest.mock import MagicMock, patch
-from s3e.vlm.openai import OpenAIVLM
+from s3e.backends.openai import OpenAIVLM
 
 
 class TestOpenAIVLM:
@@ -138,7 +141,7 @@ class TestOpenAIVLM:
         mock_response.choices = [mock_choice]
         return mock_response
 
-    @patch("s3e.vlm.openai.openai")
+    @patch("s3e.backends.openai.openai")
     def test_query_returns_vlm_output(self, mock_openai_module):
         import math
 
@@ -159,7 +162,7 @@ class TestOpenAIVLM:
         assert "no" in result.token_probs
         assert result.text == "yes"
 
-    @patch("s3e.vlm.openai.openai")
+    @patch("s3e.backends.openai.openai")
     def test_strips_openai_prefix(self, mock_openai_module):
         mock_client = MagicMock()
         mock_openai_module.OpenAI.return_value = mock_client
@@ -167,7 +170,7 @@ class TestOpenAIVLM:
         vlm = OpenAIVLM("OpenAI/gpt-4o")
         assert vlm.model_id == "gpt-4o"
 
-    @patch("s3e.vlm.openai.openai")
+    @patch("s3e.backends.openai.openai")
     def test_query_batch_calls_query_per_prompt(self, mock_openai_module):
         import math
 
@@ -182,7 +185,7 @@ class TestOpenAIVLM:
         results = vlm.query_batch([img], ["q1", "q2"])
         assert len(results) == 2
 
-    @patch("s3e.vlm.openai.openai")
+    @patch("s3e.backends.openai.openai")
     def test_interest_tokens_filter_and_backfill(self, mock_openai_module):
         import math
 
@@ -208,7 +211,7 @@ class TestOpenAIVLM:
         assert result.token_probs["null"] == 0.0
         assert result.argmax_in_interest is True
 
-    @patch("s3e.vlm.openai.openai")
+    @patch("s3e.backends.openai.openai")
     def test_interest_argmax_false_when_top_entry_outside_interest(
         self, mock_openai_module
     ):
@@ -229,7 +232,7 @@ class TestOpenAIVLM:
         assert result.argmax_in_interest is False
         assert result.token_probs["yes"] == pytest.approx(0.4)
 
-    @patch("s3e.vlm.openai.openai")
+    @patch("s3e.backends.openai.openai")
     def test_interest_tokens_sum_duplicate_entries(self, mock_openai_module):
         import math
 
@@ -245,7 +248,7 @@ class TestOpenAIVLM:
 
         assert result.token_probs["yes"] == pytest.approx(0.5)
 
-    @patch("s3e.vlm.openai.openai")
+    @patch("s3e.backends.openai.openai")
     def test_no_interest_tokens_keeps_full_dict_and_none_flag(
         self, mock_openai_module
     ):
@@ -279,7 +282,7 @@ class TestHuggingFaceVLMMocked:
         input_ids=None,
         vlm_kwargs=None,
     ):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         mock_model = MagicMock()
         mock_model_cls.from_pretrained.return_value = mock_model
@@ -341,10 +344,10 @@ class TestHuggingFaceVLMMocked:
         vlm = HuggingFaceVLM("test/model", **(vlm_kwargs or {}))
         return vlm, mock_model, mock_processor
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_construction(self, mock_model_cls, mock_proc_cls):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         vlm = HuggingFaceVLM("test/model")
         mock_model_cls.from_pretrained.assert_called_once()
@@ -352,10 +355,10 @@ class TestHuggingFaceVLMMocked:
         assert vlm.max_new_tokens == 10
         assert vlm.num_logprobs is None
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_custom_max_new_tokens(self, mock_model_cls, mock_proc_cls):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         mock_model = MagicMock()
         mock_model_cls.from_pretrained.return_value = mock_model
@@ -365,10 +368,10 @@ class TestHuggingFaceVLMMocked:
 
         assert vlm.max_new_tokens == 42
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_returns_vlm_output(self, mock_model_cls, mock_proc_cls):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         # Set up mock model to return logits
         mock_model = MagicMock()
@@ -400,12 +403,12 @@ class TestHuggingFaceVLMMocked:
         mock_model.assert_called_once()
         mock_model.generate.assert_not_called()
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_returns_all_token_probs_by_default(
         self, mock_model_cls, mock_proc_cls
     ):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         mock_model = MagicMock()
         mock_model_cls.from_pretrained.return_value = mock_model
@@ -432,12 +435,12 @@ class TestHuggingFaceVLMMocked:
                 expected_prob.item()
             )
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_limits_token_probs_when_num_logprobs_is_set(
         self, mock_model_cls, mock_proc_cls
     ):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         mock_model = MagicMock()
         mock_model_cls.from_pretrained.return_value = mock_model
@@ -462,8 +465,8 @@ class TestHuggingFaceVLMMocked:
         assert result.token_probs["tok3"] == pytest.approx(expected_probs[3].item())
         assert result.token_probs["tok2"] == pytest.approx(expected_probs[2].item())
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_runs_single_forward_for_multiple_prompts(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -498,8 +501,8 @@ class TestHuggingFaceVLMMocked:
             expected_probs[1, 0].item()
         )
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_topk_is_computed_per_row(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -522,8 +525,8 @@ class TestHuggingFaceVLMMocked:
         assert set(results[0].token_probs) == {"tok2", "tok3"}
         assert set(results[1].token_probs) == {"tok0", "tok1"}
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_interest_tokens_return_exact_masses_and_bypass_topk(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -545,8 +548,8 @@ class TestHuggingFaceVLMMocked:
         assert result.token_probs["tok3"] == pytest.approx(expected_probs[3].item())
         assert result.argmax_in_interest is True
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_interest_argmax_false_when_top_token_outside_interest(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -559,8 +562,8 @@ class TestHuggingFaceVLMMocked:
 
         assert result.argmax_in_interest is False
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_interest_unknown_token_gets_zero_mass(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -575,8 +578,8 @@ class TestHuggingFaceVLMMocked:
         expected_probs = torch.softmax(logits[0, -1, :].float(), dim=-1)
         assert result.token_probs["tok1"] == pytest.approx(expected_probs[1].item())
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_interest_reverse_index_is_built_once(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -598,8 +601,8 @@ class TestHuggingFaceVLMMocked:
 
         assert decode_calls_after_second == decode_calls_after_first
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_interest_sums_duplicate_ids_decoding_to_same_string(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -617,8 +620,8 @@ class TestHuggingFaceVLMMocked:
         assert result.token_probs["same"] == pytest.approx(1.0)
         assert result.argmax_in_interest is True
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_interest_batch_rows_get_row_wise_masses_and_flags(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -645,8 +648,8 @@ class TestHuggingFaceVLMMocked:
         assert results[0].argmax_in_interest is True
         assert results[1].argmax_in_interest is False
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_interest_respected_by_sequential_fallback(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -669,8 +672,8 @@ class TestHuggingFaceVLMMocked:
         assert all(set(r.token_probs) == {"tok1"} for r in results)
         assert all(r.argmax_in_interest is True for r in results)
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_generate_mode_ignores_interest_tokens(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -701,7 +704,7 @@ class TestHuggingFaceVLMMocked:
         rows have genuinely different lengths and each row has a distinct
         correct answer, making a misread pad position observably wrong.
         """
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         vocab_size = 8
         pad_id = 0
@@ -764,8 +767,8 @@ class TestHuggingFaceVLMMocked:
 
         return HuggingFaceVLM("test/model", **vlm_kwargs), mock_model
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_batched_queries_agree_with_unbatched(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -791,8 +794,8 @@ class TestHuggingFaceVLMMocked:
         vlm.query_batch([], prompts)
         assert mock_model.call_count == 6  # the check does not run again
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_right_padded_batch_fails_the_pad_invariance_check(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -808,8 +811,8 @@ class TestHuggingFaceVLMMocked:
         with pytest.raises(ValueError, match="under padding"):
             vlm.query_batch([], ["q0", "q1", "q2"])
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_pad_invariance_check_can_be_skipped(self, mock_model_cls, mock_proc_cls):
         vlm, mock_model = self._make_ragged_length_hf_components(
             mock_model_cls, mock_proc_cls, skip_pad_invariance_check=True
@@ -824,8 +827,8 @@ class TestHuggingFaceVLMMocked:
             "tok6",
         ]
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_sums_duplicate_decoded_tokens(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -849,8 +852,8 @@ class TestHuggingFaceVLMMocked:
             expected_probs[2].item() + expected_probs[3].item()
         )
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_falls_back_to_sequential_when_batched_processor_rejects_images(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -877,12 +880,36 @@ class TestHuggingFaceVLMMocked:
         assert mock_model.call_count == 2
         assert all(isinstance(result.token_probs, dict) for result in results)
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_unsupported_interest_tokens_reports_multi_token_strings(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+
+        vocab = ["yes", "no", "dark", "blue"]
+        mock_processor.tokenizer.__len__.return_value = len(vocab)
+        mock_processor.batch_decode.side_effect = lambda seqs, **kwargs: [
+            vocab[seq[0]] for seq in seqs
+        ]
+
+        vlm = HuggingFaceVLM("test/model")
+
+        unsupported = vlm.unsupported_interest_tokens(["yes", "dark blue"])
+
+        assert unsupported == ["dark blue"]
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_empty_prompts_returns_empty_list(
         self, mock_model_cls, mock_proc_cls
     ):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         mock_model = MagicMock()
         mock_model_cls.from_pretrained.return_value = mock_model
@@ -896,12 +923,12 @@ class TestHuggingFaceVLMMocked:
         mock_processor.assert_not_called()
         mock_model.assert_not_called()
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_generate_mode_forwards_inference_kwargs(
         self, mock_model_cls, mock_proc_cls
     ):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         mock_model = MagicMock()
         mock_model_cls.from_pretrained.return_value = mock_model
@@ -932,12 +959,12 @@ class TestHuggingFaceVLMMocked:
         assert mock_model.generate.call_args.kwargs["max_new_tokens"] == 7
         assert mock_model.generate.call_args.kwargs["do_sample"] is False
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_generate_mode_sets_safe_defaults(
         self, mock_model_cls, mock_proc_cls
     ):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         mock_model = MagicMock()
         mock_model_cls.from_pretrained.return_value = mock_model
@@ -957,8 +984,8 @@ class TestHuggingFaceVLMMocked:
         generate_kwargs = mock_model.generate.call_args.kwargs
         assert "max_new_tokens" not in generate_kwargs
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_generate_calls_generate_once_and_batch_decodes(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -987,8 +1014,8 @@ class TestHuggingFaceVLMMocked:
         assert [result.text for result in results] == ["yes", "no"]
         assert all(result.token_probs is None for result in results)
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_generate_returns_one_output_per_prompt_when_multiple_sequences_returned(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -1017,8 +1044,8 @@ class TestHuggingFaceVLMMocked:
         assert len(results) == 2
         assert [result.text for result in results] == ["first q1", "first q2"]
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_generate_does_not_trim_encoder_decoder_outputs(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -1043,8 +1070,8 @@ class TestHuggingFaceVLMMocked:
         assert [seq.tolist() for seq in decoded_sequences] == [[10, 11], [20, 21]]
         assert [result.text for result in results] == ["yes", "no"]
 
-    @patch("s3e.vlm.huggingface.AutoProcessor")
-    @patch("s3e.vlm.huggingface._AutoModelClass")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_generate_falls_back_to_decode_when_batch_decode_fails(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -1083,7 +1110,7 @@ class TestHuggingFaceVLMIntegration:
     TINY_VLM_ID = "katuni4ka/tiny-random-llava"
 
     def test_loads_and_queries(self):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu")
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
@@ -1096,7 +1123,7 @@ class TestHuggingFaceVLMIntegration:
 
     def test_interest_tokens_parity_with_full_vocab(self):
         """Interest-mode masses must equal the full-vocabulary path's."""
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu")
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
@@ -1116,7 +1143,7 @@ class TestHuggingFaceVLMIntegration:
         )
 
     def test_query_batch(self):
-        from s3e.vlm.huggingface import HuggingFaceVLM
+        from s3e.backends.huggingface import HuggingFaceVLM
 
         vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu", num_logprobs=2)
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
@@ -1207,7 +1234,7 @@ class TestVLLMBackendMocked:
 
     def _make_backend(self, mock_llm_cls, num_logprobs=None):
         """Construct a VLLMBackend whose engine is the mocked LLM instance."""
-        from s3e.vlm.vllm import VLLMBackend
+        from s3e.backends.vllm import VLLMBackend
 
         mock_llm = MagicMock()
         mock_llm_cls.return_value = mock_llm
@@ -1216,12 +1243,12 @@ class TestVLLMBackendMocked:
         return backend, mock_llm
 
     @patch("torch.cuda.device_count", return_value=3)
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_tensor_parallel_defaults_to_all_local_gpus(
         self, mock_llm_cls, mock_sp_cls, mock_device_count
     ):
-        from s3e.vlm.vllm import VLLMBackend
+        from s3e.backends.vllm import VLLMBackend
 
         VLLMBackend("test/model")
 
@@ -1230,48 +1257,48 @@ class TestVLLMBackendMocked:
         assert kwargs["tensor_parallel_size"] == 3
 
     @patch("torch.cuda.device_count", return_value=8)
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_tensor_parallel_explicit_override(
         self, mock_llm_cls, mock_sp_cls, mock_device_count
     ):
-        from s3e.vlm.vllm import VLLMBackend
+        from s3e.backends.vllm import VLLMBackend
 
         VLLMBackend("test/model", tensor_parallel_size=2)
 
         assert mock_llm_cls.call_args.kwargs["tensor_parallel_size"] == 2
 
     @patch("torch.cuda.device_count", return_value=1)
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_max_logprobs_full_vocab_by_default(
         self, mock_llm_cls, mock_sp_cls, mock_device_count
     ):
-        from s3e.vlm.vllm import VLLMBackend
+        from s3e.backends.vllm import VLLMBackend
 
         VLLMBackend("test/model")
 
         assert mock_llm_cls.call_args.kwargs["max_logprobs"] == -1
 
     @patch("torch.cuda.device_count", return_value=1)
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_max_logprobs_finite_when_num_logprobs_set(
         self, mock_llm_cls, mock_sp_cls, mock_device_count
     ):
-        from s3e.vlm.vllm import VLLMBackend
+        from s3e.backends.vllm import VLLMBackend
 
         VLLMBackend("test/model", num_logprobs=5)
 
         assert mock_llm_cls.call_args.kwargs["max_logprobs"] == 5
 
     @patch("torch.cuda.device_count", return_value=1)
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_engine_kwargs_forwarded(
         self, mock_llm_cls, mock_sp_cls, mock_device_count
     ):
-        from s3e.vlm.vllm import VLLMBackend
+        from s3e.backends.vllm import VLLMBackend
 
         VLLMBackend("test/model", gpu_memory_utilization=0.5, max_model_len=2048)
 
@@ -1279,8 +1306,8 @@ class TestVLLMBackendMocked:
         assert kwargs["gpu_memory_utilization"] == 0.5
         assert kwargs["max_model_len"] == 2048
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_query_batch_builds_one_chat_call_with_conversation_structure(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1304,8 +1331,8 @@ class TestVLLMBackendMocked:
         assert first[1]["content"][-1] == {"type": "text", "text": "q1"}
         assert len(results) == 2
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_query_batch_omits_system_message_when_absent(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1317,8 +1344,8 @@ class TestVLLMBackendMocked:
         conversation = mock_llm.chat.call_args.args[0][0]
         assert all(m["role"] != "system" for m in conversation)
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_empty_prompts_returns_empty_list_without_engine_call(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1327,8 +1354,8 @@ class TestVLLMBackendMocked:
         assert backend.query_batch([Image.new("RGB", (8, 8))], []) == []
         mock_llm.chat.assert_not_called()
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_missing_logprobs_raises_informative_error(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1342,8 +1369,8 @@ class TestVLLMBackendMocked:
         with pytest.raises(RuntimeError, match="no logprobs"):
             backend.query([], "q1")
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_logprobs_mode_sampling_params_defaults(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1357,8 +1384,8 @@ class TestVLLMBackendMocked:
         assert kwargs["temperature"] == 0.0
         assert kwargs["logprobs"] == -1
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_logprobs_value_follows_num_logprobs(self, mock_llm_cls, mock_sp_cls):
         backend, mock_llm = self._make_backend(mock_llm_cls, num_logprobs=4)
         mock_llm.chat.return_value = [_make_logprobs_output([("yes", _math.log(0.5))])]
@@ -1367,8 +1394,8 @@ class TestVLLMBackendMocked:
 
         assert mock_sp_cls.call_args.kwargs["logprobs"] == 4
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_max_tokens_is_overridable_in_logprobs_mode(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1379,8 +1406,8 @@ class TestVLLMBackendMocked:
 
         assert mock_sp_cls.call_args.kwargs["max_tokens"] == 7
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_logprobs_extraction_converts_to_probabilities(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1395,8 +1422,8 @@ class TestVLLMBackendMocked:
         assert result.token_probs["yes"] == pytest.approx(0.7)
         assert result.token_probs["no"] == pytest.approx(0.3)
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_logprobs_extraction_sums_duplicate_tokens(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1410,8 +1437,8 @@ class TestVLLMBackendMocked:
         assert set(result.token_probs) == {"same"}
         assert result.token_probs["same"] == pytest.approx(0.65)
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_text_mode_returns_text_and_no_token_probs(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1426,8 +1453,8 @@ class TestVLLMBackendMocked:
         assert [r.text for r in results] == ["yes", "no"]
         assert all(r.token_probs is None for r in results)
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_text_mode_does_not_bound_or_request_logprobs(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1441,8 +1468,8 @@ class TestVLLMBackendMocked:
         assert "logprobs" not in kwargs
         assert kwargs["temperature"] == 0.0
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_interest_mode_requests_detokenize_false(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1459,8 +1486,8 @@ class TestVLLMBackendMocked:
         assert kwargs["logprobs"] == -1
         assert kwargs["max_tokens"] == 1
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_no_interest_mode_does_not_touch_detokenize(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1471,8 +1498,8 @@ class TestVLLMBackendMocked:
 
         assert "detokenize" not in mock_sp_cls.call_args.kwargs
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_interest_matches_by_token_id_and_backfills(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1495,8 +1522,8 @@ class TestVLLMBackendMocked:
         assert result.argmax_in_interest is True
         assert result.text is None
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_interest_sums_duplicate_ids_decoding_to_same_string(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1510,8 +1537,8 @@ class TestVLLMBackendMocked:
 
         assert result.token_probs["yes"] == pytest.approx(0.6)
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_interest_argmax_false_when_top_id_outside_interest(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1526,8 +1553,8 @@ class TestVLLMBackendMocked:
         assert result.argmax_in_interest is False
         assert result.token_probs["yes"] == pytest.approx(0.4)
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_interest_reverse_index_is_built_once(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1544,8 +1571,22 @@ class TestVLLMBackendMocked:
         assert mock_llm.get_tokenizer.call_count == 1
         assert tokenizer.batch_decode.call_count == 1
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_unsupported_interest_tokens_reports_multi_token_strings(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(
+            ["yes", "no", "dark", "blue"]
+        )
+
+        unsupported = backend.unsupported_interest_tokens(["yes", "dark blue"])
+
+        assert unsupported == ["dark blue"]
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_interest_with_stop_strings_keeps_detokenization(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1560,8 +1601,8 @@ class TestVLLMBackendMocked:
 
         assert "detokenize" not in mock_sp_cls.call_args.kwargs
 
-    @patch("s3e.vlm.vllm.SamplingParams")
-    @patch("s3e.vlm.vllm.LLM")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_generate_mode_ignores_interest_tokens(
         self, mock_llm_cls, mock_sp_cls
     ):
@@ -1578,21 +1619,39 @@ class TestVLLMBackendMocked:
         assert "logprobs" not in kwargs
         mock_llm.get_tokenizer.assert_not_called()
 
-    @patch("s3e.vlm.vllm.SamplingParams", None)
-    @patch("s3e.vlm.vllm.LLM", None)
     def test_missing_vllm_raises_install_guidance(self):
-        from s3e.vlm.vllm import VLLMBackend
+        """Importing the module when vllm is absent raises via require()."""
+        import importlib
+        import importlib.util
+        import sys
 
-        with pytest.raises(ImportError, match=r"pip install s3e\[vllm\]"):
-            VLLMBackend("test/model")
+        module_name = "s3e.backends.vllm"
+        original_module = sys.modules.pop(module_name, None)
+        real_find_spec = importlib.util.find_spec
+
+        def fake_find_spec(name, *args, **kwargs):
+            if name == "vllm":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        try:
+            with patch("importlib.util.find_spec", side_effect=fake_find_spec):
+                with pytest.raises(
+                    ImportError, match=r'pip install "s3e\[vllm\]"'
+                ):
+                    importlib.import_module(module_name)
+        finally:
+            sys.modules.pop(module_name, None)
+            if original_module is not None:
+                sys.modules[module_name] = original_module
 
     def test_installed_vllm_import_failure_is_not_masked(self):
         import builtins
         import importlib
         import sys
 
-        module_name = "s3e.vlm.vllm"
-        parent_module = sys.modules.get("s3e.vlm")
+        module_name = "s3e.backends.vllm"
+        parent_module = sys.modules.get("s3e.backends")
         original_module = sys.modules.pop(module_name, None)
         had_parent_attr = parent_module is not None and hasattr(parent_module, "vllm")
         original_parent_attr = (
@@ -1629,12 +1688,12 @@ class TestVLLMBackendMocked:
 
 def test_vllm_backend_is_exported():
     import s3e
-    from s3e.vlm import VLLMBackend as FromVlm
+    from s3e.backends import VLLMBackend as FromVlm
     from s3e import VLLMBackend as FromTop
 
     assert FromVlm is FromTop
     assert "VLLMBackend" in s3e.__all__
-    assert "VLLMBackend" in s3e.vlm.__all__
+    assert "VLLMBackend" in s3e.backends.__all__
 
 
 def test_import_s3e_does_not_touch_broken_vllm_dependency():
@@ -1711,7 +1770,7 @@ class TestVLLMBackendIntegration:
         # user choice.
         os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
 
-        from s3e.vlm.vllm import VLLMBackend
+        from s3e.backends.vllm import VLLMBackend
 
         # num_logprobs=None exercises the full-vocab path (max_logprobs=-1 /
         # logprobs=-1, the vLLM >= 0.11.0 feature the pyproject pin exists for)
@@ -1763,3 +1822,46 @@ class TestVLLMBackendIntegration:
         assert gathered.argmax_in_interest == (
             max(full.token_probs, key=full.token_probs.get) in set(interest)
         )
+
+
+from backends.test_contract import BackendContract
+
+
+@pytest.mark.slow
+class TestHuggingFaceVLMContract(BackendContract):
+    """Applies the shared backend contract to a real, tiny HF model."""
+
+    @pytest.fixture(scope="class")
+    def make_backend(self):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        backend = HuggingFaceVLM(
+            TestHuggingFaceVLMIntegration.TINY_VLM_ID, device_map="cpu"
+        )
+        return lambda: backend
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or importlib.util.find_spec("vllm") is None,
+    reason="vLLM requires CUDA and an installed vllm package",
+)
+class TestVLLMBackendContract(BackendContract):
+    """Applies the shared backend contract to a real, small vLLM model."""
+
+    @pytest.fixture(scope="class")
+    def make_backend(self):
+        os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+
+        from s3e.backends.vllm import VLLMBackend
+
+        backend = VLLMBackend(
+            TestVLLMBackendIntegration.SMALL_VLM_ID,
+            tensor_parallel_size=1,
+            num_logprobs=None,
+            gpu_memory_utilization=0.3,
+            max_model_len=4096,
+            enforce_eager=True,
+            enable_prefix_caching=False,
+        )
+        return lambda: backend

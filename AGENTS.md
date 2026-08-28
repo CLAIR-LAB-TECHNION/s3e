@@ -12,13 +12,16 @@
 - If any of those files appear later, treat them as higher-priority instructions and update this file.
 
 ## Layout
-- `s3e/semantic_state_estimator.py`: main public estimator
-- `s3e/state_estimator.py`: abstract estimator interfaces
-- `s3e/vlm/`: VLM abstractions and implementations
-- `s3e/translation/`: predicate-to-query translators
-- `s3e/pddl/`: Unified Planning / PDDL helpers
-- `s3e/cache.py`: JSON cache helpers
+- `s3e/estimator.py`: `SemanticStateEstimator`, the thin PDDL-facade wiring predicates, translation, and a `QueryEngine`
+- `s3e/engine/`: `QueryEngine`, answer spaces (`BinaryAnswers`, `CategoricalAnswers`), and result types (`Prediction`, `PredictionSet`) — the PDDL-free core
+- `s3e/backends/`: `VLMBackend` interface, `VLMOutput`, `HuggingFaceVLM`, `OpenAIVLM`, `VLLMBackend`, `resolve_backend()`
+- `s3e/calibration/`: `Calibrator`, `PlattCalibrator`, `CalibrationSet`/`CalibrationExample`/`CalibrationSample` — offline calibration over prediction data
+- `s3e/translation/`: predicate-to-query translators, including `cache.py` (JSON cache helpers for `LLMTranslator`)
+- `s3e/pddl/`: Unified Planning / PDDL helpers (parsing, grounding, state conversion)
+- `s3e/_deps.py`: `require(module, extra)` helper for lazy, informative optional-dependency errors
+- `tests/`: mirrors the package layout (`tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, `tests/consumers/`, `tests/test_estimator.py`, `tests/test_imports.py`, ...)
 - `tests/conftest.py`: shared fixtures and Blocksworld sample data
+- `tests/fakes.py`: shared `FakeVLM` double implementing the full `VLMBackend` contract
 
 ## Environment
 - Python requirement: `>=3.10`
@@ -28,7 +31,7 @@
 ## Setup Commands
 - Core editable install: `pip install -e .`
 - Dev install: `pip install -e '.[dev]'`
-- Optional OpenAI extras: `pip install -e '.[openai]'`
+- Optional extras: `pddl` (PDDL grounding), `hf` (HuggingFace VLM backend), `openai` (OpenAI VLM backend), `vllm` (local multi-GPU inference), `calibration` (Platt scaling, scikit-learn), `all` (everything except `vllm`) — e.g. `pip install -e '.[pddl,hf]'`
 
 ## Build Commands
 - Packaging is configured through setuptools in `pyproject.toml`.
@@ -54,16 +57,16 @@
 
 ## Single-Test Commands
 - One file: `pytest tests/test_cache.py`
-- One class: `pytest tests/test_vlm_backends.py::TestOpenAIVLM`
+- One class: `pytest tests/engine/test_answers.py::TestBinaryAnswers`
 - One test: `pytest tests/test_cache.py::TestMakeCacheKey::test_basic_key`
-- Another example: `pytest tests/test_semantic_state_estimator.py::TestTextMatchMode::test_text_match_probability`
+- Another example: `pytest tests/engine/test_answers.py::TestBinaryAnswers::test_default_yes_no`
 - Prefer the narrowest relevant test first, then broaden scope only if needed.
 
 ## Test Suite Notes
 - `pytest.ini` defines a `slow` marker for tests that download and run real HuggingFace models.
 - `pytest -m "not slow"` is the default verification command for normal development.
-- Reuse fixtures from `tests/conftest.py` instead of duplicating common setup.
-- Existing tests cover cache helpers, PDDL utilities, translators, VLM backends, and estimator flows.
+- Reuse fixtures from `tests/conftest.py` and the shared `FakeVLM` double from `tests/fakes.py` instead of duplicating common setup.
+- The test tree mirrors the package: `tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, plus `tests/test_estimator.py`, `tests/test_translators.py`, `tests/test_cache.py`, `tests/test_imports.py` (import-hygiene for bare/partial installs), and `tests/consumers/` (MLSS/ViPlan++ workflow contract tests).
 
 ## Code Style Guidelines
 

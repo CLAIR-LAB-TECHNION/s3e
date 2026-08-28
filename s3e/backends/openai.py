@@ -8,26 +8,17 @@ import base64
 from collections import defaultdict
 from io import BytesIO
 
+from .._deps import require
+
+require("openai", "openai", "OpenAIVLM")
+
 import numpy as np
+import openai
 
 from .backend import VLMBackend, VLMOutput
-from ..constants import OPENAI_MODEL_IDENTIFIER
-
-try:
-    import openai
-except ImportError:
-    openai = None  # type: ignore[assignment]
-
+from .resolve import OPENAI_MODEL_IDENTIFIER
 
 MAX_ALLOWED_OPENAI_LOGPROBS = 20
-
-
-def _check_openai_installed() -> None:
-    if openai is None:
-        raise ImportError(
-            "The 'openai' package is required for OpenAIVLM. "
-            "Install it with: pip install s3e[openai]"
-        )
 
 
 def _preprocess_image(image) -> str:
@@ -47,7 +38,6 @@ class OpenAIVLM(VLMBackend):
     """
 
     def __init__(self, model_id: str, **client_kwargs):
-        _check_openai_installed()
         self.model_id = model_id.removeprefix(OPENAI_MODEL_IDENTIFIER)
         self._client = openai.OpenAI(**client_kwargs)
 

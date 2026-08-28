@@ -1,0 +1,102 @@
+# tests/fakes.py
+"""Shared fake VLM backend implementing the full VLMBackend contract.
+
+Used by engine, estimator, calibration, and consumer tests. Honors the
+interest_tokens contract: when interest tokens are requested, the returned
+token_probs contains exactly those keys (absent tokens get 0.0).
+"""
+
+from s3e.backends import VLMBackend, VLMOutput
+
+
+class FakeVLM(VLMBackend):
+    """Deterministic fake backend.
+
+    Args:
+        token_probs: Default token-string -> probability mapping returned
+            for every query (before interest-token filtering).
+        text: Default generated text returned when ``generate=True``.
+        argmax_in_interest: Value reported when interest tokens are given.
+    """
+
+    def __init__(self, token_probs=None, text=None, argmax_in_interest=True):
+        self.token_probs = dict(token_probs or {"yes": 0.7, "no": 0.2})
+        self.text = text
+        self.argmax_in_interest = argmax_in_interest
+        self.calls: list[dict] = []
+        self._scripted: dict[str, dict] = {}
+        self._suppress_call_recording = False
+
+    def script_responses(self, mapping: dict[str, dict]) -> None:
+        """Per-query overrides: prompt-substring -> token_probs mapping."""
+        self._scripted.update(mapping)
+
+    def _probs_for(self, prompt: str) -> dict[str, float]:
+        for needle, probs in self._scripted.items():
+            if needle in prompt:
+                return dict(probs)
+        return dict(self.token_probs)
+
+    def _record(self, images, prompts, system_prompt, generate,
+                interest_tokens, inference_kwargs) -> None:
+        self.calls.append(
+            {
+                "images": list(images),
+                "prompts": list(prompts),
+                "system_prompt": system_prompt,
+                "generate": generate,
+                "interest_tokens": (
+                    None if interest_tokens is None else list(interest_tokens)
+                ),
+                "inference_kwargs": dict(inference_kwargs),
+            }
+        )
+
+    def _output_for(self, prompt, generate, interest_tokens) -> VLMOutput:
+        probs = self._probs_for(prompt)
+        if interest_tokens is not None:
+            token_probs = {t: probs.get(t, 0.0) for t in interest_tokens}
+            argmax = self.argmax_in_interest
+        else:
+            token_probs = probs
+            argmax = None
+        return VLMOutput(
+            token_probs=token_probs,
+            text=self.text if generate else None,
+            argmax_in_interest=argmax,
+        )
+
+    def query(self, images, prompt, system_prompt=None, generate=False,
+              interest_tokens=None, **inference_kwargs):
+        if not self._suppress_call_recording:
+            self._record(images, [prompt], system_prompt, generate,
+                         interest_tokens, inference_kwargs)
+        return self._output_for(prompt, generate, interest_tokens)
+
+    def query_batch(self, images, prompts, system_prompt=None, generate=False,
+                     interest_tokens=None, **inference_kwargs):
+        """One recorded call per batch, mirroring real backends' batching.
+
+        Unlike the ``VLMBackend`` default (which loops :meth:`query`), this
+        records the whole prompt list as a single call so batch-boundary
+        assertions (e.g. ``QueryEngine``'s ``batch_size`` chunking) can be
+        tested against the fake the same way they would against a real
+        batching backend. Each prompt's output is still produced by calling
+        :meth:`query` (with its own per-call recording suppressed for the
+        duration), not by bypassing it -- so a subclass overriding only
+        ``query`` (the established idiom for one-off fakes in this test
+        suite) is honored through ``query_batch`` too.
+        """
+        self._record(images, prompts, system_prompt, generate,
+                     interest_tokens, inference_kwargs)
+        self._suppress_call_recording = True
+        try:
+            return [
+                self.query(
+                    images, prompt, system_prompt, generate,
+                    interest_tokens=interest_tokens, **inference_kwargs
+                )
+                for prompt in prompts
+            ]
+        finally:
+            self._suppress_call_recording = False

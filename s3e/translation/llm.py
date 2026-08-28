@@ -6,10 +6,10 @@ OpenAI API models (identified by the ``"OpenAI/"`` prefix).
 
 from tqdm.auto import tqdm
 
+from .cache import make_cache_key, load_cache, save_cache
 from .translator import QueryTranslator
-from ..cache import make_cache_key, load_cache, save_cache
-from ..constants import OPENAI_MODEL_IDENTIFIER
-from ..pddl.up_utils import create_up_problem, get_object_names_dict, get_all_grounded_predicates_for_objects
+from .._deps import require
+from ..backends.resolve import OPENAI_MODEL_IDENTIFIER
 
 
 _NL_SYSTEM_PROMPT_TEMPLATE = """The following is a PDDL domain:
@@ -22,13 +22,7 @@ Respond only with this natural language query and nothing else."""
 
 def _openai_translate(model_id: str, predicate: str, system_prompt: str, **kwargs) -> str:
     """Translate a single predicate using the OpenAI API."""
-    try:
-        import openai
-    except ImportError:
-        raise ImportError(
-            "The 'openai' package is required for LLMTranslator with OpenAI models. "
-            "Install it with: pip install s3e[openai]"
-        )
+    import openai
 
     client = openai.OpenAI()
     response = client.responses.create(
@@ -97,19 +91,37 @@ class LLMTranslator(QueryTranslator):
         # Load HF model eagerly (OpenAI is stateless)
         self._hf_model = None
         self._hf_tokenizer = None
-        if not self._is_openai:
+        if self._is_openai:
+            require("openai", "openai", "LLMTranslator")
+        else:
+            require("transformers", "hf", "LLMTranslator")
             from transformers import AutoModelForCausalLM, AutoTokenizer
             self._hf_tokenizer = AutoTokenizer.from_pretrained(model_id)
             self._hf_model = AutoModelForCausalLM.from_pretrained(
                 model_id, device_map="auto"
             )
 
-    def translate(self, predicates, domain, problem):
+    def translate(
+        self,
+        predicates: list[str],
+        domain: str | None = None,
+        problem: str | None = None,
+    ) -> dict[str, str]:
         """Translate predicates to natural language queries.
 
         Uses cache when available. Only calls the LLM for predicates not already cached.
         """
-        # Build system prompt from PDDL context
+        if domain is None or problem is None:
+            raise ValueError(
+                "LLMTranslator needs the PDDL domain and problem for context; "
+                "got None. Use TemplateTranslator or PrewrittenTranslator for "
+                "PDDL-free estimation."
+            )
+
+        # Build system prompt from PDDL context (Unified Planning is imported
+        # here so that importing s3e does not pull it in).
+        from ..pddl.up_utils import create_up_problem, get_object_names_dict
+
         up_problem = create_up_problem(domain, problem)
         objects = get_object_names_dict(up_problem)
         objects_by_type = "\n".join(
