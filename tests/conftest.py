@@ -108,6 +108,11 @@ def single_image():
     return [Image.new("RGB", (64, 64))]
 
 
+def make_blank_image(size=(8, 8)):
+    """Tiny RGB image for backend tests."""
+    return Image.new("RGB", size, color=(127, 127, 127))
+
+
 @pytest.fixture
 def blocksworld_domain():
     return BLOCKSWORLD_DOMAIN

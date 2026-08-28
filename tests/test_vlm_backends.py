@@ -8,24 +8,7 @@ from PIL import Image
 
 from s3e.backends.backend import VLMBackend, VLMOutput
 
-
-class FakeVLM(VLMBackend):
-    """A fake VLM that returns configurable token probabilities."""
-
-    def __init__(
-        self, token_probs: dict[str, float] | None = None, text: str | None = None
-    ):
-        self.token_probs = token_probs or {"yes": 0.8, "no": 0.2}
-        self.text = text
-        self.call_count = 0
-
-    def query(
-        self, images, prompt, system_prompt=None, generate=False, **inference_kwargs
-    ):
-        del generate
-        del inference_kwargs
-        self.call_count += 1
-        return VLMOutput(token_probs=dict(self.token_probs), text=self.text)
+from fakes import FakeVLM
 
 
 class TestVLMOutput:
@@ -60,7 +43,7 @@ class TestVLMBackend:
         img = Image.new("RGB", (64, 64))
         results = vlm.query_batch([img], ["q1", "q2", "q3"])
         assert len(results) == 3
-        assert vlm.call_count == 3
+        assert len(vlm.calls) == 3
         assert all(isinstance(r, VLMOutput) for r in results)
 
     def test_query_batch_passes_system_prompt(self):
@@ -1781,3 +1764,46 @@ class TestVLLMBackendIntegration:
         assert gathered.argmax_in_interest == (
             max(full.token_probs, key=full.token_probs.get) in set(interest)
         )
+
+
+from backends.test_contract import BackendContract
+
+
+@pytest.mark.slow
+class TestHuggingFaceVLMContract(BackendContract):
+    """Applies the shared backend contract to a real, tiny HF model."""
+
+    @pytest.fixture(scope="class")
+    def make_backend(self):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        backend = HuggingFaceVLM(
+            TestHuggingFaceVLMIntegration.TINY_VLM_ID, device_map="cpu"
+        )
+        return lambda: backend
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or importlib.util.find_spec("vllm") is None,
+    reason="vLLM requires CUDA and an installed vllm package",
+)
+class TestVLLMBackendContract(BackendContract):
+    """Applies the shared backend contract to a real, small vLLM model."""
+
+    @pytest.fixture(scope="class")
+    def make_backend(self):
+        os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+
+        from s3e.backends.vllm import VLLMBackend
+
+        backend = VLLMBackend(
+            TestVLLMBackendIntegration.SMALL_VLM_ID,
+            tensor_parallel_size=1,
+            num_logprobs=None,
+            gpu_memory_utilization=0.3,
+            max_model_len=4096,
+            enforce_eager=True,
+            enable_prefix_caching=False,
+        )
+        return lambda: backend
