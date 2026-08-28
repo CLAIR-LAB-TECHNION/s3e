@@ -81,6 +81,11 @@ class TestMissingDependencyErrors:
             "from s3e import HuggingFaceVLM", ["torch"], "hf"
         )
 
+    def test_huggingface_names_hf_extra_when_only_transformers_missing(self):
+        self.check(
+            "from s3e import HuggingFaceVLM", ["transformers"], "hf"
+        )
+
     def test_vllm_names_vllm_extra(self):
         self.check("from s3e import VLLMBackend", ["vllm"], "vllm")
 

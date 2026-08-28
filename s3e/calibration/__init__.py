@@ -1,4 +1,3 @@
-# s3e/calibration/__init__.py
 """Calibration: collect scored examples once, fit and apply calibrators offline."""
 
 from .base import Calibrator

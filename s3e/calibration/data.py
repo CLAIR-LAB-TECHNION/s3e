@@ -64,7 +64,19 @@ class CalibrationSet:
 
     @classmethod
     def collect(cls, estimator, examples: list[CalibrationExample]) -> "CalibrationSet":
-        """Query the estimator's VLM on labeled examples (the expensive step)."""
+        """Query the estimator's VLM on labeled examples (the expensive step).
+
+        Raises:
+            ValueError: If the estimator does not use ``scoring="logprobs"`` —
+                grouped log-odds scores are not defined for text-match masses.
+        """
+        meta = estimator.calibration_meta()
+        if meta.get("scoring") != "logprobs":
+            raise ValueError(
+                "CalibrationSet.collect requires an estimator with "
+                f"scoring='logprobs'; got scoring={meta.get('scoring')!r} — "
+                "grouped log-odds scores are not defined for text-match masses"
+            )
         samples: list[CalibrationSample] = []
         for example in examples:
             if example.problem is not None:
@@ -81,7 +93,7 @@ class CalibrationSet:
                         problem=example.problem,
                     )
                 )
-        return cls(samples=samples, meta=estimator.calibration_meta())
+        return cls(samples=samples, meta=meta)
 
     def to_dict(self) -> dict:
         return {

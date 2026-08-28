@@ -8,6 +8,7 @@ vision-language model (LLaVA, Qwen2-VL, InternVL, etc.).
 from .._deps import require
 
 require("torch", "hf", "HuggingFaceVLM")
+require("transformers", "hf", "HuggingFaceVLM")
 
 import torch
 import numpy as np

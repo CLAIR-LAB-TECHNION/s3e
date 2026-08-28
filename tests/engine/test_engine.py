@@ -115,3 +115,13 @@ class TestAskEach:
         sets = QueryEngine(fake).ask_each(scenes, ["q"])
         assert len(sets) == 2
         assert all(isinstance(s, PredictionSet) for s in sets)
+
+
+class TestBackendMiscount:
+    def test_backend_returning_wrong_output_count_is_an_error(self):
+        class MiscountingVLM(FakeVLM):
+            def query_batch(self, images, prompts, **kwargs):
+                return super().query_batch(images, prompts, **kwargs)[:-1]
+
+        with pytest.raises(ValueError):
+            QueryEngine(MiscountingVLM()).ask([make_blank_image()], ["a", "b"])

@@ -1,4 +1,3 @@
-# s3e/calibration/base.py
 """Calibrator interface: fit offline, apply to prediction sets."""
 
 from abc import ABC, abstractmethod

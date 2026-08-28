@@ -1,4 +1,3 @@
-# tests/backends/test_contract.py
 """Contract tests every VLMBackend implementation must pass.
 
 Concrete backend test modules subclass ``BackendContract`` and provide a

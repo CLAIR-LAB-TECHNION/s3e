@@ -95,14 +95,28 @@ class PlattCalibrator(Calibrator):
     ) -> "PlattCalibrator":
         if scope not in VALID_SCOPES:
             raise ValueError(f"Unknown scope {scope!r}; expected one of {VALID_SCOPES}")
+        scoring = data.meta.get("scoring")
+        if scoring is not None and scoring != "logprobs":
+            raise ValueError(
+                f"CalibrationSet meta records scoring={scoring!r}; Platt "
+                "scaling requires scores collected with scoring='logprobs'"
+            )
         grouped: dict[str, list] = {}
         for sample in data.samples:
             grouped.setdefault(_group_key(sample.predicate, scope), []).append(sample)
         groups: dict[str, PlattParameters] = {}
         for key, samples in grouped.items():
             labels = [s.label for s in samples]
-            if pass_through_single_class and len(set(labels)) < 2:
-                continue
+            if len(set(labels)) < 2:
+                if pass_through_single_class:
+                    continue
+                raise ValueError(
+                    f"Calibration group {key!r} has only "
+                    f"{'positive' if all(labels) else 'negative'} samples; "
+                    "Platt scaling requires both positive and negative labels "
+                    "(or pass pass_through_single_class=True to leave such "
+                    "groups uncalibrated)"
+                )
             groups[key] = fit_platt_parameters([s.score for s in samples], labels)
         return cls(scope=scope, groups=groups, meta=dict(data.meta))
 

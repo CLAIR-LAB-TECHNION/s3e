@@ -80,11 +80,32 @@ class TestPlattFitApply:
                 CalibrationSet(samples=one_sided, meta={}), scope="global"
             )
 
+    def test_single_class_error_names_group_and_escape_hatch(self):
+        one_sided = [
+            CalibrationSample(predicate="on(a,b)", score=1.0 + i, label=True)
+            for i in range(5)
+        ]
+        data = CalibrationSet(samples=one_sided + make_samples("clear(a)"), meta={})
+        with pytest.raises(ValueError) as excinfo:
+            PlattCalibrator.fit(data, scope="lifted")
+        message = str(excinfo.value)
+        assert "'on'" in message
+        assert "pass_through_single_class" in message
+
     def test_invalid_scope_rejected(self):
         with pytest.raises(ValueError, match="scope"):
             PlattCalibrator.fit(
                 CalibrationSet(samples=make_samples(), meta={}), scope="bogus"
             )
+
+    def test_text_match_meta_rejected(self):
+        data = CalibrationSet(samples=make_samples(), meta={"scoring": "text_match"})
+        with pytest.raises(ValueError, match="logprobs"):
+            PlattCalibrator.fit(data, scope="global")
+
+    def test_logprobs_meta_accepted(self):
+        data = CalibrationSet(samples=make_samples(), meta={"scoring": "logprobs"})
+        assert PlattCalibrator.fit(data, scope="global").group_keys()
 
 
 class TestPlattPersistence:

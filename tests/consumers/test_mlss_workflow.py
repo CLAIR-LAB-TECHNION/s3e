@@ -1,4 +1,3 @@
-# tests/consumers/test_mlss_workflow.py
 """Contract tests for the MLSS workflow (make_predictions.py, calibrate_vlm.py).
 
 MLSS pattern: one long-lived estimator per domain; per sample it swaps the

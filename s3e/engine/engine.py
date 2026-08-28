@@ -84,7 +84,7 @@ class QueryEngine:
             )
 
         predictions: dict[str, Prediction] = {}
-        for query, output in zip(queries, outputs):
+        for query, output in zip(queries, outputs, strict=True):
             scored = space.score(output, scoring=mode)
             predictions[query] = Prediction(
                 query=query,

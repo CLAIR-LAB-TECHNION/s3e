@@ -63,6 +63,8 @@ class AnswerSpace:
         null_option: "AnswerOption | None" = None,
     ):
         self.options = tuple(options)
+        if not self.options:
+            raise ValueError("An answer space needs at least one option.")
         self.null_option = null_option
         labels = [o.label for o in self.options]
         if len(set(labels)) != len(labels):

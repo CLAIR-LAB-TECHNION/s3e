@@ -1,4 +1,3 @@
-# tests/fakes.py
 """Shared fake VLM backend implementing the full VLMBackend contract.
 
 Used by engine, estimator, calibration, and consumer tests. Honors the

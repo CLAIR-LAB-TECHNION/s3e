@@ -1,4 +1,3 @@
-# tests/consumers/test_viplan_workflow.py
 """Contract tests for the ViPlan++ workflow (mpst_exp/predict.py, estimators.py).
 
 ViPlan pattern: a shared prebuilt backend feeds estimators built per domain;

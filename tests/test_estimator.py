@@ -415,6 +415,71 @@ class TestCollectIntegration:
         assert len(data.samples) == len(target)
         assert data.meta["true_label"] == "yes"
 
+    def test_collect_rejects_text_match_estimator(self, images):
+        from s3e.calibration import CalibrationExample, CalibrationSet
+
+        fake = FakeVLM(text="Yes.")
+        estimator = make_estimator(fake, scoring="text_match")
+        example = CalibrationExample(images=images, state_dict={"on(a,b)": True})
+        with pytest.raises(ValueError, match="logprobs"):
+            CalibrationSet.collect(estimator, [example])
+        assert fake.calls == []  # refused before any VLM query
+
+
+class TestCalibratorCompat:
+    """estimate(calibrator=...) refuses calibrators whose recorded provenance
+    contradicts this estimator (ported from the monolith's profile validation)."""
+
+    def make_calibrator(self, meta):
+        from s3e.calibration import PlattCalibrator
+        from s3e.calibration.platt import GLOBAL_CALIBRATION_KEY, PlattParameters
+
+        params = PlattParameters(
+            a=-1.0, b=0.0, sample_count=2, positive_count=1, negative_count=1
+        )
+        return PlattCalibrator(
+            scope="global", groups={GLOBAL_CALIBRATION_KEY: params}, meta=meta
+        )
+
+    def test_matching_meta_accepted(self, images):
+        estimator = make_estimator()
+        calibrator = self.make_calibrator(estimator.calibration_meta())
+        results = estimator.estimate(images, calibrator=calibrator)
+        assert all(0.0 <= p.probability <= 1.0 for p in results.values())
+
+    def test_empty_meta_accepted(self, images):
+        make_estimator().estimate(images, calibrator=self.make_calibrator({}))
+
+    def test_domain_fingerprint_mismatch_rejected(self, images):
+        estimator = make_estimator()
+        meta = estimator.calibration_meta()
+        meta["domain_fingerprint"] = "0" * 64
+        with pytest.raises(ValueError, match="domain"):
+            estimator.estimate(images, calibrator=self.make_calibrator(meta))
+
+    def test_fingerprint_check_skipped_without_pddl(self, images):
+        estimator = SemanticStateEstimator(
+            predicates=["on(a,b)"],
+            vlm=FakeVLM(),
+            translator=TemplateTranslator(TEMPLATES),
+        )
+        meta = {"domain_fingerprint": "0" * 64}
+        estimator.estimate(images, calibrator=self.make_calibrator(meta))
+
+    def test_answer_space_mismatch_rejected(self, images):
+        estimator = make_estimator()
+        meta = estimator.calibration_meta()
+        meta["answers"] = BinaryAnswers("true", "false").to_dict()
+        with pytest.raises(ValueError, match="answer"):
+            estimator.estimate(images, calibrator=self.make_calibrator(meta))
+
+    def test_text_match_meta_rejected(self, images):
+        estimator = make_estimator()
+        with pytest.raises(ValueError, match="logprobs"):
+            estimator.estimate(
+                images, calibrator=self.make_calibrator({"scoring": "text_match"})
+            )
+
 
 @pytest.mark.slow
 class TestRealModelIntegration:

@@ -196,12 +196,14 @@ class SemanticStateEstimator:
         inference_kwargs: "dict | None" = None,
     ) -> PredictionSet:
         """Estimate the selected predicates; returns a lazy PredictionSet."""
-        if calibrator is not None and self.engine.scoring != "logprobs":
-            raise ValueError(
-                "calibrator requires scoring='logprobs'; this estimator uses "
-                f"scoring={self.engine.scoring!r} — calibration over text-match "
-                "masses produces meaningless probabilities"
-            )
+        if calibrator is not None:
+            if self.engine.scoring != "logprobs":
+                raise ValueError(
+                    "calibrator requires scoring='logprobs'; this estimator uses "
+                    f"scoring={self.engine.scoring!r} — calibration over text-match "
+                    "masses produces meaningless probabilities"
+                )
+            self._check_calibrator_compat(calibrator)
         selected = self._select(predicates)
         queries = [self.queries[p] for p in selected]
         # Distinct queries only: predicates that translate to the same query
@@ -231,6 +233,38 @@ class SemanticStateEstimator:
         """Estimate and threshold into a boolean state."""
         threshold = confidence if confidence is not None else self.confidence
         return self.estimate(images).to_state(confidence=threshold)
+
+    def _check_calibrator_compat(self, calibrator) -> None:
+        """Refuse calibrators whose recorded provenance contradicts this estimator.
+
+        Only fields the calibrator's meta actually carries are compared, so
+        hand-built calibrators (no meta) apply unconditionally.
+        """
+        meta = getattr(calibrator, "meta", None) or {}
+        scoring = meta.get("scoring")
+        if scoring is not None and scoring != "logprobs":
+            raise ValueError(
+                f"calibrator was fitted on scoring={scoring!r} data; only "
+                "scoring='logprobs' calibration is supported"
+            )
+        fingerprint = meta.get("domain_fingerprint")
+        if (
+            fingerprint is not None
+            and self.domain_fingerprint is not None
+            and fingerprint != self.domain_fingerprint
+        ):
+            raise ValueError(
+                "calibrator was fitted on data from a different domain: "
+                f"calibrator domain_fingerprint {fingerprint!r} != estimator "
+                f"{self.domain_fingerprint!r}"
+            )
+        answers = meta.get("answers")
+        if answers is not None and answers != self.engine.answers.to_dict():
+            raise ValueError(
+                "calibrator answer space does not match this estimator's: "
+                f"calibrator uses {answers!r}, estimator uses "
+                f"{self.engine.answers.to_dict()!r}"
+            )
 
     def _select(self, predicates: "Sequence[str] | None") -> list[str]:
         if predicates is None:

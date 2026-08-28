@@ -137,3 +137,13 @@ class TestUnknownScoring:
     def test_unknown_scoring_mode_rejected(self):
         with pytest.raises(ValueError, match="scoring"):
             BinaryAnswers().score(VLMOutput(), scoring="magic")
+
+
+class TestEmptyOptions:
+    def test_empty_answer_space_rejected(self):
+        with pytest.raises(ValueError, match="at least one"):
+            AnswerSpace([])
+
+    def test_empty_categorical_rejected(self):
+        with pytest.raises(ValueError, match="at least one"):
+            CategoricalAnswers([])
