@@ -1,12 +1,19 @@
-"""Tests for VLM backends."""
+"""Tests for the vLLM backend: mocked-engine units, import behavior,
+slow GPU integration, and the shared backend contract.
+
+Importing ``s3e.backends.vllm`` needs a working ``vllm`` package (the
+``dev-gpu`` extra); tests guard themselves so a CPU ``dev`` install
+skips them cleanly instead of failing.
+"""
 
 import importlib.util
 import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-import torch
 from PIL import Image
+
+torch = pytest.importorskip("torch", reason="torch not installed (s3e[hf])")
 
 from s3e.backends.backend import VLMOutput
 
