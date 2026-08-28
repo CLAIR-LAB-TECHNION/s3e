@@ -15,7 +15,7 @@ from s3e.calibration import (
     apply_platt_scaling,
 )
 from s3e.semantic_state_estimator import SemanticStateEstimator
-from s3e.vlm.backend import VLMOutput
+from s3e.backends.backend import VLMOutput
 from s3e.translation.identity import IdentityTranslator
 from s3e.translation.prewritten import PrewrittenTranslator
 from s3e.translation.template import TemplateTranslator
@@ -2678,7 +2678,7 @@ class TestSemanticStateEstimatorIntegration:
 
 class TestUseVllmRouting:
     def test_use_vllm_routes_string_model_to_vllm_backend(self):
-        with patch("s3e.vlm.vllm.VLLMBackend") as mock_backend:
+        with patch("s3e.backends.vllm.VLLMBackend") as mock_backend:
             mock_instance = MagicMock()
             mock_backend.return_value = mock_instance
             est = SemanticStateEstimator(
@@ -2694,7 +2694,7 @@ class TestUseVllmRouting:
         assert est.vlm is mock_instance
 
     def test_use_vllm_with_openai_model_warns(self):
-        with patch("s3e.vlm.openai.OpenAIVLM") as mock_backend:
+        with patch("s3e.backends.openai.OpenAIVLM") as mock_backend:
             mock_instance = MagicMock()
             mock_backend.return_value = mock_instance
             with pytest.warns(UserWarning, match="not compatible with OpenAI"):

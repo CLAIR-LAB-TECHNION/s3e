@@ -3,7 +3,7 @@
 import pytest
 from PIL import Image
 
-from s3e.vlm.backend import VLMBackend, VLMOutput
+from s3e.backends.backend import VLMBackend, VLMOutput
 
 
 # Minimal blocksworld PDDL

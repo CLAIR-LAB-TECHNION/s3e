@@ -16,7 +16,7 @@ See the README for full documentation and examples.
 from .state_estimator import StateEstimator, ProbabilisticStateEstimator
 from .semantic_state_estimator import PredicatePredictionDetails, SemanticStateEstimator
 from .calibration import CalibrationExample, PlattCalibrationSample
-from .vlm import VLMBackend, VLMOutput, HuggingFaceVLM, OpenAIVLM
+from .backends import VLMBackend, VLMOutput, resolve_backend
 from .translation import (
     QueryTranslator,
     IdentityTranslator,
@@ -41,6 +41,7 @@ __all__ = [
     "PlattCalibrationSample",
     "VLMBackend",
     "VLMOutput",
+    "resolve_backend",
     "HuggingFaceVLM",
     "OpenAIVLM",
     "VLLMBackend",
@@ -51,11 +52,13 @@ __all__ = [
     "LLMTranslator",
 ]
 
+_LAZY_TOP_LEVEL = {"HuggingFaceVLM", "OpenAIVLM", "VLLMBackend"}
+
 
 def __getattr__(name: str):
     """Lazily expose optional integrations without importing their packages."""
-    if name == "VLLMBackend":
-        from .vlm import VLLMBackend
+    if name in _LAZY_TOP_LEVEL:
+        import s3e.backends as _backends
 
-        return VLLMBackend
+        return getattr(_backends, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

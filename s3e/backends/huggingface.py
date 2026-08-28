@@ -5,34 +5,22 @@ HuggingFace's Auto classes and ``AutoProcessor`` to support any standard
 vision-language model (LLaVA, Qwen2-VL, InternVL, etc.).
 """
 
+from .._deps import require
+
+require("torch", "hf", "HuggingFaceVLM")
+
 import torch
 import numpy as np
+from transformers import AutoProcessor
 
 from .backend import VLMBackend, VLMOutput
 from .token_index import build_token_reverse_index
 
 # transformers 5.x renamed AutoModelForVision2Seq to AutoModelForImageTextToText
-_AutoModelClass = None
-AutoProcessor = None  # type: ignore[assignment]
-
 try:
-    from transformers import AutoProcessor  # type: ignore[no-redef]
-
-    try:
-        from transformers import AutoModelForImageTextToText as _AutoModelClass  # type: ignore[no-redef]
-    except ImportError:
-        from transformers import AutoModelForVision2Seq as _AutoModelClass  # type: ignore[no-redef]
+    from transformers import AutoModelForImageTextToText as _AutoModelClass
 except ImportError:
-    pass
-
-
-def _check_hf_imports() -> None:
-    if _AutoModelClass is None or AutoProcessor is None:
-        raise ImportError(
-            "Neither AutoModelForImageTextToText nor AutoModelForVision2Seq "
-            "are available in your version of transformers. "
-            "Install a compatible version with: pip install 'transformers>=4.36'"
-        )
+    from transformers import AutoModelForVision2Seq as _AutoModelClass
 
 
 class HuggingFaceVLM(VLMBackend):
@@ -67,7 +55,6 @@ class HuggingFaceVLM(VLMBackend):
         skip_pad_invariance_check: bool = False,
         **model_kwargs,
     ):
-        _check_hf_imports()
         self.model_id = model_id
         self.num_logprobs = num_logprobs
         self.max_new_tokens = max_new_tokens

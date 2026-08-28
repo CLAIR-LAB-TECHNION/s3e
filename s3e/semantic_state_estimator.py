@@ -49,7 +49,7 @@ from .pddl.up_utils import (
 from .state_estimator import ProbabilisticStateEstimator
 from .translation.identity import IdentityTranslator
 from .translation.translator import QueryTranslator
-from .vlm.backend import VLMBackend, VLMOutput
+from .backends.backend import VLMBackend, VLMOutput
 
 
 @dataclass(frozen=True)
@@ -234,14 +234,14 @@ class SemanticStateEstimator(ProbabilisticStateEstimator):
                     # this helper and __init__.
                     stacklevel=3,
                 )
-            from .vlm.openai import OpenAIVLM
+            from .backends.openai import OpenAIVLM
 
             return OpenAIVLM(vlm_id, **vlm_kwargs)
         if use_vllm:
-            from .vlm.vllm import VLLMBackend
+            from .backends.vllm import VLLMBackend
 
             return VLLMBackend(vlm_id, **vlm_kwargs)
-        from .vlm.huggingface import HuggingFaceVLM
+        from .backends.huggingface import HuggingFaceVLM
 
         return HuggingFaceVLM(vlm_id, **vlm_kwargs)
 
