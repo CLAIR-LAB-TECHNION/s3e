@@ -1187,7 +1187,7 @@ class TestGlobalPlattScaling:
     def test_fit_platt_scaling_requires_sklearn(
         self, blocksworld_domain, blocksworld_problem, monkeypatch
     ):
-        import s3e.calibration as calibration
+        import importlib.util
 
         vlm = CalibrationVLM({(1, "on(a,a)"): 0.5, (1, "on(a,b)"): 0.5, (1, "on(b,a)"): 0.5, (1, "on(b,b)"): 0.5, (1, "clear(a)"): 0.5, (1, "clear(b)"): 0.5})
         se = SemanticStateEstimator(blocksworld_domain, blocksworld_problem, vlm=vlm)
@@ -1203,7 +1203,14 @@ class TestGlobalPlattScaling:
             },
         )
 
-        monkeypatch.setattr(calibration, "LogisticRegression", None)
+        real_find_spec = importlib.util.find_spec
+
+        def fake_find_spec(name, *args, **kwargs):
+            if name == "sklearn":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
         with pytest.raises(ImportError, match="s3e\\[calibration\\]"):
             se.fit_platt_scaling([example], scope="global")
 
