@@ -199,7 +199,14 @@ class PredictionSet(Mapping):
 
     @classmethod
     def average(cls, sets: "Sequence[PredictionSet]") -> "PredictionSet":
-        """Mean of stored masses across prediction sets over the same queries."""
+        """Mean of stored data across prediction sets over the same queries.
+
+        Probability overrides are stored data too: when *every* member of a
+        key carries one (e.g. each scene was calibrated before averaging),
+        the averaged prediction carries their mean. When only some — or no —
+        members have an override, the averaged prediction has none and its
+        probability is re-derived from the averaged masses.
+        """
         if not sets:
             raise ValueError("Expected at least one PredictionSet to average.")
         keys = list(sets[0])
@@ -211,6 +218,7 @@ class PredictionSet(Mapping):
         for key in keys:
             members = [s[key] for s in sets]
             first = members[0]
+            overrides = [m.probability_override for m in members]
             averaged[key] = Prediction(
                 query=first.query,
                 masses={
@@ -221,5 +229,10 @@ class PredictionSet(Mapping):
                 unassigned_mass=sum(m.unassigned_mass for m in members) / count,
                 answers=first.answers,
                 argmax_in_interest=first.argmax_in_interest,
+                probability_override=(
+                    sum(overrides) / count
+                    if all(o is not None for o in overrides)
+                    else None
+                ),
             )
         return cls(averaged)

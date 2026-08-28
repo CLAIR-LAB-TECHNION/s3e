@@ -149,6 +149,20 @@ class TestAverage:
         assert avg["q"].masses["yes"] == pytest.approx(0.6)
         assert avg["q"].masses["no"] == pytest.approx(0.3)
 
+    def test_average_means_probability_overrides(self):
+        a = PredictionSet({"q": make_prediction(0.8, 0.1, probability_override=0.4)})
+        b = PredictionSet({"q": make_prediction(0.4, 0.5, probability_override=0.6)})
+        avg = PredictionSet.average([a, b])
+        assert avg["q"].probability_override == pytest.approx(0.5)
+        assert avg["q"].probability == pytest.approx(0.5)
+
+    def test_average_drops_partial_probability_overrides(self):
+        a = PredictionSet({"q": make_prediction(0.8, 0.1, probability_override=0.4)})
+        b = PredictionSet({"q": make_prediction(0.4, 0.5)})
+        avg = PredictionSet.average([a, b])
+        assert avg["q"].probability_override is None
+        assert avg["q"].probability == pytest.approx(0.6 / 0.9, rel=1e-6)
+
     def test_average_requires_same_queries(self):
         a = PredictionSet({"q1": make_prediction()})
         b = PredictionSet({"q2": make_prediction()})

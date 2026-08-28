@@ -329,6 +329,57 @@ class TestEstimateAveraged:
         assert results.to_state() == {"on(a,b)": None}
 
 
+    def test_calibration_is_applied_per_scene_then_averaged(self):
+        """Ported from the monolith's average-strategy calibration tests:
+        each scene is calibrated before averaging, not after."""
+
+        class SquaringCalibrator:
+            """Stands in for a fitted calibrator; nonlinear on purpose."""
+
+            def apply(self, results):
+                return PredictionSet(
+                    {
+                        k: p.with_probability(p.probability ** 2)
+                        for k, p in results.items()
+                    }
+                )
+
+        one, two = make_blank_image(), make_blank_image()
+        fake = ImageAwareVLM(
+            {
+                id(one): {"yes": 0.8, "no": 0.2},
+                id(two): {"yes": 0.4, "no": 0.6},
+            }
+        )
+        estimator = make_estimator(fake)
+        results = estimator.estimate_averaged(
+            [[one], [two]], calibrator=SquaringCalibrator()
+        )
+        # Mean of the per-scene calibrated probabilities (0.8^2 and 0.4^2).
+        # Averaging first and calibrating after would give 0.6^2 = 0.36;
+        # dropping the calibration entirely would give 0.6.
+        assert all(p.probability == pytest.approx(0.4) for p in results.values())
+
+    def test_constant_calibrator_survives_averaging(self):
+        class HalfCalibrator:
+            def apply(self, results):
+                return PredictionSet(
+                    {k: p.with_probability(0.5) for k, p in results.items()}
+                )
+
+        one, two = make_blank_image(), make_blank_image()
+        fake = ImageAwareVLM(
+            {
+                id(one): {"yes": 0.9, "no": 0.05},
+                id(two): {"yes": 0.7, "no": 0.2},
+            }
+        )
+        results = make_estimator(fake).estimate_averaged(
+            [[one], [two]], calibrator=HalfCalibrator()
+        )
+        assert all(p.probability == pytest.approx(0.5) for p in results.values())
+
+
 class TestDuplicateQueries:
     def test_predicates_sharing_a_query_are_asked_once(self, images):
         fake = FakeVLM()
