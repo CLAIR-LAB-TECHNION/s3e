@@ -87,3 +87,13 @@ class VLMBackend(ABC):
             )
             for p in prompts
         ]
+
+    def unsupported_interest_tokens(self, tokens: Sequence[str]) -> list[str]:
+        """Subset of ``tokens`` this backend cannot score as a single token.
+
+        Default: assume everything is scorable (unknown strings already get
+        0.0 mass under the interest-token contract). Backends with a reverse
+        token index (HuggingFace, vLLM) should override this to report token
+        strings that no single vocabulary id decodes to.
+        """
+        return []

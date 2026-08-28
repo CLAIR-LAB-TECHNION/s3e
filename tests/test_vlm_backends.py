@@ -39,7 +39,27 @@ class TestVLMBackend:
         assert "yes" in result.token_probs
 
     def test_query_batch_default_loops(self):
-        vlm = FakeVLM()
+        # FakeVLM overrides query_batch (to mirror real backends' batching),
+        # so a minimal subclass defining only query() exercises the base
+        # class's default sequential query_batch implementation instead.
+        class SequentialOnlyVLM(VLMBackend):
+            def __init__(self):
+                self.calls: list[str] = []
+
+            def query(
+                self,
+                images,
+                prompt,
+                system_prompt=None,
+                generate=False,
+                interest_tokens=None,
+                **inference_kwargs,
+            ):
+                del images, system_prompt, generate, interest_tokens, inference_kwargs
+                self.calls.append(prompt)
+                return VLMOutput(token_probs={"yes": 0.7, "no": 0.2})
+
+        vlm = SequentialOnlyVLM()
         img = Image.new("RGB", (64, 64))
         results = vlm.query_batch([img], ["q1", "q2", "q3"])
         assert len(results) == 3
@@ -862,6 +882,30 @@ class TestHuggingFaceVLMMocked:
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_unsupported_interest_tokens_reports_multi_token_strings(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+
+        vocab = ["yes", "no", "dark", "blue"]
+        mock_processor.tokenizer.__len__.return_value = len(vocab)
+        mock_processor.batch_decode.side_effect = lambda seqs, **kwargs: [
+            vocab[seq[0]] for seq in seqs
+        ]
+
+        vlm = HuggingFaceVLM("test/model")
+
+        unsupported = vlm.unsupported_interest_tokens(["yes", "dark blue"])
+
+        assert unsupported == ["dark blue"]
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_empty_prompts_returns_empty_list(
         self, mock_model_cls, mock_proc_cls
     ):
@@ -1526,6 +1570,20 @@ class TestVLLMBackendMocked:
 
         assert mock_llm.get_tokenizer.call_count == 1
         assert tokenizer.batch_decode.call_count == 1
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_unsupported_interest_tokens_reports_multi_token_strings(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(
+            ["yes", "no", "dark", "blue"]
+        )
+
+        unsupported = backend.unsupported_interest_tokens(["yes", "dark blue"])
+
+        assert unsupported == ["dark blue"]
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")

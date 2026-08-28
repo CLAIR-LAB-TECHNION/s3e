@@ -286,6 +286,16 @@ class VLLMBackend(VLMBackend):
             argmax_in_interest=argmax_in_interest,
         )
 
+    def unsupported_interest_tokens(self, tokens):
+        """Subset of ``tokens`` with no single-token surface form here.
+
+        Reuses the same reverse index (:meth:`_get_token_reverse_index`,
+        built once from the engine's tokenizer and cached) the interest-mode
+        id-lookup path uses.
+        """
+        index = self._get_token_reverse_index()
+        return [t for t in dict.fromkeys(tokens) if t not in index]
+
     def _get_token_reverse_index(self) -> dict[str, list[int]]:
         """Build (once) the decoded-string -> ids index from the tokenizer."""
         if self._token_reverse_index is None:

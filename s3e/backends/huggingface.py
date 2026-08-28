@@ -194,6 +194,19 @@ class HuggingFaceVLM(VLMBackend):
             for token_probs in self._format_token_probs(probs)
         ]
 
+    def unsupported_interest_tokens(self, tokens):
+        """Subset of ``tokens`` with no single-token surface form here.
+
+        Reuses the same reverse index (:meth:`_get_token_reverse_index`,
+        built once and cached) the interest-token gather path uses, sized
+        from the tokenizer's vocabulary -- the same cap that path applies
+        when the tokenizer length is known.
+        """
+        tokenizer = getattr(self.processor, "tokenizer", None)
+        vocab_size = len(tokenizer) if tokenizer is not None else 0
+        index = self._get_token_reverse_index(vocab_size)
+        return [t for t in dict.fromkeys(tokens) if t not in index]
+
     def _get_token_reverse_index(self, vocab_size: int) -> dict[str, list[int]]:
         """Build (once) and return the decoded-string -> ids index.
 

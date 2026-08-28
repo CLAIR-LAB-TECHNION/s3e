@@ -36,12 +36,12 @@ class FakeVLM(VLMBackend):
                 return dict(probs)
         return dict(self.token_probs)
 
-    def query(self, images, prompt, system_prompt=None, generate=False,
-              interest_tokens=None, **inference_kwargs):
+    def _record(self, images, prompts, system_prompt, generate,
+                interest_tokens, inference_kwargs) -> None:
         self.calls.append(
             {
                 "images": list(images),
-                "prompts": [prompt],
+                "prompts": list(prompts),
                 "system_prompt": system_prompt,
                 "generate": generate,
                 "interest_tokens": (
@@ -50,6 +50,8 @@ class FakeVLM(VLMBackend):
                 "inference_kwargs": dict(inference_kwargs),
             }
         )
+
+    def _output_for(self, prompt, generate, interest_tokens) -> VLMOutput:
         probs = self._probs_for(prompt)
         if interest_tokens is not None:
             token_probs = {t: probs.get(t, 0.0) for t in interest_tokens}
@@ -62,3 +64,26 @@ class FakeVLM(VLMBackend):
             text=self.text if generate else None,
             argmax_in_interest=argmax,
         )
+
+    def query(self, images, prompt, system_prompt=None, generate=False,
+              interest_tokens=None, **inference_kwargs):
+        self._record(images, [prompt], system_prompt, generate,
+                     interest_tokens, inference_kwargs)
+        return self._output_for(prompt, generate, interest_tokens)
+
+    def query_batch(self, images, prompts, system_prompt=None, generate=False,
+                     interest_tokens=None, **inference_kwargs):
+        """One recorded call per batch, mirroring real backends' batching.
+
+        Unlike the ``VLMBackend`` default (which loops :meth:`query`), this
+        records the whole prompt list as a single call so batch-boundary
+        assertions (e.g. ``QueryEngine``'s ``batch_size`` chunking) can be
+        tested against the fake the same way they would against a real
+        batching backend.
+        """
+        self._record(images, prompts, system_prompt, generate,
+                     interest_tokens, inference_kwargs)
+        return [
+            self._output_for(prompt, generate, interest_tokens)
+            for prompt in prompts
+        ]

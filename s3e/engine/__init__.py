@@ -8,6 +8,7 @@ from .answers import (
     ScoredMasses,
     expand_token_variants,
 )
+from .engine import QueryEngine
 from .results import EPS, PREDICTION_SET_FORMAT_VERSION, Prediction, PredictionSet
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "PREDICTION_SET_FORMAT_VERSION",
     "Prediction",
     "PredictionSet",
+    "QueryEngine",
 ]
