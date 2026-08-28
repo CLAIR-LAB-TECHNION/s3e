@@ -11,9 +11,9 @@ from s3e.calibration import (
     PlattParameters,
     PlattScalingProfile,
     apply_platt_scaling,
-    compute_domain_fingerprint,
     grouped_log_odds,
 )
+from s3e.pddl.fingerprint import compute_domain_fingerprint
 
 
 class TestGroupedLogOdds:
