@@ -13,6 +13,7 @@ from PIL.Image import Image
 
 from .constants import (
     SYSTEM_PROMPT_ADDITIONAL_INSTRUCTIONS,
+    SYSTEM_PROMPT_IDENTITY,
     SYSTEM_PROMPT_NO_TRANSLATION,
     SYSTEM_PROMPT_WITH_TRANSLATION,
 )
@@ -77,8 +78,15 @@ class SemanticStateEstimator:
                     null_tokens=null_tokens,
                 )
 
+        # The default prompt must instruct the model to answer with the same
+        # labels the answer space scores: identity translation shows the model
+        # raw predicates and scores "true"/"false" tokens, while translated
+        # queries are natural-language yes/no questions. (from_pddl installs a
+        # richer domain-aware prompt for identity translation before this.)
         if system_prompt is None:
-            system_prompt = SYSTEM_PROMPT_WITH_TRANSLATION
+            system_prompt = (
+                SYSTEM_PROMPT_IDENTITY if identity else SYSTEM_PROMPT_WITH_TRANSLATION
+            )
         if additional_instructions:
             system_prompt += SYSTEM_PROMPT_ADDITIONAL_INSTRUCTIONS.format(
                 additional_instructions=additional_instructions

@@ -12,6 +12,9 @@ Here are the names of all the objects in the current problem, sorted by their ty
 Given a grounded predicate with concrete variables, state whether the statement is true or false.
 Respond only with a "true" or "false" response and nothing else."""
 
+SYSTEM_PROMPT_IDENTITY = """Given a grounded predicate with concrete variables, state whether the statement is true or false.
+Respond only with a "true" or "false" response and nothing else."""
+
 SYSTEM_PROMPT_WITH_TRANSLATION = (
     "A curious human is asking an artificial intelligence assistant yes or no questions. "
     "The assistant answers with one of two responses: YES or NO. "

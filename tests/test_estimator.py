@@ -218,6 +218,23 @@ class TestSystemPrompt:
     def test_translated_queries_get_yes_no_prompt(self):
         assert "YES or NO" in make_estimator().engine.system_prompt
 
+    def test_direct_identity_construction_prompt_matches_answer_space(self):
+        """Direct construction defaults to identity translation and a
+        true/false answer space; the default prompt must instruct the model
+        to answer with those same labels, not YES/NO."""
+        estimator = SemanticStateEstimator(["on(a,b)"], vlm=FakeVLM())
+        prompt = estimator.engine.system_prompt
+        assert "true" in prompt.lower()
+        assert "false" in prompt.lower()
+        assert "YES or NO" not in prompt
+
+    def test_direct_identity_construction_additional_instructions_appended(self):
+        estimator = SemanticStateEstimator(
+            ["on(a,b)"], vlm=FakeVLM(), additional_instructions="Be terse."
+        )
+        assert estimator.engine.system_prompt.endswith("Be terse.")
+        assert "true" in estimator.engine.system_prompt.lower()
+
     def test_explicit_system_prompt_wins(self):
         estimator = make_estimator(system_prompt="Custom.")
         assert estimator.engine.system_prompt == "Custom."
