@@ -124,6 +124,10 @@ class SemanticStateEstimator:
         ``domain``/``problem`` are PDDL strings or ``.pddl`` file paths.
         Identity translation additionally gets a domain-aware system prompt.
         """
+        if "vlm" not in kwargs:
+            raise TypeError(
+                "from_pddl() missing required keyword argument: 'vlm'"
+            )
         from .pddl import (
             compute_domain_fingerprint,
             get_object_names_dict,

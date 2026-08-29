@@ -77,6 +77,12 @@ class TestConstructionFromPddl:
     def test_fingerprint_available(self):
         assert len(make_estimator().domain_fingerprint) == 64
 
+    def test_from_pddl_without_vlm_raises_type_error(self):
+        with pytest.raises(TypeError, match="vlm"):
+            SemanticStateEstimator.from_pddl(
+                BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM
+            )
+
 
 class TestEstimate:
     def test_returns_prediction_set_keyed_by_predicate(self, images):
