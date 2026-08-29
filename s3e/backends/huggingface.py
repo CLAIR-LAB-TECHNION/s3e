@@ -118,8 +118,10 @@ class HuggingFaceVLM(VLMBackend):
         if not prompts:
             return []
 
-        # by default, only keep the last token's log probabilities to avoid OOM
-        if "logits_to_keep" not in inference_kwargs:
+        # by default, only keep the last token's log probabilities to avoid
+        # OOM; generate() manages its own logits, so only the forward pass
+        # gets this default
+        if not generate and "logits_to_keep" not in inference_kwargs:
             inference_kwargs["logits_to_keep"] = 1
 
         text_inputs = [
@@ -412,19 +414,21 @@ class HuggingFaceVLM(VLMBackend):
         return [self.processor.decode(int(token_id)) for token_id in token_ids]
 
     def _generate_text(self, inputs, **inference_kwargs) -> list[str | None]:
-        """Generate text responses for a batch of prompts."""
+        """Generate text responses for a batch of prompts.
+
+        Generation errors propagate to the caller. ``None`` entries appear
+        only when the generated sequences cannot be aligned one-to-one with
+        the input prompts (e.g. multi-sequence decoding strategies).
+        """
         batch_size = self._infer_batch_size(inputs)
-        try:
-            output_ids = self.model.generate(**inputs, **inference_kwargs)
-            generated_sequences = self._trim_generated_sequences(output_ids, inputs)
-            generated_sequences = self._select_generated_sequences_for_prompts(
-                generated_sequences, batch_size
-            )
-            if generated_sequences is None:
-                return [None for _ in range(batch_size)]
-            return self._decode_generated_sequences(generated_sequences)
-        except Exception:
+        output_ids = self.model.generate(**inputs, **inference_kwargs)
+        generated_sequences = self._trim_generated_sequences(output_ids, inputs)
+        generated_sequences = self._select_generated_sequences_for_prompts(
+            generated_sequences, batch_size
+        )
+        if generated_sequences is None:
             return [None for _ in range(batch_size)]
+        return self._decode_generated_sequences(generated_sequences)
 
     @staticmethod
     def _infer_batch_size(inputs) -> int:

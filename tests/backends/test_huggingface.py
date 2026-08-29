@@ -731,6 +731,54 @@ class TestHuggingFaceVLMMocked:
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_generate_mode_does_not_forward_logits_to_keep(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """The logits_to_keep=1 memory default belongs to the logprobs
+        forward pass only; generate() manages its own logits and must not
+        receive it."""
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+        mock_processor.return_value = {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+        mock_processor.decode.return_value = "yes"
+        mock_model.generate.return_value = torch.ones((1, 6), dtype=torch.long)
+
+        vlm = HuggingFaceVLM("test/model")
+        img = Image.new("RGB", (64, 64))
+        _ = vlm.query([img], "Is A on B?", generate=True)
+
+        mock_model.generate.assert_called_once()
+        assert "logits_to_keep" not in mock_model.generate.call_args.kwargs
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_generate_error_propagates(self, mock_model_cls, mock_proc_cls):
+        """A failing generate() must raise, not silently produce None text."""
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+        mock_processor.return_value = {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+        mock_model.generate.side_effect = RuntimeError("CUDA out of memory")
+
+        vlm = HuggingFaceVLM("test/model")
+        img = Image.new("RGB", (64, 64))
+
+        with pytest.raises(RuntimeError, match="CUDA out of memory"):
+            vlm.query([img], "Is A on B?", generate=True)
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_batch_generate_calls_generate_once_and_batch_decodes(
         self, mock_model_cls, mock_proc_cls
     ):
