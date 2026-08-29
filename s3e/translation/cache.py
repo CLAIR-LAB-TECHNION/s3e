@@ -13,7 +13,8 @@ def make_cache_key(model_id: str, problem_name: str, **kwargs) -> str:
     """Build a deterministic cache filename from model ID, problem name, and kwargs.
 
     The filename format is: ``model_id--(problem_name;k1=v1;k2=v2).json``
-    where slashes in model_id are replaced with double underscores.
+    where path separators anywhere in the name (model IDs, kwarg values,
+    ...) are replaced with double underscores.
 
     Args:
         model_id: The model identifier (e.g. ``"meta-llama/Llama-3"``).
@@ -23,11 +24,11 @@ def make_cache_key(model_id: str, problem_name: str, **kwargs) -> str:
     Returns:
         A filename string safe for use as a file name.
     """
-    safe_model_id = model_id.replace("/", "__")
     params = f"pddl_problem={problem_name}"
     if kwargs:
         params += ";" + ";".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
-    return f"{safe_model_id}--({params}).json"
+    name = f"{model_id}--({params}).json"
+    return name.replace("/", "__").replace("\\", "__")
 
 
 def load_cache(cache_dir: str, cache_key: str) -> dict[str, str]:

@@ -23,6 +23,13 @@ class TestMakeCacheKey:
         key = make_cache_key("org/model-name", "problem")
         assert "/" not in key.replace(".json", "")
 
+    def test_key_strips_slashes_from_kwarg_values(self):
+        """Kwarg values like file paths must not smuggle path separators
+        into the cache filename."""
+        key = make_cache_key("model", "problem", chat_template="path/to/template")
+        assert "/" not in key.replace(".json", "")
+        assert "\\" not in key
+
     def test_same_inputs_same_key(self):
         key1 = make_cache_key("model", "prob", x=1)
         key2 = make_cache_key("model", "prob", x=1)
