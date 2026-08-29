@@ -66,6 +66,10 @@ class CalibrationSet:
     def collect(cls, estimator, examples: list[CalibrationExample]) -> "CalibrationSet":
         """Query the estimator's VLM on labeled examples (the expensive step).
 
+        Examples carrying their own ``problem`` are estimated under that
+        problem; the estimator is restored to its original problem before
+        returning (even on error).
+
         Raises:
             ValueError: If the estimator does not use ``scoring="logprobs"`` —
                 grouped log-odds scores are not defined for text-match masses.
@@ -78,21 +82,28 @@ class CalibrationSet:
                 "grouped log-odds scores are not defined for text-match masses"
             )
         samples: list[CalibrationSample] = []
-        for example in examples:
-            if example.problem is not None:
-                estimator.set_problem(estimator.domain_pddl, example.problem)
-            results = estimator.estimate(
-                example.images, predicates=list(example.state_dict)
-            )
-            for predicate, label in example.state_dict.items():
-                samples.append(
-                    CalibrationSample(
-                        predicate=predicate,
-                        score=results[predicate].score,
-                        label=bool(label),
-                        problem=example.problem,
-                    )
+        original_problem = estimator.problem_pddl
+        problem_changed = False
+        try:
+            for example in examples:
+                if example.problem is not None:
+                    estimator.set_problem(estimator.domain_pddl, example.problem)
+                    problem_changed = True
+                results = estimator.estimate(
+                    example.images, predicates=list(example.state_dict)
                 )
+                for predicate, label in example.state_dict.items():
+                    samples.append(
+                        CalibrationSample(
+                            predicate=predicate,
+                            score=results[predicate].score,
+                            label=bool(label),
+                            problem=example.problem,
+                        )
+                    )
+        finally:
+            if problem_changed:
+                estimator.set_problem(estimator.domain_pddl, original_problem)
         return cls(samples=samples, meta=meta)
 
     def to_dict(self) -> dict:

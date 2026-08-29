@@ -438,6 +438,25 @@ class TestCollectIntegration:
         assert len(data.samples) == len(target)
         assert data.meta["true_label"] == "yes"
 
+    def test_collect_restores_estimator_problem(self, images):
+        """Per-example set_problem calls are collection plumbing; collect must
+        leave the estimator on the problem it started with."""
+        from s3e.calibration import CalibrationExample, CalibrationSet
+
+        estimator = make_estimator(FakeVLM({"yes": 0.8, "no": 0.1}))
+        original_problem = estimator.problem_pddl
+        original_predicates = list(estimator.predicates)
+
+        example = CalibrationExample(
+            images=images,
+            state_dict={"on(a,b)": True},
+            problem=BLOCKSWORLD_PROBLEM_3,
+        )
+        CalibrationSet.collect(estimator, [example])
+
+        assert estimator.problem_pddl == original_problem
+        assert estimator.predicates == original_predicates
+
     def test_collect_rejects_text_match_estimator(self, images):
         from s3e.calibration import CalibrationExample, CalibrationSet
 
