@@ -28,6 +28,15 @@ class TestVLMOutput:
         output = VLMOutput(token_probs={"yes": 0.9}, argmax_in_interest=True)
         assert output.argmax_in_interest is True
 
+    def test_token_probs_type_admits_none(self):
+        """Every backend sets token_probs=None in generate mode; the declared
+        field type must say so."""
+        import types
+
+        field = VLMOutput.__dataclass_fields__["token_probs"]
+        assert isinstance(field.type, types.UnionType)
+        assert type(None) in field.type.__args__
+
 
 class TestVLMBackend:
     def test_query_returns_vlm_output(self):

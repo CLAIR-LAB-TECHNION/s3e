@@ -21,7 +21,8 @@ class VLMOutput:
             When the query was made with ``interest_tokens``, the keys are
             exactly those tokens (tokens absent from the model's vocabulary
             or returned distribution get probability 0.0); otherwise the
-            keys are whatever distribution the backend returns.
+            keys are whatever distribution the backend returns. ``None`` in
+            generate mode, where backends produce text only.
         text: The generated text response, if available.
         argmax_in_interest: Whether the model's single most likely next
             token is one of the requested ``interest_tokens``. ``None``
@@ -30,7 +31,7 @@ class VLMOutput:
             so the reported masses cover almost none of the distribution.
     """
 
-    token_probs: dict[str, float] = field(default_factory=dict)
+    token_probs: dict[str, float] | None = field(default_factory=dict)
     text: str | None = None
     argmax_in_interest: bool | None = None
 
