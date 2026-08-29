@@ -159,3 +159,68 @@ class TestOpenAIVLM:
 
         assert set(result.token_probs) == {"yes", "maybe"}
         assert result.argmax_in_interest is None
+
+    @patch("s3e.backends.openai.openai")
+    def test_generate_mode_skips_logprobs(self, mock_openai_module):
+        """Generate mode must not request logprobs (reasoning models reject
+        them) and returns text only, like the other backends."""
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "yes, it is"
+        mock_choice.logprobs = None
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+
+        vlm = OpenAIVLM("gpt-4o")
+        img = Image.new("RGB", (64, 64))
+        result = vlm.query([img], "Is A on B?", generate=True)
+
+        request_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert "logprobs" not in request_kwargs
+        assert "top_logprobs" not in request_kwargs
+        assert result.token_probs is None
+        assert result.text == "yes, it is"
+        assert result.argmax_in_interest is None
+
+    @patch("s3e.backends.openai.openai")
+    def test_missing_logprobs_raises_informative_error(self, mock_openai_module):
+        """Models that return no logprobs must fail with guidance, not an
+        opaque AttributeError."""
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "yes"
+        mock_choice.logprobs = None
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+
+        vlm = OpenAIVLM("gpt-4o")
+        img = Image.new("RGB", (64, 64))
+
+        with pytest.raises(ValueError, match="logprobs.*text_match"):
+            vlm.query([img], "Is A on B?")
+
+    @patch("s3e.backends.openai.openai")
+    def test_empty_logprobs_content_raises_informative_error(
+        self, mock_openai_module
+    ):
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "yes"
+        mock_choice.logprobs.content = []
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_response
+
+        vlm = OpenAIVLM("gpt-4o")
+        img = Image.new("RGB", (64, 64))
+
+        with pytest.raises(ValueError, match="logprobs.*text_match"):
+            vlm.query([img], "Is A on B?")

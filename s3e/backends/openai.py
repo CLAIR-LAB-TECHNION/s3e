@@ -50,11 +50,14 @@ class OpenAIVLM(VLMBackend):
         interest_tokens=None,
         **inference_kwargs,
     ):
-        """Send a query to the OpenAI API."""
-        # no need to differentiate between generation and logprobs modes here since the API can return both in one call
-        del generate
+        """Send a query to the OpenAI API.
 
-        self._set_inference_kwargs_defaults(inference_kwargs)
+        Logprobs mode forces ``logprobs``/``top_logprobs`` on the request;
+        generate mode requests neither (models without logprob support, e.g.
+        reasoning models, stay usable via ``scoring="text_match"``) and
+        returns text only, like the other backends.
+        """
+        self._set_inference_kwargs_defaults(inference_kwargs, generate)
 
         # Build image content
         image_content = [
@@ -76,23 +79,28 @@ class OpenAIVLM(VLMBackend):
             model=self.model_id,
             **inference_kwargs,
         )
+        text = response.choices[0].message.content
+
+        if generate:
+            return VLMOutput(token_probs=None, text=text)
 
         # Extract token probabilities from first generated token
         token_probs, argmax_in_interest = self._extract_token_probs(
             response, interest_tokens
         )
-        text = response.choices[0].message.content
 
         return VLMOutput(
             token_probs=token_probs,
             text=text,
             argmax_in_interest=argmax_in_interest,
         )
-    
-    def _set_inference_kwargs_defaults(self, inference_kwargs):
-        # force inference loggprobs regardless of what the user passed.
-        inference_kwargs["logprobs"] = True
-        inference_kwargs["top_logprobs"] = MAX_ALLOWED_OPENAI_LOGPROBS
+
+    def _set_inference_kwargs_defaults(self, inference_kwargs, generate):
+        # force inference logprobs in logprobs mode regardless of what the
+        # user passed; generate mode requests none.
+        if not generate:
+            inference_kwargs["logprobs"] = True
+            inference_kwargs["top_logprobs"] = MAX_ALLOWED_OPENAI_LOGPROBS
 
         # by default, use deterministic outputs. enable user override
         # Note that we do not set `max_completion_tokens` by default to enable reasoning to proceed as the model sees fit.
@@ -109,8 +117,19 @@ class OpenAIVLM(VLMBackend):
         exactly those tokens (0.0 when absent from the returned top
         logprobs) plus whether the single highest-logprob entry is an
         interest token.
+
+        Raises:
+            ValueError: If the response carries no logprobs — some models
+                (e.g. reasoning models) do not support them.
         """
-        top_logprobs = response.choices[0].logprobs.content[0].top_logprobs
+        logprobs = response.choices[0].logprobs
+        if logprobs is None or not logprobs.content:
+            raise ValueError(
+                "OpenAI response carries no logprobs; the model may not "
+                "support them. Use scoring='text_match' or a model that "
+                "returns logprobs."
+            )
+        top_logprobs = logprobs.content[0].top_logprobs
 
         tok_to_prob: dict[str, float] = defaultdict(float)
         for item in top_logprobs:
