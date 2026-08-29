@@ -69,10 +69,9 @@ class VLLMBackend(VLMBackend):
             ``**model_kwargs``.
 
     Notes:
-        There is intentionally no ``max_new_tokens`` parameter: the HF backend
-        stores one but never forwards it, so it is dead state we do not
-        reproduce. Generation length is controlled through ``inference_kwargs``
-        (vLLM ``SamplingParams.max_tokens``).
+        There is intentionally no ``max_new_tokens`` parameter (the HF backend
+        makes the same choice): generation length is controlled per call
+        through ``inference_kwargs`` (vLLM ``SamplingParams.max_tokens``).
 
         This backend relies on the model's chat template (see
         :meth:`query_batch`); a model without one is unsupported on this path.

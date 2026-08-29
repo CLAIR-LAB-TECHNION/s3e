@@ -37,12 +37,16 @@ class HuggingFaceVLM(VLMBackend):
             returns probabilities for all tokens. Defaults to ``None``.
             Irrelevant when a query passes ``interest_tokens``: that path
             gathers exact masses at known token ids and never truncates.
-        max_new_tokens: Maximum number of new tokens to generate. Defaults to 10.
         skip_pad_invariance_check: Skip the one-time check that padded batches
             reproduce unbatched answers, for models already known to be
             pad-invariant. Defaults to False.
-        **model_kwargs: Additional kwargs for from_pretrained(). ``max_new_tokens``
-            is consumed from this mapping and used for text generation.
+        **model_kwargs: Additional kwargs for from_pretrained().
+
+    Notes:
+        There is intentionally no ``max_new_tokens`` constructor parameter
+        (mirroring :class:`VLLMBackend`): generation length is controlled
+        per call through ``inference_kwargs`` (transformers ``generate()``
+        kwargs, e.g. ``max_new_tokens=10``).
     """
 
     def __init__(
@@ -52,13 +56,11 @@ class HuggingFaceVLM(VLMBackend):
         device_map: str = "auto",
         attn_implementation: str | None = None,
         num_logprobs: int | None = None,
-        max_new_tokens: int = 10,
         skip_pad_invariance_check: bool = False,
         **model_kwargs,
     ):
         self.model_id = model_id
         self.num_logprobs = num_logprobs
-        self.max_new_tokens = max_new_tokens
         self._pad_invariance_checked = bool(skip_pad_invariance_check)
         self._token_reverse_index: dict[str, list[int]] | None = None
 

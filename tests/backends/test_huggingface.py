@@ -96,21 +96,22 @@ class TestHuggingFaceVLMMocked:
         vlm = HuggingFaceVLM("test/model")
         mock_model_cls.from_pretrained.assert_called_once()
         mock_proc_cls.from_pretrained.assert_called_once()
-        assert vlm.max_new_tokens == 10
         assert vlm.num_logprobs is None
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
-    def test_custom_max_new_tokens(self, mock_model_cls, mock_proc_cls):
+    def test_no_max_new_tokens_constructor_state(self, mock_model_cls, mock_proc_cls):
+        """Generation length is a per-call inference kwarg, never constructor
+        state (mirroring VLLMBackend); the old ``max_new_tokens`` attribute
+        was stored but never forwarded to generate()."""
         from s3e.backends.huggingface import HuggingFaceVLM
 
-        mock_model = MagicMock()
-        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model_cls.from_pretrained.return_value = MagicMock()
         mock_proc_cls.from_pretrained.return_value = MagicMock()
 
-        vlm = HuggingFaceVLM("test/model", max_new_tokens=42)
+        vlm = HuggingFaceVLM("test/model")
 
-        assert vlm.max_new_tokens == 42
+        assert not hasattr(vlm, "max_new_tokens")
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
@@ -137,7 +138,7 @@ class TestHuggingFaceVLMMocked:
         mock_processor.tokenizer.convert_tokens_to_ids.return_value = 0
         mock_processor.tokenizer.vocab_size = 100
 
-        vlm = HuggingFaceVLM("test/model", max_new_tokens=100)
+        vlm = HuggingFaceVLM("test/model")
         img = Image.new("RGB", (64, 64))
         result = vlm.query([img], "Is A on B?")
 
