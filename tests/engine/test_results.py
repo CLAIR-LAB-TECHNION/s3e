@@ -168,3 +168,17 @@ class TestAverage:
         b = PredictionSet({"q2": make_prediction()})
         with pytest.raises(ValueError, match="same queries"):
             PredictionSet.average([a, b])
+
+    def test_average_argmax_flag_none_when_members_disagree(self):
+        """No single flag describes scenes where the model answered inside
+        the interest set on one and outside it on another."""
+        a = PredictionSet({"q": make_prediction(argmax_in_interest=True)})
+        b = PredictionSet({"q": make_prediction(argmax_in_interest=False)})
+        avg = PredictionSet.average([a, b])
+        assert avg["q"].argmax_in_interest is None
+
+    def test_average_argmax_flag_kept_when_members_agree(self):
+        a = PredictionSet({"q": make_prediction(argmax_in_interest=False)})
+        b = PredictionSet({"q": make_prediction(argmax_in_interest=False)})
+        avg = PredictionSet.average([a, b])
+        assert avg["q"].argmax_in_interest is False

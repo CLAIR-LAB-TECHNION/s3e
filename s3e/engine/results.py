@@ -206,6 +206,10 @@ class PredictionSet(Mapping):
         the averaged prediction carries their mean. When only some — or no —
         members have an override, the averaged prediction has none and its
         probability is re-derived from the averaged masses.
+
+        Non-numeric per-member data does not average: ``text`` is dropped,
+        and ``argmax_in_interest`` is kept only when every member agrees
+        (``None`` otherwise).
         """
         if not sets:
             raise ValueError("Expected at least one PredictionSet to average.")
@@ -219,6 +223,7 @@ class PredictionSet(Mapping):
             members = [s[key] for s in sets]
             first = members[0]
             overrides = [m.probability_override for m in members]
+            argmax_flags = {m.argmax_in_interest for m in members}
             averaged[key] = Prediction(
                 query=first.query,
                 masses={
@@ -228,7 +233,9 @@ class PredictionSet(Mapping):
                 null_mass=sum(m.null_mass for m in members) / count,
                 unassigned_mass=sum(m.unassigned_mass for m in members) / count,
                 answers=first.answers,
-                argmax_in_interest=first.argmax_in_interest,
+                argmax_in_interest=(
+                    argmax_flags.pop() if len(argmax_flags) == 1 else None
+                ),
                 probability_override=(
                     sum(overrides) / count
                     if all(o is not None for o in overrides)
