@@ -57,6 +57,13 @@ class TestCreateUpProblem:
         assert "on" in fluent_names
         assert "clear" in fluent_names
 
+    def test_file_domain_requires_file_problem(self, tmp_path):
+        domain_path = tmp_path / "domain.pddl"
+        domain_path.write_text(BLOCKSWORLD_DOMAIN)
+
+        with pytest.raises(ValueError, match="problem must also be a file"):
+            create_up_problem(str(domain_path), BLOCKSWORLD_PROBLEM)
+
 
 class TestGetObjectNamesDict:
     def test_returns_correct_objects(self, up_problem):

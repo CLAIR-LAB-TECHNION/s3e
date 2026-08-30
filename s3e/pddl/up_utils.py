@@ -16,9 +16,8 @@ def create_up_problem(domain: str, problem: str) -> Problem:
     """Create a Unified Planning problem from PDDL files or strings."""
     reader = PDDLReader()
     if domain.lower().endswith(".pddl"):
-        assert problem.lower().endswith(
-            ".pddl"
-        ), "if domain is a file, problem must also be a file"
+        if not problem.lower().endswith(".pddl"):
+            raise ValueError("if domain is a file, problem must also be a file")
         return reader.parse_problem(domain, problem)
     return reader.parse_problem_string(domain, problem)
 
