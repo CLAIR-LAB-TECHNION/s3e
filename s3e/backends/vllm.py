@@ -93,6 +93,15 @@ class VLLMBackend(VLMBackend):
         # sane value when no CUDA device is visible.
         if tensor_parallel_size is None:
             tensor_parallel_size = max(torch.cuda.device_count(), 1)
+        elif (
+            isinstance(tensor_parallel_size, bool)
+            or not isinstance(tensor_parallel_size, int)
+            or tensor_parallel_size < 1
+        ):
+            raise ValueError(
+                "tensor_parallel_size must be a positive int or None; "
+                f"got {tensor_parallel_size!r}"
+            )
         self.tensor_parallel_size = tensor_parallel_size
 
         # max_logprobs is fixed at engine-construction time, and num_logprobs is
