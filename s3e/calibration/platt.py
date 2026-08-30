@@ -100,6 +100,8 @@ class PlattCalibrator(Calibrator):
     ) -> "PlattCalibrator":
         if scope not in VALID_SCOPES:
             raise ValueError(f"Unknown scope {scope!r}; expected one of {VALID_SCOPES}")
+        if not data.samples:
+            raise ValueError("Expected at least one calibration sample.")
         scoring = data.meta.get("scoring")
         if scoring is not None and scoring != "logprobs":
             raise ValueError(

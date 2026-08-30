@@ -70,6 +70,10 @@ class TestPlattFitApply:
             results["clear(c)"].probability
         )
 
+    def test_empty_calibration_set_rejected(self):
+        with pytest.raises(ValueError, match="at least one calibration sample"):
+            PlattCalibrator.fit(CalibrationSet(samples=[], meta={}))
+
     def test_single_class_group_rejected_by_default(self):
         one_sided = [
             CalibrationSample(predicate="on(a,b)", score=1.0 + i, label=True)
