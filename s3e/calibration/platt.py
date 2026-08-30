@@ -34,7 +34,12 @@ def grouped_log_odds(
 
 
 def apply_platt_scaling(score: float, params: PlattParameters) -> float:
-    return 1.0 / (1.0 + math.exp(params.a * score + params.b))
+    """Apply the fitted sigmoid without overflowing for extreme logits."""
+    z = params.a * score + params.b
+    if z >= 0.0:
+        exp_neg_z = math.exp(-z)
+        return exp_neg_z / (1.0 + exp_neg_z)
+    return 1.0 / (1.0 + math.exp(z))
 
 
 def fit_platt_parameters(scores: list[float], labels: list[bool]) -> PlattParameters:

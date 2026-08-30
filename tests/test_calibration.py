@@ -39,6 +39,18 @@ class TestSigmoidApplication:
         expected = 1.0 / (1.0 + math.exp(1.5 * 0.7 - 0.5))
         assert probability == pytest.approx(expected)
 
+    def test_extreme_logits_do_not_overflow(self):
+        params = PlattParameters(
+            a=100.0,
+            b=0.0,
+            sample_count=2,
+            positive_count=1,
+            negative_count=1,
+        )
+
+        assert apply_platt_scaling(100.0, params) == pytest.approx(0.0)
+        assert apply_platt_scaling(-100.0, params) == pytest.approx(1.0)
+
 
 class TestCalibrationSample:
     def test_round_trips_through_dict(self):
