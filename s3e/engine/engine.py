@@ -46,17 +46,25 @@ class QueryEngine:
         inference_kwargs: "dict | None" = None,
         vlm_kwargs: "dict | None" = None,
     ):
-        self.backend = resolve_backend(vlm, **(vlm_kwargs or {}))
-        self.answers = answers if answers is not None else BinaryAnswers()
-        self.scoring = _validate_scoring(scoring)
-        self.system_prompt = system_prompt
+        # Validate inexpensive configuration before resolving a model string:
+        # backend construction may download weights or allocate GPU memory.
+        validated_scoring = _validate_scoring(scoring)
         if "{query}" not in prompt_template:
             raise ValueError(
                 f"prompt_template must contain '{{query}}'; got {prompt_template!r}"
             )
-        self.prompt_template = prompt_template
-        if not isinstance(batch_size, int) or batch_size < 1:
+        if (
+            not isinstance(batch_size, int)
+            or isinstance(batch_size, bool)
+            or batch_size < 1
+        ):
             raise ValueError(f"batch_size must be a positive int; got {batch_size!r}")
+
+        self.backend = resolve_backend(vlm, **(vlm_kwargs or {}))
+        self.answers = answers if answers is not None else BinaryAnswers()
+        self.scoring = validated_scoring
+        self.system_prompt = system_prompt
+        self.prompt_template = prompt_template
         self.batch_size = batch_size
         self.inference_kwargs = dict(inference_kwargs or {})
 

@@ -99,6 +99,19 @@ class TestConstructorValidation:
             QueryEngine(fake, scoring="typo")
         assert fake.calls == []
 
+    def test_invalid_config_rejected_before_string_backend_resolution(self, monkeypatch):
+        def fail_if_resolved(*args, **kwargs):
+            raise AssertionError("backend should not be resolved")
+
+        monkeypatch.setattr("s3e.engine.engine.resolve_backend", fail_if_resolved)
+
+        with pytest.raises(ValueError, match="scoring"):
+            QueryEngine("some/model", scoring="typo")
+        with pytest.raises(ValueError, match="prompt_template"):
+            QueryEngine("some/model", prompt_template="missing placeholder")
+        with pytest.raises(ValueError, match="batch_size"):
+            QueryEngine("some/model", batch_size=0)
+
     def test_unknown_scoring_override_rejected_before_any_backend_call(self, images):
         fake = FakeVLM()
         with pytest.raises(ValueError, match="scoring"):
