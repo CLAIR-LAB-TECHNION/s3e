@@ -28,6 +28,11 @@ def resolve_backend(vlm: "str | VLMBackend", **vlm_kwargs) -> VLMBackend:
                 f"{sorted(vlm_kwargs)}"
             )
         return vlm
+    if not isinstance(vlm, str):
+        raise TypeError(
+            "vlm must be a model-id string or VLMBackend instance; "
+            f"got {type(vlm).__name__}"
+        )
     if vlm.startswith(OPENAI_MODEL_IDENTIFIER):
         from .openai import OpenAIVLM
 

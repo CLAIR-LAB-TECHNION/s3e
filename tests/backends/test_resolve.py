@@ -22,6 +22,11 @@ class TestResolveBackend:
         with pytest.raises(ValueError, match="vlm_kwargs"):
             resolve_backend(DummyBackend(), device_map="auto")
 
+    @pytest.mark.parametrize("vlm", [None, 123, object()])
+    def test_invalid_backend_type_rejected(self, vlm):
+        with pytest.raises(TypeError, match="model-id string or VLMBackend"):
+            resolve_backend(vlm)
+
     def test_openai_prefix_selects_openai_backend(self, monkeypatch):
         from s3e.backends import openai as openai_module
 
