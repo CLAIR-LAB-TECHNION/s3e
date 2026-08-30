@@ -110,6 +110,11 @@ class TestPredictionSet:
         assert state["on(b,a)"] is False
         assert state["clear(a)"] is None  # not confident either way
 
+    def test_to_state_low_confidence_accepts_true_first(self):
+        # Below 0.5 both checks can hold; the P(true) acceptance check wins.
+        results = PredictionSet({"p(a)": make_prediction(0.4, 0.6)})
+        assert results.to_state(confidence=0.3)["p(a)"] is True
+
     def test_to_state_null_dominated_is_none(self):
         results = PredictionSet({"p(a)": make_prediction(0.2, 0.1, null_mass=0.6)})
         assert results.to_state()["p(a)"] is None

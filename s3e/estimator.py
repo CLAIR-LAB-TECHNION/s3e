@@ -45,7 +45,10 @@ class SemanticStateEstimator:
         system_prompt: Overrides the auto-selected system prompt.
         prompt_template: Wrapper for each query; must contain ``{query}``.
         additional_instructions: Appended to the system prompt.
-        confidence: Default threshold for :meth:`__call__`.
+        confidence: Default acceptance threshold for :meth:`__call__`: a
+            predicate is True when P(true) >= confidence, False when
+            P(false) >= confidence, else None (see
+            :meth:`PredictionSet.to_state`).
         scoring: ``"logprobs"`` or ``"text_match"``.
         batch_size / vlm_kwargs / inference_kwargs: Forwarded to
             :class:`QueryEngine`.

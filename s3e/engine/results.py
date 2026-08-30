@@ -86,7 +86,12 @@ class Prediction:
         return {label: mass / total for label, mass in self.masses.items()}
 
     def confident(self, threshold: float) -> bool:
-        """Whether either boolean outcome reaches the threshold."""
+        """Whether either boolean outcome reaches the threshold.
+
+        True when P(true) >= threshold or P(false) >= threshold. No range is
+        enforced on ``threshold``; see :meth:`PredictionSet.to_state` for the
+        decision rule it feeds.
+        """
         return self.probability >= threshold or (1.0 - self.probability) >= threshold
 
     def with_probability(self, probability: float) -> "Prediction":
@@ -158,8 +163,15 @@ class PredictionSet(Mapping):
     def to_state(self, confidence: float = 0.5) -> "dict[str, bool | None]":
         """Threshold probabilities into a three-valued boolean state.
 
-        True when P(true) >= confidence, False when P(false) >= confidence,
-        None otherwise or when the prediction is null-dominated.
+        ``confidence`` is an acceptance threshold on P(true): a predicate is
+        accepted as True whenever P(true) >= confidence. Otherwise it is
+        False when P(false) = 1 - P(true) >= confidence, and None when neither
+        side reaches the threshold or the prediction is null-dominated.
+
+        The True check runs first, so the rule is well defined for any value
+        of ``confidence``. Below 0.5 the two checks can both hold and True wins;
+        at 0.5 every non-null prediction is decided by its argmax; above 0.5
+        the checks are mutually exclusive and undecided predicates become None.
         """
         state: dict[str, bool | None] = {}
         for key, p in self._predictions.items():

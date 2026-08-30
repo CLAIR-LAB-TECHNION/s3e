@@ -236,7 +236,7 @@ calibrated_state = estimator.estimate(images, calibrator=calibrator).to_state()
 - `vlm`: a `VLMBackend` instance or a model-id string (see `resolve_backend`). Strings prefixed with `OpenAI/` select `OpenAIVLM`; any other string selects `HuggingFaceVLM`. For vLLM, construct `VLLMBackend(...)` explicitly and pass the instance.
 - `translator`: predicate-to-query strategy (default: `IdentityTranslator`).
 - `answers`: the answer space (default: `BinaryAnswers()`; identity translation defaults to `BinaryAnswers("true", "false")`).
-- `confidence`: default threshold used by `__call__`/`to_state`.
+- `confidence`: default acceptance threshold used by `__call__`/`to_state`. A predicate is accepted as `True` when `P(true) >= confidence`; otherwise it is `False` when `P(false) >= confidence`, and `None` when neither side reaches the threshold (or the prediction is null-dominated). The `True` check runs first, so any value works: below `0.5` a predicate meeting both checks resolves to `True`; above `0.5` undecided predicates become `None`.
 - `scoring`: `"logprobs"` (default) or `"text_match"`.
 - `system_prompt`, `prompt_template`, `additional_instructions`: prompt construction; `prompt_template` must contain `{query}`.
 - `true_tokens`, `false_tokens`, `null_tokens`: convenience overrides for the default binary answer space; ignored when `answers` is passed explicitly.
