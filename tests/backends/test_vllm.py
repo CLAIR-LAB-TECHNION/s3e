@@ -595,6 +595,7 @@ def test_vllm_backend_is_exported():
 
 
 def test_import_s3e_does_not_touch_broken_vllm_dependency():
+    pytest.importorskip("vllm", reason="vllm not installed (s3e[dev-gpu])")
     import subprocess
     import sys
 
