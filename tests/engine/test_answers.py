@@ -60,6 +60,16 @@ class TestBinaryAnswers:
             BinaryAnswers(true_tokens=["yes"], false_tokens=["yes"])
 
 
+class TestDuplicateTokensWithinOption:
+    def test_answer_option_rejects_duplicate_tokens(self):
+        with pytest.raises(ValueError, match="[Dd]uplicate"):
+            AnswerOption("yes", ("yes", "yes"))
+
+    def test_binary_answers_reject_duplicate_tokens_in_one_option(self):
+        with pytest.raises(ValueError, match="[Dd]uplicate"):
+            BinaryAnswers(true_tokens=["yes", "yes"], false_tokens=["no"])
+
+
 class TestLogprobScoring:
     def test_masses_summed_per_option(self):
         space = BinaryAnswers(true_tokens=["yes", "Yes"], false_tokens=["no"])

@@ -37,6 +37,13 @@ class AnswerOption:
     label: str
     tokens: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        if len(set(self.tokens)) != len(self.tokens):
+            raise ValueError(
+                f"Duplicate tokens in option {self.label!r}: {list(self.tokens)}; "
+                "each token would be counted twice when scoring"
+            )
+
     @classmethod
     def make(cls, label: str, tokens: "Sequence[str] | None" = None) -> "AnswerOption":
         """Build an option, auto-expanding the label when tokens are omitted."""
