@@ -92,6 +92,25 @@ class TestBatching:
         ]
 
 
+class TestConstructorValidation:
+    def test_unknown_scoring_rejected_before_any_backend_call(self, images):
+        fake = FakeVLM()
+        with pytest.raises(ValueError, match="scoring"):
+            QueryEngine(fake, scoring="typo")
+        assert fake.calls == []
+
+    def test_unknown_scoring_override_rejected_before_any_backend_call(self, images):
+        fake = FakeVLM()
+        with pytest.raises(ValueError, match="scoring"):
+            QueryEngine(fake).ask(images, ["q"], scoring="typo")
+        assert fake.calls == []
+
+    @pytest.mark.parametrize("batch_size", [0, -1])
+    def test_non_positive_batch_size_rejected(self, batch_size):
+        with pytest.raises(ValueError, match="batch_size"):
+            QueryEngine(FakeVLM(), batch_size=batch_size)
+
+
 class TestBackendResolution:
     def test_string_resolves_via_resolve_backend(self, monkeypatch, images):
         import s3e.engine.engine as engine_module

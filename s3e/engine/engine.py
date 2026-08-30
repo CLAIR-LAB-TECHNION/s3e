@@ -5,8 +5,16 @@ from collections.abc import Sequence
 from PIL.Image import Image
 
 from ..backends import VLMBackend, resolve_backend
-from .answers import AnswerSpace, BinaryAnswers
+from .answers import SCORING_MODES, AnswerSpace, BinaryAnswers
 from .results import Prediction, PredictionSet
+
+
+def _validate_scoring(scoring: str) -> str:
+    if scoring not in SCORING_MODES:
+        raise ValueError(
+            f"Unknown scoring mode {scoring!r}; expected one of {SCORING_MODES}"
+        )
+    return scoring
 
 
 class QueryEngine:
@@ -40,13 +48,15 @@ class QueryEngine:
     ):
         self.backend = resolve_backend(vlm, **(vlm_kwargs or {}))
         self.answers = answers if answers is not None else BinaryAnswers()
-        self.scoring = scoring
+        self.scoring = _validate_scoring(scoring)
         self.system_prompt = system_prompt
         if "{query}" not in prompt_template:
             raise ValueError(
                 f"prompt_template must contain '{{query}}'; got {prompt_template!r}"
             )
         self.prompt_template = prompt_template
+        if not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError(f"batch_size must be a positive int; got {batch_size!r}")
         self.batch_size = batch_size
         self.inference_kwargs = dict(inference_kwargs or {})
 
@@ -62,7 +72,7 @@ class QueryEngine:
     ) -> PredictionSet:
         """Answer each query about one scene (a list of images shown together)."""
         space = answers if answers is not None else self.answers
-        mode = scoring if scoring is not None else self.scoring
+        mode = _validate_scoring(scoring) if scoring is not None else self.scoring
         merged_kwargs = {**self.inference_kwargs, **(inference_kwargs or {})}
         generate = mode == "text_match"
         interest = None if generate else space.interest_tokens
