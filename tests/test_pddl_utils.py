@@ -85,6 +85,27 @@ class TestGetAllGroundedPredicates:
         preds = get_all_grounded_predicates_for_objects(up_problem, objects=custom_objects)
         assert len(preds) == 2
 
+    def test_excludes_numeric_fluents(self):
+        domain = """
+        (define (domain numeric)
+          (:requirements :typing :fluents)
+          (:types item)
+          (:predicates (visible ?x - item))
+          (:functions (weight ?x - item))
+        )
+        """
+        problem = """
+        (define (problem p)
+          (:domain numeric)
+          (:objects a - item)
+          (:init (= (weight a) 1) (visible a))
+          (:goal (visible a))
+        )
+        """
+        parsed = create_up_problem(domain, problem)
+
+        assert get_all_grounded_predicates_for_objects(parsed) == ["visible(a)"]
+
 
 class TestGroundPredicateStrToFnode:
     def test_binary_predicate(self, up_problem):

@@ -34,7 +34,10 @@ def get_all_grounded_predicates_for_objects(
     up_problem: Problem, objects: Optional[dict[str, list[str]]] = None
 ) -> list[str]:
     """Generate all possible grounded predicates for the given objects."""
-    predicates = up_problem.fluents
+    # Unified Planning stores numeric functions and boolean predicates in the
+    # same fluent collection. S3E estimates truth values, so only boolean
+    # fluents belong in the grounded predicate set.
+    predicates = [p for p in up_problem.fluents if p.type.is_bool_type()]
     if objects is None:
         objects = get_object_names_dict(up_problem)
 
