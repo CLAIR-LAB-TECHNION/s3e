@@ -1,9 +1,10 @@
 """Import hygiene: bare installs import cleanly; optional features fail with
 the exact extra named; heavy modules are never imported eagerly.
 
-Each test runs a fresh subprocess so module caches can't mask problems. A
-meta-path blocker simulates missing optional packages even though the dev
-environment has them installed.
+Each test runs a fresh subprocess so module caches can't mask problems.
+Meta-path hooks simulate optional packages that are missing (``_Blocker``) or
+installed-but-broken (``_Breaker``) even though the dev environment has working
+copies of them.
 """
 
 import subprocess
@@ -25,12 +26,47 @@ class _Blocker:
 sys.meta_path.insert(0, _Blocker(BLOCKED_LIST))
 """
 
+# NOTE: contains f-string braces, so it is filled via .replace(), not .format().
+BREAKER = """
+import sys
+from importlib.machinery import ModuleSpec
+
+class _BrokenLoader:
+    '''Loader for a package that is installed but fails on import.'''
+
+    def __init__(self, name):
+        self.name = name
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        dep = self.name + "_dependency"
+        raise ModuleNotFoundError(f"No module named {dep!r}", name=dep)
+
+class _Breaker:
+    def __init__(self, broken):
+        self.broken = set(broken)
+
+    def find_spec(self, name, path=None, target=None):
+        root = name.split(".")[0]
+        if root in self.broken:
+            return ModuleSpec(name, _BrokenLoader(root))
+        return None
+
+sys.meta_path.insert(0, _Breaker(BROKEN_LIST))
+"""
+
 HEAVY = ["torch", "torchvision", "transformers", "accelerate",
          "unified_planning", "vllm", "openai", "sklearn"]
 
 
-def run_python(body: str, blocked=()) -> subprocess.CompletedProcess:
-    script = BLOCKER.replace("BLOCKED_LIST", repr(list(blocked))) + body
+def run_python(body: str, blocked=(), broken=()) -> subprocess.CompletedProcess:
+    script = (
+        BLOCKER.replace("BLOCKED_LIST", repr(list(blocked)))
+        + BREAKER.replace("BROKEN_LIST", repr(list(broken)))
+        + body
+    )
     return subprocess.run(
         [sys.executable, "-W", "error::Warning", "-c", script],
         capture_output=True, text=True, timeout=120,
@@ -112,3 +148,40 @@ class TestMissingDependencyErrors:
             ["transformers", "torch"],
             "hf",
         )
+
+
+class TestBrokenDependencyErrors:
+    """A dependency that is installed but broken must surface its own error.
+
+    ``require`` checks presence with ``find_spec`` rather than importing, so a
+    package whose *own* imports fail raises that failure with its real
+    traceback. Rebuilding ``require`` around ``try: import x`` would instead
+    report every such breakage as a missing extra, sending users to reinstall
+    something they already have; these tests fail if that happens.
+
+    The counterpart to ``TestMissingDependencyErrors``: same import sites, the
+    other side of the presence check.
+    """
+
+    def check(self, body: str, broken: str):
+        script = (
+            "try:\n"
+            + "".join("    " + line + "\n" for line in body.splitlines())
+            + "except ModuleNotFoundError as e:\n"
+            "    assert e.name == '" + broken + "_dependency', repr(e)\n"
+            "except ImportError as e:\n"
+            "    raise SystemExit('masked broken dependency: ' + str(e))\n"
+            "else:\n"
+            "    raise SystemExit('expected the broken dependency to surface')\n"
+        )
+        result = run_python(script, broken=[broken])
+        assert result.returncode == 0, result.stderr or result.stdout
+
+    def test_broken_torch_surfaces_from_huggingface(self):
+        self.check("from s3e import HuggingFaceVLM", "torch")
+
+    def test_broken_openai_surfaces_from_openai(self):
+        self.check("from s3e import OpenAIVLM", "openai")
+
+    def test_broken_vllm_surfaces_from_vllm(self):
+        self.check("from s3e import VLLMBackend", "vllm")
