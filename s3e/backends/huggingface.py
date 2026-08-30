@@ -14,7 +14,7 @@ import torch
 import numpy as np
 from transformers import AutoProcessor
 
-from .backend import VLMBackend, VLMOutput
+from .backend import VLMBackend, VLMOutput, _validate_num_logprobs
 from .token_index import build_token_reverse_index
 
 # transformers 5.x renamed AutoModelForVision2Seq to AutoModelForImageTextToText
@@ -64,7 +64,7 @@ class HuggingFaceVLM(VLMBackend):
         **model_kwargs,
     ):
         self.model_id = model_id
-        self.num_logprobs = num_logprobs
+        self.num_logprobs = _validate_num_logprobs(num_logprobs)
         self._pad_invariance_checked = bool(skip_pad_invariance_check)
         self._token_reverse_index: dict[str, list[int]] | None = None
 

@@ -12,6 +12,20 @@ from dataclasses import dataclass, field
 from PIL.Image import Image
 
 
+def _validate_num_logprobs(num_logprobs: int | None) -> int | None:
+    """Validate a backend's optional top-k log-probability limit."""
+    if num_logprobs is not None and (
+        isinstance(num_logprobs, bool)
+        or not isinstance(num_logprobs, int)
+        or num_logprobs < 1
+    ):
+        raise ValueError(
+            "num_logprobs must be a positive int or None; "
+            f"got {num_logprobs!r}"
+        )
+    return num_logprobs
+
+
 @dataclass
 class VLMOutput:
     """Result from a single VLM query.

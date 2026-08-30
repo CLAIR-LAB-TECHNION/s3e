@@ -162,6 +162,20 @@ class TestVLLMBackendMocked:
 
         assert mock_llm_cls.call_args.kwargs["max_logprobs"] == 5
 
+    @pytest.mark.parametrize("num_logprobs", [0, -1, 1.5, True])
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_invalid_num_logprobs_rejected_before_engine_load(
+        self, mock_llm_cls, mock_sp_cls, mock_device_count, num_logprobs
+    ):
+        from s3e.backends.vllm import VLLMBackend
+
+        with pytest.raises(ValueError, match="num_logprobs"):
+            VLLMBackend("test/model", num_logprobs=num_logprobs)
+
+        mock_llm_cls.assert_not_called()
+
     @patch("torch.cuda.device_count", return_value=1)
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")

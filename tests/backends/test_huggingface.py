@@ -98,6 +98,20 @@ class TestHuggingFaceVLMMocked:
         mock_proc_cls.from_pretrained.assert_called_once()
         assert vlm.num_logprobs is None
 
+    @pytest.mark.parametrize("num_logprobs", [0, -1, 1.5, True])
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_invalid_num_logprobs_rejected_before_model_load(
+        self, mock_model_cls, mock_proc_cls, num_logprobs
+    ):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        with pytest.raises(ValueError, match="num_logprobs"):
+            HuggingFaceVLM("test/model", num_logprobs=num_logprobs)
+
+        mock_model_cls.from_pretrained.assert_not_called()
+        mock_proc_cls.from_pretrained.assert_not_called()
+
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_no_max_new_tokens_constructor_state(self, mock_model_cls, mock_proc_cls):

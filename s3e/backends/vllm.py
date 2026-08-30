@@ -31,7 +31,7 @@ require("vllm", "vllm", "VLLMBackend")
 import torch
 from vllm import LLM, SamplingParams
 
-from .backend import VLMBackend, VLMOutput
+from .backend import VLMBackend, VLMOutput, _validate_num_logprobs
 from .token_index import build_token_reverse_index, decode_single_token_ids
 
 
@@ -85,7 +85,7 @@ class VLLMBackend(VLMBackend):
         **engine_kwargs,
     ):
         self.model_id = model_id
-        self.num_logprobs = num_logprobs
+        self.num_logprobs = _validate_num_logprobs(num_logprobs)
         self._token_reverse_index: dict[str, list[int]] | None = None
 
         # Default to every locally visible GPU so the user does not have to
