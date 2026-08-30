@@ -21,6 +21,18 @@ from .engine import BinaryAnswers, PredictionSet, QueryEngine
 from .translation import IdentityTranslator, QueryTranslator
 
 
+def _domain_aware_prompt(up_problem) -> str:
+    """Identity-translation system prompt listing the problem's domain and objects."""
+    from .pddl import get_object_names_dict, get_pddl_strings
+
+    objects = get_object_names_dict(up_problem)
+    objects_str = "\n".join(
+        f"{key} type: {value}" for key, value in objects.items()
+    )
+    domain_str, _ = get_pddl_strings(up_problem)
+    return SYSTEM_PROMPT_NO_TRANSLATION.format(domain=domain_str, objects=objects_str)
+
+
 class SemanticStateEstimator:
     """Estimates truth values for a set of grounded predicates from images.
 
@@ -113,6 +125,10 @@ class SemanticStateEstimator:
         self.domain_pddl: "str | None" = context.get("domain_pddl")
         self.problem_pddl: "str | None" = context.get("problem_pddl")
         self.domain_fingerprint: "str | None" = context.get("domain_fingerprint")
+        # set_problem regenerates the domain-aware prompt only when from_pddl
+        # generated it; a user-supplied prompt is left alone.
+        self._auto_domain_prompt: bool = bool(context.get("auto_domain_prompt"))
+        self._additional_instructions = additional_instructions
         self.predicates: list[str] = []
         self.queries: dict[str, str] = {}
         self.set_predicates(predicates)
@@ -130,25 +146,17 @@ class SemanticStateEstimator:
             )
         from .pddl import (
             compute_domain_fingerprint,
-            get_object_names_dict,
-            get_pddl_strings,
             ground_predicates,
             parse_domain_problem,
         )
 
         up_problem = parse_domain_problem(domain, problem)
         translator = kwargs.get("translator")
-        if kwargs.get("system_prompt") is None and (
+        auto_prompt = kwargs.get("system_prompt") is None and (
             translator is None or isinstance(translator, IdentityTranslator)
-        ):
-            objects = get_object_names_dict(up_problem)
-            objects_str = "\n".join(
-                f"{key} type: {value}" for key, value in objects.items()
-            )
-            domain_str, _ = get_pddl_strings(up_problem)
-            kwargs["system_prompt"] = SYSTEM_PROMPT_NO_TRANSLATION.format(
-                domain=domain_str, objects=objects_str
-            )
+        )
+        if auto_prompt:
+            kwargs["system_prompt"] = _domain_aware_prompt(up_problem)
 
         return cls(
             ground_predicates(up_problem),
@@ -158,6 +166,7 @@ class SemanticStateEstimator:
                 "domain_pddl": domain,
                 "problem_pddl": problem,
                 "domain_fingerprint": compute_domain_fingerprint(up_problem),
+                "auto_domain_prompt": auto_prompt,
             },
             **kwargs,
         )
@@ -183,6 +192,13 @@ class SemanticStateEstimator:
         self.problem_pddl = problem
         self.domain_fingerprint = compute_domain_fingerprint(self.up_problem)
         self.predicates = ground_predicates(self.up_problem)
+        if self._auto_domain_prompt:
+            prompt = _domain_aware_prompt(self.up_problem)
+            if self._additional_instructions:
+                prompt += SYSTEM_PROMPT_ADDITIONAL_INSTRUCTIONS.format(
+                    additional_instructions=self._additional_instructions
+                )
+            self.engine.system_prompt = prompt
         self._retranslate()
 
     def _retranslate(self) -> None:

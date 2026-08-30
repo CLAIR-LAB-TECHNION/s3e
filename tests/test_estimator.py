@@ -156,6 +156,36 @@ class TestSetProblem:
         assert len(estimator(images)) == 12  # 3 blocks: 9 on + 3 clear
         assert estimator.queries["on(a,c)"] == "Is a on c?"
 
+    def test_identity_prompt_refreshed_for_new_objects(self):
+        """The domain-aware identity prompt lists the problem's objects; a
+        new problem must regenerate it, not keep the old object list."""
+        estimator = SemanticStateEstimator.from_pddl(
+            BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM, vlm=FakeVLM()
+        )
+        assert "'c'" not in estimator.engine.system_prompt
+
+        estimator.set_problem(BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM_3)
+        assert "clear(c)" in estimator.predicates
+        assert "'c'" in estimator.engine.system_prompt
+
+    def test_explicit_system_prompt_survives_set_problem(self):
+        estimator = SemanticStateEstimator.from_pddl(
+            BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM, vlm=FakeVLM(),
+            system_prompt="Custom.",
+        )
+        estimator.set_problem(BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM_3)
+        assert estimator.engine.system_prompt == "Custom."
+
+    def test_additional_instructions_survive_set_problem(self):
+        estimator = SemanticStateEstimator.from_pddl(
+            BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM, vlm=FakeVLM(),
+            additional_instructions="Be terse.",
+        )
+        estimator.set_problem(BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM_3)
+        prompt = estimator.engine.system_prompt
+        assert prompt.endswith("Be terse.")
+        assert "'c'" in prompt
+
 
 class TestSharedBackend:
     def test_two_estimators_share_one_backend(self):
