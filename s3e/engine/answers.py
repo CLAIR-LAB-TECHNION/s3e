@@ -38,6 +38,10 @@ class AnswerOption:
     tokens: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if not self.tokens:
+            raise ValueError(
+                f"Answer option {self.label!r} needs at least one token"
+            )
         if len(set(self.tokens)) != len(self.tokens):
             raise ValueError(
                 f"Duplicate tokens in option {self.label!r}: {list(self.tokens)}; "

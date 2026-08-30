@@ -150,6 +150,14 @@ class TestUnknownScoring:
 
 
 class TestEmptyOptions:
+    def test_answer_option_needs_a_token(self):
+        with pytest.raises(ValueError, match="at least one token"):
+            AnswerOption("yes", ())
+
+    def test_explicit_empty_tokens_rejected(self):
+        with pytest.raises(ValueError, match="at least one token"):
+            BinaryAnswers(true_tokens=[], false_tokens=["no"])
+
     def test_empty_answer_space_rejected(self):
         with pytest.raises(ValueError, match="at least one"):
             AnswerSpace([])
