@@ -69,6 +69,10 @@ class TestDuplicateTokensWithinOption:
         with pytest.raises(ValueError, match="[Dd]uplicate"):
             BinaryAnswers(true_tokens=["yes", "yes"], false_tokens=["no"])
 
+    def test_null_label_cannot_duplicate_an_answer_label(self):
+        with pytest.raises(ValueError, match="[Dd]uplicate answer labels"):
+            BinaryAnswers(null_label="yes", null_tokens=["unknown"])
+
 
 class TestLogprobScoring:
     def test_masses_summed_per_option(self):

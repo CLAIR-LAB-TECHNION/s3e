@@ -78,6 +78,8 @@ class AnswerSpace:
             raise ValueError("An answer space needs at least one option.")
         self.null_option = null_option
         labels = [o.label for o in self.options]
+        if null_option is not None:
+            labels.append(null_option.label)
         if len(set(labels)) != len(labels):
             raise ValueError(f"Duplicate answer labels: {labels}")
         all_options = self.options + ((null_option,) if null_option else ())
