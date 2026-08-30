@@ -45,7 +45,9 @@ class BackendContract:
             make_backend().query(images, p, interest_tokens=["yes", "no"])
             for p in ("a", "b")
         ]
-        assert [o.token_probs for o in batch] == [o.token_probs for o in singles]
+        assert len(batch) == len(singles)
+        for batched, single in zip(batch, singles):
+            assert batched.token_probs == pytest.approx(single.token_probs, abs=1e-6)
 
     def test_generate_mode_returns_text(self, make_backend, images):
         out = make_backend().query(images, "q", generate=True)
@@ -55,6 +57,31 @@ class BackendContract:
         scene = [make_blank_image(), make_blank_image()]
         out = make_backend().query(scene, "q", interest_tokens=["yes", "no"])
         assert isinstance(out, VLMOutput)
+
+
+class NoisyBatchVLM(FakeVLM):
+    """Batched masses differ from solo masses by floating-point noise, as a
+    real backend's padded batch forward does."""
+
+    def query_batch(self, images, prompts, **kwargs):
+        outputs = super().query_batch(images, prompts, **kwargs)
+        return [
+            VLMOutput(
+                text=o.text,
+                token_probs={t: p + 1e-12 for t, p in o.token_probs.items()},
+                argmax_in_interest=o.argmax_in_interest,
+            )
+            for o in outputs
+        ]
+
+
+class TestBatchContractToleratesFloatNoise:
+    def test_batch_matches_sequential_within_tolerance(self):
+        """Numerical noise between batched and sequential passes is not a
+        contract violation; only a material discrepancy is."""
+        BackendContract().test_query_batch_matches_sequential_query(
+            lambda: NoisyBatchVLM(text="yes"), [make_blank_image()]
+        )
 
 
 class TestFakeVLMContract(BackendContract):
