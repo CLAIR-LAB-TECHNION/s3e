@@ -905,7 +905,7 @@ class TestHuggingFaceVLMIntegration:
     def test_loads_and_queries(self):
         from s3e.backends.huggingface import HuggingFaceVLM
 
-        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu")
+        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu", torch_dtype=torch.float32)
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
         result = vlm.query([img], "Is this a test?")
 
@@ -918,7 +918,7 @@ class TestHuggingFaceVLMIntegration:
         """Interest-mode masses must equal the full-vocabulary path's."""
         from s3e.backends.huggingface import HuggingFaceVLM
 
-        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu")
+        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu", torch_dtype=torch.float32)
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
         prompt = "Is this a test?"
         interest = ["Yes", "No", "yes", "no"]
@@ -938,7 +938,9 @@ class TestHuggingFaceVLMIntegration:
     def test_query_batch(self):
         from s3e.backends.huggingface import HuggingFaceVLM
 
-        vlm = HuggingFaceVLM(self.TINY_VLM_ID, device_map="cpu", num_logprobs=2)
+        vlm = HuggingFaceVLM(
+            self.TINY_VLM_ID, device_map="cpu", torch_dtype=torch.float32, num_logprobs=2
+        )
         img = Image.new("RGB", (64, 64), color=(128, 128, 128))
         results = vlm.query_batch([img], ["q1?", "q2?"])
 
@@ -962,7 +964,7 @@ class TestHuggingFaceVLMContract(BackendContract):
         from s3e.backends.huggingface import HuggingFaceVLM
 
         backend = HuggingFaceVLM(
-            TestHuggingFaceVLMIntegration.TINY_VLM_ID, device_map="cpu"
+            TestHuggingFaceVLMIntegration.TINY_VLM_ID, device_map="cpu", torch_dtype=torch.float32
         )
         return lambda: backend
 
