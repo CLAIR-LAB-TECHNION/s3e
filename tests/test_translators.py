@@ -214,6 +214,25 @@ class TestLLMTranslatorMocked:
         assert mock_translate.call_count == 1
 
 
+    @patch("s3e.translation.llm._openai_translate")
+    def test_pddl_file_paths_put_domain_text_in_prompt(self, mock_translate, tmp_path):
+        """from_pddl accepts .pddl paths; the translator's prompt must carry
+        the domain's contents, not the path string."""
+        mock_translate.side_effect = lambda model_id, pred, system, **kw: f"Q: {pred}"
+        domain_file = tmp_path / "domain.pddl"
+        problem_file = tmp_path / "problem.pddl"
+        domain_file.write_text(SAMPLE_DOMAIN)
+        problem_file.write_text(SAMPLE_PROBLEM)
+
+        LLMTranslator("OpenAI/gpt-4o").translate(
+            ["on(a,b)"], str(domain_file), str(problem_file)
+        )
+
+        system = mock_translate.call_args.args[2]
+        assert "(define (domain" in system
+        assert str(domain_file) not in system
+
+
 @pytest.mark.slow
 class TestLLMTranslatorIntegration:
     """Integration tests with a tiny real HuggingFace causal LM."""

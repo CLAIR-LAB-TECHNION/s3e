@@ -120,7 +120,11 @@ class LLMTranslator(QueryTranslator):
 
         # Build system prompt from PDDL context (Unified Planning is imported
         # here so that importing s3e does not pull it in).
-        from ..pddl.up_utils import create_up_problem, get_object_names_dict
+        from ..pddl.up_utils import (
+            create_up_problem,
+            get_object_names_dict,
+            get_pddl_strings,
+        )
 
         up_problem = create_up_problem(domain, problem)
         objects = get_object_names_dict(up_problem)
@@ -128,8 +132,10 @@ class LLMTranslator(QueryTranslator):
             f"{key} type: {list(map(str, value))}"
             for key, value in objects.items()
         )
+        # ``domain`` may be a .pddl path; the prompt needs the domain text.
+        domain_text, _ = get_pddl_strings(up_problem)
         system_prompt = _NL_SYSTEM_PROMPT_TEMPLATE.format(
-            domain=domain, objects_by_type=objects_by_type
+            domain=domain_text, objects_by_type=objects_by_type
         )
 
         # Try loading from cache
