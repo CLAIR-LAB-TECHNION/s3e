@@ -13,7 +13,7 @@
 
 Each layer works standalone: you can use `QueryEngine` to answer arbitrary visual questions without PDDL, or use `SemanticStateEstimator.from_pddl` for the full predicate-grounding workflow.
 
-For a longer tutorial, see the [tutorial notebook](docs/s3e_walkthrough.ipynb) (currently being rewritten for this API — see the notebook's leading cell).
+For a longer tutorial, see the [tutorial notebook](docs/s3e_walkthrough.ipynb).
 
 ## Features
 
