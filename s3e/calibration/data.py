@@ -13,6 +13,17 @@ CALIBRATION_SET_FORMAT_VERSION = 1
 
 @dataclass(frozen=True)
 class CalibrationExample:
+    """A labeled scene used to collect calibration data.
+
+    Attributes:
+        images: The scene, as a list of images shown to the VLM together.
+        state_dict: Ground-truth truth value for each grounded predicate to
+            collect, e.g. ``{"on(a,b)": True, "clear(b)": False}``.
+        problem: Optional PDDL problem string the scene belongs to. When set,
+            :meth:`CalibrationSet.collect` re-grounds the estimator against
+            this problem before querying it.
+    """
+
     images: list[Image]
     state_dict: dict[str, bool]
     problem: str | None = None
@@ -34,6 +45,7 @@ class CalibrationSample:
     problem: str | None = None
 
     def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
         return {
             "predicate": self.predicate,
             "score": self.score,
@@ -43,6 +55,7 @@ class CalibrationSample:
 
     @classmethod
     def from_dict(cls, data: dict) -> "CalibrationSample":
+        """Rebuild a sample from the output of :meth:`to_dict`."""
         return cls(
             predicate=str(data["predicate"]),
             score=float(data["score"]),
@@ -107,6 +120,7 @@ class CalibrationSet:
         return cls(samples=samples, meta=meta)
 
     def to_dict(self) -> dict:
+        """Serialize to a versioned, JSON-compatible dict."""
         return {
             "format_version": CALIBRATION_SET_FORMAT_VERSION,
             "meta": self.meta,
@@ -115,6 +129,11 @@ class CalibrationSet:
 
     @classmethod
     def from_dict(cls, data: dict) -> "CalibrationSet":
+        """Rebuild a set from the output of :meth:`to_dict`.
+
+        Raises:
+            ValueError: If ``data`` has an unsupported ``format_version``.
+        """
         version = data.get("format_version")
         if version != CALIBRATION_SET_FORMAT_VERSION:
             raise ValueError(
@@ -127,8 +146,10 @@ class CalibrationSet:
         )
 
     def save(self, path: "str | Path") -> None:
+        """Write this set to a JSON file."""
         Path(path).write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n")
 
     @classmethod
     def load(cls, path: "str | Path") -> "CalibrationSet":
+        """Read a set written by :meth:`save`."""
         return cls.from_dict(json.loads(Path(path).read_text()))

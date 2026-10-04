@@ -1,8 +1,9 @@
 """HuggingFace Transformers VLM backend.
 
 This module provides a :class:`VLMBackend` implementation that uses
-HuggingFace's Auto classes and ``AutoProcessor`` to support any standard
-vision-language model (LLaVA, Qwen2-VL, InternVL, etc.).
+HuggingFace's Auto classes and ``AutoProcessor`` to support vision-language
+models loadable through them (exercised with SmolVLM and LLaVA-architecture
+checkpoints in the tests and walkthrough notebook).
 """
 
 from .._deps import require

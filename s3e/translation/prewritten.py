@@ -10,6 +10,11 @@ class PrewrittenTranslator(QueryTranslator):
         self.queries = queries
 
     def translate(self, predicates, domain=None, problem=None):
+        """Look up each predicate's prewritten query.
+
+        Raises:
+            ValueError: If any predicate has no prewritten query.
+        """
         missing = set(predicates) - set(self.queries)
         if missing:
             raise ValueError(

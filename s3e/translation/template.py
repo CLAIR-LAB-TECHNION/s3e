@@ -100,6 +100,12 @@ class TemplateTranslator(QueryTranslator):
         self.templates = templates
 
     def translate(self, predicates, domain=None, problem=None):
+        """Format each predicate's template with its arguments.
+
+        Raises:
+            ValueError: If a predicate string cannot be parsed or its name
+                has no template.
+        """
         result: dict[str, str] = {}
         predicate_arg_names = (
             _predicate_argument_names(domain, problem)
