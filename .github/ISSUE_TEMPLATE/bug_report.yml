@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in s3e does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please search
+        [existing issues](https://github.com/CLAIR-LAB-TECHNION/s3e/issues) first.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproducible example
+      description: |
+        A short, self-contained snippet. If the bug is in the engine, estimator,
+        or calibration rather than a specific model, a custom `VLMBackend`
+        returning fixed probabilities (like `tests/fakes.py`) avoids model downloads.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Full traceback / output
+      render: text
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - HuggingFaceVLM
+        - OpenAIVLM
+        - VLLMBackend
+        - Custom VLMBackend
+        - Not backend-specific
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        OS, Python version, and the output of
+        `pip list | grep -i -E "s3e|torch|transformers|openai|vllm|unified|scikit"`.
+      render: text
+    validations:
+      required: true
