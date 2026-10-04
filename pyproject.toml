@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools >= 61.0"]
+requires = ["setuptools >= 77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -14,9 +14,20 @@ readme = "README.md"
 requires-python = ">= 3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
 ]
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "numpy",
     "tqdm",
@@ -36,9 +47,15 @@ all = ["s3e[hf,openai,pddl,calibration]"]
 dev = ["pytest", "s3e[all]"]
 # dev plus vllm: needed for the vLLM test coverage; requires a CUDA host.
 dev-gpu = ["s3e[dev,vllm]"]
+# Sphinx API reference; heavy backends (torch, transformers, vllm) are mocked.
+docs = ["sphinx>=7", "myst-parser>=2", "furo", "s3e[openai,pddl,calibration]"]
 
 [project.urls]
+Homepage = "https://github.com/CLAIR-LAB-TECHNION/s3e"
+Documentation = "https://s3e.readthedocs.io"
 Repository = "https://github.com/CLAIR-LAB-TECHNION/s3e"
+Issues = "https://github.com/CLAIR-LAB-TECHNION/s3e/issues"
+Changelog = "https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["s3e*"]
