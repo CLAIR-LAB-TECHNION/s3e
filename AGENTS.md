@@ -22,23 +22,29 @@
 - `tests/`: mirrors the package layout (`tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, `tests/consumers/`, `tests/test_estimator.py`, `tests/test_imports.py`, ...)
 - `tests/conftest.py`: shared fixtures and Blocksworld sample data
 - `tests/fakes.py`: shared `FakeVLM` double implementing the full `VLMBackend` contract
+- `docs/`: Sphinx API reference (`conf.py`, MyST Markdown pages, `api/*.rst` autodoc pages) plus the walkthrough notebook `docs/s3e_walkthrough.ipynb`; built on Read the Docs via `.readthedocs.yaml`
+- `paper/`: JOSS paper (`paper.md`, `paper.bib`, `s3e-pipeline.png`); keep it the only `paper.md` in the repo
+- `.github/workflows/`: `tests.yml` (fast suite on Python 3.10–3.14 + strict docs build) and `draft-pdf.yml` (JOSS draft PDF)
+- Project metadata: `CHANGELOG.md`, `CITATION.cff`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `.mailmap`
 
 ## Environment
 - Python requirement: `>=3.10`
 - Build backend: setuptools
-- The README is minimal; rely on source, tests, and `pyproject.toml` for actual conventions.
+- The README documents usage; rely on source, tests, and `pyproject.toml` for actual conventions.
 
 ## Setup Commands
 - Core editable install: `pip install -e .`
 - Dev install (CPU, standard): `pip install -e '.[dev]'` — everything needed for the test suite except vLLM; vLLM-dependent tests skip.
 - Dev install (CUDA hosts): `pip install -e '.[dev-gpu]'` — adds `vllm`; required for the vLLM unit tests and `pytest -m slow` vLLM coverage.
-- Optional extras: `pddl` (PDDL grounding), `hf` (HuggingFace VLM backend), `openai` (OpenAI VLM backend), `vllm` (local multi-GPU inference), `calibration` (Platt scaling, scikit-learn), `all` (everything except `vllm`) — e.g. `pip install -e '.[pddl,hf]'`
+- Optional extras: `pddl` (PDDL grounding), `hf` (HuggingFace VLM backend), `openai` (OpenAI VLM backend), `vllm` (local multi-GPU inference), `calibration` (Platt scaling, scikit-learn), `all` (everything except `vllm`), `docs` (Sphinx toolchain) — e.g. `pip install -e '.[pddl,hf]'`
 
 ## Build Commands
 - Packaging is configured through setuptools in `pyproject.toml`.
 - If the `build` package is installed, create wheel/sdist with: `python -m build`
 - In the analyzed environment, `python -m build` currently fails because `build` is not installed.
 - Do not document or automate a different build flow unless you add the necessary config in the same change.
+- Docs: `pip install -e '.[docs]'` then `sphinx-build -W -b html docs docs/_build/html`. The build mocks torch/transformers/vllm, so new public modules must import cleanly under those mocks; add new public APIs to the matching `docs/api/*.rst` page.
+- JOSS paper: the `Draft PDF` workflow builds `paper/paper.pdf` on changes under `paper/`. Keep the paper between 750 and 1750 words (the JOSS bot counts the whole file).
 
 ## Lint And Static Checks
 - There is no configured linter or formatter in this repository.
@@ -48,6 +54,7 @@
   - `python -m compileall s3e tests`
   - `pytest -m "not slow"`
 - If you introduce a lint or type-check tool, update `pyproject.toml`, CI, and this file together.
+- CI (`.github/workflows/tests.yml`) installs CPU-only torch, then `pip install -e '.[dev]'`, and runs `pytest -m "not slow"` on Python 3.10–3.14, plus the strict docs build.
 
 ## Test Commands
 - Full suite: `pytest`
@@ -137,6 +144,7 @@
 - Prefer focused assertions over large opaque fixtures.
 - Mark real-model or download-heavy tests with `@pytest.mark.slow`.
 - When behavior changes, update the nearest relevant test module.
+- Record user-facing changes under "Unreleased" in `CHANGELOG.md`.
 
 ## Agent Workflow
 - Inspect the target module and its nearest tests before editing.
