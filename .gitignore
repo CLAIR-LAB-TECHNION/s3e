@@ -12,9 +12,13 @@ semantic_state_estimator/cache/
 *.out
 *.pkl
 *.json
+# ...except Zenodo archive metadata (the JOSS archive step)
+!.zenodo.json
 *.npz
 *.mp4
 *.png
+# ...except figures committed for the JOSS paper
+!paper/*.png
 *.pdf
 
 # data files
