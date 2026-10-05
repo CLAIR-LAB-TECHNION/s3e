@@ -62,11 +62,13 @@ class TestPrewrittenTranslator:
 
 class TestTemplateTranslator:
     @pytest.mark.parametrize(
-        "template", ["Is {x} {extra} clear?", "Is {0} next to {1}?"]
+        "template",
+        ["Is {x} {extra} clear?", "Is {0} next to {1}?", "Is {0.missing} clear?",
+         "Is {0[k]} clear?"],
     )
-    def test_unfilled_placeholder_raises_value_error(self, template):
+    def test_unfillable_template_raises_value_error(self, template):
         translator = TemplateTranslator({"clear": template})
-        with pytest.raises(ValueError, match="no argument of 'clear\\(a\\)'"):
+        with pytest.raises(ValueError, match="arguments of 'clear\\(a\\)'"):
             translator.translate(["clear(a)"])
 
     def test_unparsable_predicate_raises_value_error(self):
