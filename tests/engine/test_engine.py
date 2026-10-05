@@ -1,8 +1,16 @@
 """Tests for QueryEngine."""
 
+import warnings
+
 import pytest
 
-from s3e.engine import BinaryAnswers, CategoricalAnswers, PredictionSet, QueryEngine
+from s3e.engine import (
+    BinaryAnswers,
+    CategoricalAnswers,
+    PredictionSet,
+    QueryEngine,
+    UnmatchedAnswerWarning,
+)
 
 from conftest import make_blank_image
 from fakes import FakeVLM
@@ -157,3 +165,38 @@ class TestBackendMiscount:
 
         with pytest.raises(ValueError):
             QueryEngine(MiscountingVLM()).ask([make_blank_image()], ["a", "b"])
+
+
+class TestUnmatchedAnswerWarning:
+    def test_one_warning_per_call_with_count_and_example(self, images):
+        fake = FakeVLM(text="I cannot tell from this image. " * 10)
+        engine = QueryEngine(fake, scoring="text_match")
+        with pytest.warns(UnmatchedAnswerWarning) as record:
+            results = engine.ask(images, ["Is a on b?", "Is b clear?"])
+        assert len(record) == 1
+        message = str(record[0].message)
+        assert "2 of 2 queries" in message
+        assert "'Is a on b?'" in message
+        assert len(message) < 300  # the reply is truncated
+        assert all(not p.matched for p in results.values())
+
+    def test_warning_points_at_the_caller(self, images):
+        engine = QueryEngine(FakeVLM(text="Maybe."), scoring="text_match")
+        with pytest.warns(UnmatchedAnswerWarning) as record:
+            engine.ask(images, ["q"])
+        assert record[0].filename == __file__
+
+    def test_logprobs_mode_warns_when_no_answer_token_has_mass(self, images):
+        engine = QueryEngine(FakeVLM({"maybe": 0.9}))
+        with pytest.warns(UnmatchedAnswerWarning, match="zero probability"):
+            engine.ask(images, ["q"])
+
+    def test_no_warning_when_matched_or_null(self, images):
+        answers = BinaryAnswers(null_tokens=["unknown"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UnmatchedAnswerWarning)
+            QueryEngine(FakeVLM(text="Yes."), scoring="text_match").ask(images, ["q"])
+            QueryEngine(FakeVLM(text="unknown"), scoring="text_match", answers=answers).ask(
+                images, ["q"]
+            )
+            QueryEngine(FakeVLM({"yes": 1e-9, "no": 0.0})).ask(images, ["q"])

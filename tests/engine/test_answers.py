@@ -115,6 +115,53 @@ class TestTextMatchScoring:
         scored = space.score(output, scoring="text_match")
         assert scored.null_mass == 1.0
 
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("No, I would not say yes.", "no"),  # the start decides, not any later word
+            ("  Yes\nbecause it is", "yes"),  # surrounding whitespace ignored
+            ("Yes!", "yes"),
+            ("Nothing is on it.", None),  # whole words only
+            ("yesterday", None),
+            ("Answer: yes", None),  # the reply must start with the answer
+            ("**Yes**", None),
+            ("", None),
+        ],
+    )
+    def test_reply_must_start_with_a_token(self, text, expected):
+        scored = BinaryAnswers().score(VLMOutput(text=text), scoring="text_match")
+        matched = [label for label, mass in scored.masses.items() if mass == 1.0]
+        assert matched == ([expected] if expected else [])
+        assert scored.unassigned_mass == (0.0 if expected else 1.0)
+
+    def test_missing_text_is_unmatched(self):
+        scored = BinaryAnswers().score(VLMOutput(text=None), scoring="text_match")
+        assert scored.unassigned_mass == 1.0
+
+    def test_tokens_are_case_sensitive_as_given(self):
+        space = BinaryAnswers(true_tokens=["yes"], false_tokens=["no"])
+        scored = space.score(VLMOutput(text="Yes"), scoring="text_match")
+        assert scored.unassigned_mass == 1.0
+
+    def test_multi_word_tokens_and_longest_match_first(self):
+        space = CategoricalAnswers(["dark", "dark blue"])
+        scored = space.score(VLMOutput(text="dark blue, mostly"), scoring="text_match")
+        assert scored.masses == {"dark": 0.0, "dark blue": 1.0}
+        scored = space.score(VLMOutput(text="dark bluish"), scoring="text_match")
+        assert scored.masses == {"dark": 1.0, "dark blue": 0.0}
+
+    def test_null_option_competes_at_the_start(self):
+        space = BinaryAnswers(null_tokens=["unknown"])
+        scored = space.score(VLMOutput(text="unknown, maybe yes"), scoring="text_match")
+        assert scored.null_mass == 1.0
+        assert scored.masses == {"yes": 0.0, "no": 0.0}
+
+    @pytest.mark.parametrize("text", ["", "...", "  "])
+    def test_whitespace_only_tokens_never_match(self, text):
+        space = BinaryAnswers(true_tokens=["yes", " "], false_tokens=["no"])
+        scored = space.score(VLMOutput(text=text), scoring="text_match")
+        assert scored.unassigned_mass == 1.0
+
 
 class TestCategoricalAnswers:
     def test_labels_from_strings(self):
