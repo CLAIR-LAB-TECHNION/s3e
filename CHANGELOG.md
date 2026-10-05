@@ -20,6 +20,29 @@ the commit history and PyPI release dates when this file was introduced.
   request templates, and `CITATION.cff`.
 - `.mailmap` consolidating the maintainer's commit identities.
 - `MANIFEST.in` so the source distribution ships the full test suite.
+- `Prediction.has_answer` and `Prediction.matched`, and an
+  `UnmatchedAnswerWarning` emitted once per `QueryEngine.ask` call when some
+  replies fall outside the answer space.
+
+### Changed
+- **Breaking:** `to_state` and `SemanticStateEstimator.__call__` always return
+  a complete `dict[str, bool]`: a predicate is True iff P(true) >= confidence,
+  never `None`. `Prediction.answer` is never `None`.
+- **Breaking:** a prediction has no answer when the explicit null option is
+  its top answer or no answer token received any mass. Its P(true) is 0.5 (a
+  uniform distribution for categorical spaces), even when calibrated, so it is
+  True at the default confidence of 0.5 and False above it.
+- **Breaking:** `text_match` scoring matches only when the reply *starts* with
+  an answer token (as a whole word, longest token first); previously a token
+  anywhere in the reply matched.
+- `Prediction.probability` is `T / (T + F)` without smoothing, so a matched
+  `text_match` reply gives exactly 1.0. Calibration scores are unchanged.
+
+### Fixed
+- `CalibrationSet.collect` skips predictions with no answer, which are not
+  valid training points.
+- `PredictionSet.average` averages calibrated probabilities only over members
+  that have an answer.
 
 ## 0.4.1 — 2026-08-30
 

@@ -52,7 +52,7 @@ library that turns images into such facts using vision-language models (VLMs),
 AI models that answer questions about pictures. Given a planning problem and
 one or more images of a scene, it lists every fact that could hold, asks the
 model about each one, and reports how likely each fact is, together with a
-true, false, or undecided verdict that a planner can use. Rather than reading
+true-or-false verdict that a planner can use. Rather than reading
 the model's written answer, `s3e` reads the probability the model assigns to
 answer words such as "yes" and "no" (and optionally "unknown"). These scores
 can be corrected against labeled examples, combined across camera views, or
@@ -78,7 +78,7 @@ embodied AI, and neuro-symbolic reasoning who need symbolic state estimates
 from images, and, because its query engine works without PDDL, anyone who needs
 probabilistic yes/no or multiple-choice answers from VLMs. It treats the
 uncertainty of an estimate as a first-class output: probabilities derived from
-answer-token mass [@kadavath2022know], an optional explicit abstention option,
+answer-token mass [@kadavath2022know], an optional explicit "unknown" answer,
 and optional post-hoc Platt scaling [@platt2000probabilities] fitted offline,
 since neural-network confidences are often miscalibrated [@guo2017calibration].
 
@@ -94,7 +94,8 @@ closest tool is `t2v_metrics`, the package behind VQAScore
 [@lin2024vqascore], which scores the probability of "Yes" for user-supplied
 images and question templates across local and API models; it targets the
 evaluation of text-to-visual generation and has no predicate grounding,
-multi-option answer spaces, abstention, or calibration. Constrained-generation
+multi-option answer spaces, an explicit "unknown" answer, or calibration.
+Constrained-generation
 libraries such as Outlines [@willard2023outlines] restrict what a model may
 generate but do not report per-option probabilities. Research systems that
 ground planners with VLM questions, including TP-VQA [@zhang2023tpvqa],
@@ -137,17 +138,19 @@ automatically expanding labels into case and leading-space variants because
 tokenizers distinguish "Yes", " yes", and "YES". Backends report probability
 mass for exactly the requested tokens and whether the model's most likely
 token was among them, a contract checked by shared tests for the local
-backends. Predictions therefore record when a model answered outside the
-answer space instead of silently misreading it, and, for local backends,
-options with no single-token form are rejected before inference. Reading one
-next-token distribution is cheap and batches well, at the cost of requiring
-answers expressible as single tokens; a text-matching mode remains for APIs
-that do not expose log-probabilities.
+backends. A prediction whose top answer is the explicit "unknown" option, or
+whose answer tokens received no mass, has no answer and an uninformative
+P(true) of 0.5, and the engine warns about replies outside the answer space
+instead of silently misreading them; for local backends, options with no
+single-token form are rejected before inference. Reading one next-token
+distribution is cheap and batches well, at the cost of requiring answers
+expressible as single tokens; a text-matching mode, which reads the start of
+the generated reply, remains for APIs that do not expose log-probabilities.
 
 **Store data, derive views.** A `Prediction` stores raw masses (per option,
 for the explicit null option, and the unassigned remainder) plus any
-calibrated probability; probabilities, argmax answers, abstentions, and
-thresholded states are derived on demand. Because no derived view requires
+calibrated probability; probabilities, answers, whether a prediction has an
+answer at all, and thresholded true/false states are derived on demand. Because no derived view requires
 re-running the model, users can change thresholds, recalibrate, or average
 predictions across views after the fact, and results serialize to JSON
 without backend dependencies. This matters when VLM inference dominates the
@@ -178,28 +181,31 @@ independently developed ViPlan benchmark for VLM-grounded planning
 [@merler2025viplan]. Our follow-up work [@azran2026bridging] extends
 VLM-as-grounder planning to belief-space planning over the Most Likely Subset
 of States (MLSS), using the next-token probabilities of predicate queries.
-<!-- TODO(authors): if true, state that the experiments in azran2026bridging
-were run with s3e (give the version and a code link), and cite any other
-papers, preprints, or groups that use s3e. JOSS requires demonstrated
-research use; contract tests alone show API compatibility, not use. -->
 Within our group, `s3e` is the state-estimation component of two research
-workflows, the MLSS prediction-and-calibration pipeline and a ViPlan-based
-evaluation pipeline, whose usage patterns are pinned by contract tests in the
-repository so that library changes cannot silently break them.
+pipelines that predate the 0.4 redesign: the MLSS prediction-and-calibration
+pipeline runs `s3e` 0.2.0, and a ViPlan-based evaluation pipeline runs a
+pre-0.4 release.
+<!-- TODO(authors): give the exact s3e version of the ViPlan-based pipeline;
+if true, state that the experiments reported in azran2026bridging were run
+with the MLSS pipeline on s3e 0.2.0 (with a code link); and cite any other
+papers, preprints, or groups that use s3e. JOSS requires demonstrated
+research use. -->
+
 
 # AI usage disclosure
 
 Generative AI coding assistants were used in developing `s3e`. Of the 195
 commits made between March and August 2026, 99 were made with Anthropic's
-Claude Code, and so were all commits of the October 2026 work preparing this
-submission; each records the assisting model in a `Co-Authored-By` trailer.
-This assistance covered implementing the 0.4 architecture redesign, tests,
-documentation, the walkthrough notebook, docstrings, packaging, continuous
-integration, community guidelines, and the first draft of this paper. An
-initial implementation of the vLLM backend was drafted with OpenAI Codex. The
-authors reviewed all AI-assisted code, tests, and text. The CPU-only test
-suite (348 tests) runs in continuous integration on every change, and
-real-model tests are run manually.
+Claude Code, as were all commits made in October 2026, including the
+always-boolean state rework and the work preparing this submission; each
+records the assisting model in a `Co-Authored-By` trailer. This assistance
+covered implementing the 0.4 architecture redesign and later behavior
+changes, tests, documentation, the walkthrough notebook, docstrings,
+packaging, continuous integration, community guidelines, and the first draft
+of this paper. An initial implementation of the vLLM backend was drafted with
+OpenAI Codex. The authors reviewed all AI-assisted code, tests, and text. The
+CPU-only test suite (390 tests) runs in continuous integration on every
+change, and real-model tests are run manually.
 <!-- TODO(authors): (1) list the exact model versions from the Co-Authored-By
 trailers (`git log`) and the Codex version; (2) state whether any AI tools
 were used before March 2026 and whether any other tools were used; (3) confirm

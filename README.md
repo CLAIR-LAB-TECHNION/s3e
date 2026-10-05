@@ -12,7 +12,7 @@
 
 ### Statement of need
 
-Research that grounds symbolic planners in perception — task planning, task-and-motion planning, embodied AI, neuro-symbolic reasoning — keeps re-implementing the same pipeline: enumerate grounded predicates, phrase a question for each, prompt a particular model API with images, and turn the output into truth values. Parsing generated text throws away the model's uncertainty, and hard-wiring one provider makes cross-model comparisons and calibration studies laborious. `s3e` packages this pipeline as a backend-agnostic library with probabilities as a first-class output: answer-token probability scoring, optional abstention, multi-view averaging, and offline calibration, over HuggingFace, vLLM, and OpenAI models. Its query engine also works without PDDL, for anyone who needs probabilistic yes/no or multiple-choice answers from a VLM.
+Research that grounds symbolic planners in perception — task planning, task-and-motion planning, embodied AI, neuro-symbolic reasoning — keeps re-implementing the same pipeline: enumerate grounded predicates, phrase a question for each, prompt a particular model API with images, and turn the output into truth values. Parsing generated text throws away the model's uncertainty, and hard-wiring one provider makes cross-model comparisons and calibration studies laborious. `s3e` packages this pipeline as a backend-agnostic library with probabilities as a first-class output: answer-token probability scoring, an optional explicit "unknown" answer, multi-view averaging, and offline calibration, over HuggingFace, vLLM, and OpenAI models. Its query engine also works without PDDL, for anyone who needs probabilistic yes/no or multiple-choice answers from a VLM.
 
 `s3e` is built as concentric, independently usable layers:
 
@@ -197,7 +197,7 @@ results = estimator.estimate(scene, keep_raw=True)
 print(results["on(blue,orange)"].raw)   # VLMOutput: token_probs, text, argmax_in_interest
 ```
 
-Convert the boolean state back into a Unified Planning state object (note that undecided `None` entries are currently converted to `False`; drop or resolve them first if that matters):
+Convert the boolean state back into a Unified Planning state object:
 
 ```python
 up_state = estimator.to_up_state(state)

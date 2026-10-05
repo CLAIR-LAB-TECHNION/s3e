@@ -11,6 +11,8 @@ Query engine
 
 .. autoclass:: QueryEngine
 
+.. autoclass:: UnmatchedAnswerWarning
+
 Answer spaces
 -------------
 
