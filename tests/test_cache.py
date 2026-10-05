@@ -30,6 +30,15 @@ class TestMakeCacheKey:
         assert "/" not in key.replace(".json", "")
         assert "\\" not in key
 
+    def test_key_is_a_valid_windows_file_name(self):
+        """Dict-valued kwargs put ':' and '"' into str(); Windows rejects
+        those (and ':' would open an NTFS alternate data stream)."""
+        key = make_cache_key(
+            "OpenAI/gpt-4o", "p1", response_format={"type": "json_object"}, stop="<|?*|>"
+        )
+        assert not set('<>:"|?*') & set(key)
+        assert "response_format={'type'_ 'json_object'}" in key
+
     def test_same_inputs_same_key(self):
         key1 = make_cache_key("model", "prob", x=1)
         key2 = make_cache_key("model", "prob", x=1)
