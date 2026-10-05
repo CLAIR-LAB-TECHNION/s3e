@@ -342,7 +342,7 @@ pytest -m slow                # downloads and runs real models
 pytest                        # everything
 ```
 
-Continuous integration runs the fast suite on Linux with Python 3.10–3.14, on macOS and Windows, and with every dependency at its lowest supported version, for every pull request and every push to `main`; it also reports test coverage. A weekly workflow runs the slow tests on CPU, including the Quick Start above and the tutorial notebook. On a machine without a CUDA GPU, install CPU-only PyTorch first to avoid the much larger CUDA build: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`.
+Continuous integration runs the fast suite on Linux with Python 3.10–3.14, on macOS and Windows, and with the core and optional dependencies (except vLLM) at their declared minimum versions, for every pull request and every push to `main`; it also reports test coverage. A weekly workflow runs the slow tests on CPU, including the Quick Start above and the tutorial notebook. On a machine without a CUDA GPU, install CPU-only PyTorch first to avoid the much larger CUDA build: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`.
 
 How each part of the library can be verified without special hardware:
 

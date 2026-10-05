@@ -13,7 +13,8 @@ the commit history and PyPI release dates when this file was introduced.
   `VLMBackend` and runs the whole pipeline offline, including held-out
   calibration; `blocksworld_benchmark.py` measures a model on rendered
   Blocksworld scenes (accuracy, Brier score, ECE, unanswered rate, time per
-  query, peak memory, per scoring mode) and writes per-predicate results with
+  query, and peak memory per scoring mode, plus held-out metrics before and
+  after offline Platt scaling) and writes per-predicate results with
   provenance to JSON.
 - Documentation: the walkthrough notebook rendered as the tutorial, a user
   guide, and pages for the examples, the architecture and extension points,
@@ -28,7 +29,8 @@ the commit history and PyPI release dates when this file was introduced.
 - SPDX license headers in every Python source file.
 
 ### Changed
-- Every dependency declares a minimum supported version, tested in CI, e.g.
+- Runtime dependencies and extras declare minimum supported versions, which
+  CI tests on Python 3.10 (all but vLLM's, which needs a GPU), e.g.
   `transformers>=4.56` (for `from_pretrained(dtype=...)`), `openai>=1.66`
   (for the Responses API used by `LLMTranslator`), and `torch>=2.2`. The
   `dev` extra adds `ruff` and `pytest-cov`; the `docs` extra uses `myst-nb`.

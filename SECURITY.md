@@ -7,11 +7,12 @@ Security fixes are made in the latest release of `s3e` on
 
 ## Reporting a vulnerability
 
-Please do not report security problems in public issues. Instead, use
-GitHub's private vulnerability reporting ("Report a vulnerability" under the
-repository's [Security tab](https://github.com/CLAIR-LAB-TECHNION/s3e/security))
-or email the maintainer at guy.azran@campus.technion.ac.il. Include the
-affected version, a description of the problem, and steps to reproduce it.
+Please do not report security problems in public issues. Instead, email the
+maintainer at guy.azran@campus.technion.ac.il, or use "Report a
+vulnerability" under the repository's
+[Security tab](https://github.com/CLAIR-LAB-TECHNION/s3e/security) if it is
+offered there. Include the affected version, a description of the problem,
+and steps to reproduce it.
 
 You will get a reply once the report has been assessed; fixes are released as
 a new version and noted in the [changelog](CHANGELOG.md).
