@@ -8,6 +8,8 @@ the commit history and PyPI release dates when this file was introduced.
 
 ## Unreleased
 
+## 0.5.0 — 2026-10-05
+
 ### Added
 - JOSS submission materials: `paper/paper.md` and `paper/paper.bib`, with a
   GitHub Actions workflow that builds the draft PDF.
