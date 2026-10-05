@@ -70,6 +70,16 @@ class TestPrediction:
         assert make_prediction(0.0, 0.0, null_mass=1.0).matched is True
         assert make_prediction(0.0, 0.0).matched is False
 
+    def test_has_answer(self):
+        assert make_prediction(0.7, 0.2).has_answer is True
+        assert make_prediction(0.2, 0.1, null_mass=0.6).has_answer is False
+        assert make_prediction(0.0, 0.0).has_answer is False
+
+    def test_binary_answer_follows_probability_not_raw_argmax(self):
+        assert make_prediction(0.9, 0.1).with_probability(0.4).answer is False
+        # No answer: 0.5 >= 0.5, even though the raw masses lean false.
+        assert make_prediction(0.1, 0.2, null_mass=0.6).answer is True
+
     def test_derived_booleans_are_python_bools(self):
         import numpy as np
 
@@ -269,13 +279,31 @@ class TestAverage:
         assert avg["q"].null_dominated is True
         assert avg["q"].probability == 0.5
 
-    def test_average_of_calibrated_members_with_no_answer(self):
+    def test_average_skips_overrides_of_members_with_no_answer(self):
+        """An unanswered scene adds nothing, calibrated or not: its override
+        (e.g. a calibrator's intercept on score 0) is not in effect."""
+        unmatched = make_prediction(0.0, 0.0, probability_override=0.3)
+        answered = make_prediction(0.9, 0.1, probability_override=0.9)
+        avg = PredictionSet.average(
+            [PredictionSet({"q": unmatched}), PredictionSet({"q": answered})]
+        )["q"]
+        assert avg.probability_override == pytest.approx(0.9)
+        assert avg.probability == pytest.approx(0.9)
+        raw = PredictionSet.average(
+            [
+                PredictionSet({"q": make_prediction(0.0, 0.0)}),
+                PredictionSet({"q": make_prediction(0.9, 0.1)}),
+            ]
+        )["q"]
+        assert raw.probability == pytest.approx(0.9)
+
+    def test_average_of_members_all_without_answer_has_no_override(self):
         a = PredictionSet({"q": make_prediction(0.2, 0.1, null_mass=0.6, probability_override=0.9)})
-        b = PredictionSet({"q": make_prediction(0.8, 0.1, probability_override=0.7)})
+        b = PredictionSet({"q": make_prediction(0.0, 0.0, probability_override=0.7)})
         avg = PredictionSet.average([a, b])["q"]
-        assert avg.probability_override == pytest.approx(0.8)  # raw overrides averaged
-        assert avg.null_dominated is False
-        assert avg.probability == pytest.approx(0.8)
+        assert avg.probability_override is None
+        assert avg.has_answer is False
+        assert avg.probability == 0.5
 
     def test_average_requires_same_queries(self):
         a = PredictionSet({"q1": make_prediction()})

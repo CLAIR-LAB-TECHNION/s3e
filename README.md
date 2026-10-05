@@ -239,7 +239,7 @@ calibrated_state = estimator.estimate(images, calibrator=calibrator).to_state()
 - `translator`: predicate-to-query strategy (default: `IdentityTranslator`).
 - `answers`: the answer space (default: `BinaryAnswers()`; identity translation defaults to `BinaryAnswers("true", "false")`).
 - `confidence`: default acceptance threshold used by `__call__`/`to_state`, for binary answer spaces only. A predicate is `True` when `P(true) >= confidence` and `False` otherwise, so every predicate gets a value. A predicate with no answer (see [Results](#results)) has `P(true) = 0.5`: it is `True` at the default `0.5` and `False` for any higher threshold.
-- `scoring`: `"logprobs"` (default) scores the masses of the answer tokens; `"text_match"` lets the model generate and matches the reply's *start* against the answer tokens (whole words, case-sensitive, surrounding whitespace ignored, longest token first). A reply such as `"Answer: yes"` or `"**Yes**"` matches nothing; prompt for a bare answer.
+- `scoring`: `"logprobs"` (default) scores the masses of the answer tokens; `"text_match"` lets the model generate and matches the reply's *start* against the answer tokens (whole words, case-sensitive, surrounding whitespace ignored, longest token first). A reply such as `"Answer: yes"`, `"**Yes**"`, or one that reasons before answering (e.g. a `<think>` block) matches nothing; prompt for a bare answer.
 - `system_prompt`, `prompt_template`, `additional_instructions`: prompt construction; `prompt_template` must contain `{query}`.
 - `true_tokens`, `false_tokens`, `null_tokens`: convenience overrides for the default binary answer space; ignored when `answers` is passed explicitly.
 - `batch_size`, `vlm_kwargs`, `inference_kwargs`: forwarded to the underlying `QueryEngine` (see below).
@@ -281,13 +281,13 @@ Common methods:
 `Prediction` (one query's outcome) and `PredictionSet` (an ordered mapping of query/predicate → `Prediction`) are both immutable, with lazily cached derivations:
 
 - `prediction.masses`, `.null_mass`, `.unassigned_mass`, `.probability_override` (a calibrator's output): the stored raw data, never altered by the decision rule.
-- `prediction.probability`, `.answer`, `.null_dominated`, `.matched`, `.confident(threshold)`, `.distribution()`, `.score`: derived on demand.
+- `prediction.probability`, `.answer`, `.has_answer`, `.null_dominated`, `.matched`, `.confident(threshold)`, `.distribution()`, `.score`: derived on demand.
 - `prediction_set.probabilities()`, `.to_state(confidence=0.5)`, `.where(predicate)`.
+- `prediction_set.to_dict()` / `PredictionSet.from_dict(d)`: backend-free round trip (e.g. for offline recalibration).
 
-`probability` is `T / (T + F)` over the true and false masses, or the calibrated value when a calibrator was applied. A prediction has **no answer** when the null option is the model's top answer (`null_dominated`) or no answer token got any mass (`matched` is `False`, e.g. a `text_match` reply that starts with none of the tokens). Then `probability` is `0.5` even after calibration, `distribution()` is uniform, and `answer` falls to the first option on the resulting tie (`True` for binary). The engine emits one `UnmatchedAnswerWarning` per call that had unmatched queries; replies that match the null option do not warn.
+`probability` is `T / (T + F)` over the true and false masses, or the calibrated value when a calibrator was applied. A prediction has **no answer** (`has_answer` is `False`) when the null option is the model's top answer (`null_dominated`) or no answer token got any mass (`matched` is `False`, e.g. a `text_match` reply that starts with none of the tokens). Then `probability` is `0.5` even after calibration, `distribution()` is uniform, and `answer` falls to the first option on the resulting tie (`True` for binary). The engine emits one `UnmatchedAnswerWarning` per call that had unmatched queries; replies that match the null option do not warn.
 
 Because the stored data is untouched, other rules can be derived from it. For example, to count null mass as half true and half false instead: `(T + n/2) / (T + F + n)` from `masses` and `null_mass`, or `w * probability_override + (1 - w) * 0.5` with `w = (T + F) / (T + F + n)` for calibrated predictions.
-- `prediction_set.to_dict()` / `PredictionSet.from_dict(d)`: backend-free round trip (e.g. for offline recalibration).
 
 ### Translators
 

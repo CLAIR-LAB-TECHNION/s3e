@@ -18,10 +18,11 @@ class Prediction:
     :class:`~s3e.backends.VLMOutput` only when the engine was asked to keep
     it and is never serialized.
 
-    A prediction carries *no answer* when the null option is the model's top
-    answer (:attr:`null_dominated`) or no option received any mass at all
-    (not :attr:`matched`). Such predictions are uninformative: binary
-    :attr:`probability` is 0.5 and :meth:`distribution` is uniform.
+    A prediction has no answer (:attr:`has_answer` is False) when the null
+    option is the model's top answer (:attr:`null_dominated`) or no option
+    received any mass at all (:attr:`matched` is False). Such predictions are
+    uninformative: binary :attr:`probability` is 0.5 and :meth:`distribution`
+    is uniform.
 
     The decision rule never alters stored data. ``masses``, ``null_mass``,
     ``unassigned_mass`` and ``probability_override`` (a calibrator's
@@ -76,8 +77,9 @@ class Prediction:
         return sum(self.masses.values()) + self.null_mass > 0.0
 
     @cached_property
-    def _no_answer(self) -> bool:
-        return self.null_dominated or not self.matched
+    def has_answer(self) -> bool:
+        """False when the prediction is null-dominated or unmatched."""
+        return self.matched and not self.null_dominated
 
     @cached_property
     def answer(self):
@@ -97,12 +99,12 @@ class Prediction:
     def probability(self) -> float:
         """P(true) for binary spaces.
 
-        0.5 when the prediction has no answer (null-dominated or unmatched),
-        even if calibrated. Otherwise the calibrated probability when an
+        0.5 when the prediction has no answer (see :attr:`has_answer`), even
+        if calibrated. Otherwise the calibrated probability when an
         override is set, else ``T / (T + F)`` over the true and false masses.
         """
         self._require_binary("probability")
-        if self._no_answer:
+        if not self.has_answer:
             return 0.5
         if self.probability_override is not None:
             return self.probability_override
@@ -125,10 +127,9 @@ class Prediction:
     def distribution(self) -> dict[str, float]:
         """Masses normalized over the answer options (uncalibrated).
 
-        Uniform when the prediction has no answer (null-dominated or
-        unmatched).
+        Uniform when the prediction has no answer (see :attr:`has_answer`).
         """
-        if self._no_answer:
+        if not self.has_answer:
             uniform = 1.0 / len(self.masses)
             return {label: uniform for label in self.masses}
         total = sum(self.masses.values())
@@ -260,9 +261,11 @@ class PredictionSet(Mapping):
         probability is re-derived from the averaged masses.
 
         The decision rule is applied after averaging, to the averaged data: a
-        member with no answer contributes its raw masses and override, not its
-        effective 0.5, and the averaged prediction has no answer only if its
-        averaged null mass dominates or every member was unmatched.
+        member with no answer still contributes its raw masses, and the
+        averaged prediction has no answer only if its averaged null mass
+        dominates or every member was unmatched. A member's override is not in
+        effect when it has no answer, so the override mean skips such members
+        (if none has an answer, neither does the average).
 
         Non-numeric per-member data does not average: ``text`` is dropped,
         and ``argmax_in_interest`` is kept only when every member agrees
@@ -280,6 +283,9 @@ class PredictionSet(Mapping):
             members = [s[key] for s in sets]
             first = members[0]
             overrides = [m.probability_override for m in members]
+            answered_overrides = [
+                m.probability_override for m in members if m.has_answer
+            ]
             argmax_flags = {m.argmax_in_interest for m in members}
             averaged[key] = Prediction(
                 query=first.query,
@@ -294,8 +300,8 @@ class PredictionSet(Mapping):
                     argmax_flags.pop() if len(argmax_flags) == 1 else None
                 ),
                 probability_override=(
-                    sum(overrides) / count
-                    if all(o is not None for o in overrides)
+                    sum(answered_overrides) / len(answered_overrides)
+                    if all(o is not None for o in overrides) and answered_overrides
                     else None
                 ),
             )

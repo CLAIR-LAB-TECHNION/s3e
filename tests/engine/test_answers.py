@@ -156,9 +156,10 @@ class TestTextMatchScoring:
         assert scored.null_mass == 1.0
         assert scored.masses == {"yes": 0.0, "no": 0.0}
 
-    def test_whitespace_only_tokens_never_match(self):
+    @pytest.mark.parametrize("text", ["", "...", "  "])
+    def test_whitespace_only_tokens_never_match(self, text):
         space = BinaryAnswers(true_tokens=["yes", " "], false_tokens=["no"])
-        scored = space.score(VLMOutput(text="maybe"), scoring="text_match")
+        scored = space.score(VLMOutput(text=text), scoring="text_match")
         assert scored.unassigned_mass == 1.0
 
 

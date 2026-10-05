@@ -377,6 +377,14 @@ class TestTextMatchScoring:
                 v is False for v in estimator(images, confidence=0.9).values()
             )
 
+    def test_warning_points_at_the_callers_line(self, images):
+        estimator = make_estimator(FakeVLM(text="Maybe."), scoring="text_match")
+        with pytest.warns(UnmatchedAnswerWarning) as record:
+            estimator(images)
+        with pytest.warns(UnmatchedAnswerWarning) as averaged:
+            estimator.estimate_averaged([images, images])
+        assert {w.filename for w in [*record, *averaged]} == {__file__}
+
     def test_null_token_reply_does_not_warn(self, images, recwarn):
         fake = FakeVLM(text="unknown")
         estimator = make_estimator(

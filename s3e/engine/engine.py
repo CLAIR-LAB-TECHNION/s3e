@@ -1,5 +1,6 @@
 """QueryEngine: images + queries + an answer space -> predictions."""
 
+import sys
 import warnings
 from collections.abc import Sequence
 
@@ -18,6 +19,22 @@ class UnmatchedAnswerWarning(UserWarning):
     """
 
 
+def _external_stacklevel() -> int:
+    """``stacklevel`` for a warning raised here that points at user code.
+
+    Counts frames from the caller of this helper up to the first frame
+    outside the ``s3e`` package, so the warning names the user's line whether
+    they called ``QueryEngine.ask`` directly or went through the estimator.
+    """
+    level, frame = 1, sys._getframe(1)
+    while frame is not None:
+        if frame.f_globals.get("__name__", "").partition(".")[0] != "s3e":
+            break
+        level += 1
+        frame = frame.f_back
+    return level
+
+
 def _warn_unmatched(predictions: dict[str, Prediction], scoring: str) -> None:
     unmatched = [p for p in predictions.values() if not p.matched]
     if not unmatched:
@@ -32,9 +49,10 @@ def _warn_unmatched(predictions: dict[str, Prediction], scoring: str) -> None:
         example = repr(first.query)
     warnings.warn(
         f"{len(unmatched)} of {len(predictions)} queries {problem}; they have "
-        f"no answer (P(true) = 0.5, uniform distribution). First: {example}",
+        "no answer (P(true) = 0.5 for binary spaces, a uniform distribution "
+        f"otherwise). First: {example}",
         UnmatchedAnswerWarning,
-        stacklevel=3,
+        stacklevel=_external_stacklevel(),
     )
 
 
@@ -107,7 +125,11 @@ class QueryEngine:
         inference_kwargs: "dict | None" = None,
         keep_raw: bool = False,
     ) -> PredictionSet:
-        """Answer each query about one scene (a list of images shown together)."""
+        """Answer each query about one scene (a list of images shown together).
+
+        Emits one :class:`UnmatchedAnswerWarning` when any query's answer
+        matched none of the answer space's options (including the null option).
+        """
         space = answers if answers is not None else self.answers
         mode = _validate_scoring(scoring) if scoring is not None else self.scoring
         merged_kwargs = {**self.inference_kwargs, **(inference_kwargs or {})}
