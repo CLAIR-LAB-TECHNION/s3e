@@ -103,8 +103,9 @@ class TemplateTranslator(QueryTranslator):
         """Format each predicate's template with its arguments.
 
         Raises:
-            ValueError: If a predicate string cannot be parsed or its name
-                has no template.
+            ValueError: If a predicate string cannot be parsed, its name has
+                no template, or its template has a placeholder that no
+                argument fills.
         """
         result: dict[str, str] = {}
         predicate_arg_names = (
@@ -127,6 +128,12 @@ class TemplateTranslator(QueryTranslator):
                 args,
                 predicate_arg_names.get(name, []),
             )
-            result[pred] = template.format(*args, **kwargs)
+            try:
+                result[pred] = template.format(*args, **kwargs)
+            except (IndexError, KeyError) as err:
+                raise ValueError(
+                    f"Template {template!r} has a placeholder ({err}) that no "
+                    f"argument of {pred!r} fills"
+                ) from err
 
         return result
