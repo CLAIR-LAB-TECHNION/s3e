@@ -15,12 +15,18 @@ concurrency:
 
 jobs:
   tests:
-    name: pytest (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - {os: macos-latest, python-version: "3.10"}
+          - {os: macos-latest, python-version: "3.14"}
+          - {os: windows-latest, python-version: "3.10"}
+          - {os: windows-latest, python-version: "3.14"}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -29,12 +35,47 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install CPU-only PyTorch
-        # The default PyPI torch wheel bundles CUDA libraries the runner
-        # cannot use; the CPU wheel is a fraction of the download.
+        # The default Linux torch wheel bundles CUDA libraries the runner
+        # cannot use; the CPU wheel is a fraction of the download. (macOS and
+        # Windows wheels on PyPI are already CPU-only.)
+        if: runner.os == 'Linux'
         run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
       - name: Install s3e with dev extras
-        # vLLM is intentionally absent (it needs CUDA): its tests skip.
+        # vLLM is intentionally absent (it needs CUDA): its tests skip here
+        # and run in the coverage job.
         run: pip install -e ".[dev]"
+      - name: Run fast test suite
+        run: pytest -m "not slow"
+
+  coverage:
+    name: Coverage (Python 3.12, with vLLM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install s3e with dev-gpu extras
+        # vLLM imports without a GPU, and its unit tests mock the engine, so
+        # this job covers the whole package.
+        run: pip install -e ".[dev-gpu]"
+      - name: Run fast test suite with coverage
+        run: pytest -m "not slow" --cov=s3e --cov-report=term-missing --cov-fail-under=97
+
+  lowest-dependencies:
+    name: pytest (Python 3.10, lowest supported dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - name: Install uv
+        run: pip install uv
+      - name: Install s3e with the floors declared in pyproject.toml
+        # lowest-direct resolves every direct dependency to its declared
+        # minimum; --torch-backend picks the CPU builds of those versions.
+        run: uv pip install --system --resolution lowest-direct --torch-backend cpu -e ".[dev]"
       - name: Run fast test suite
         run: pytest -m "not slow"
 
@@ -50,6 +91,44 @@ jobs:
         run: pip install ruff
       - name: Check
         run: ruff check .
+
+  package:
+    name: Build and check distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          pip install build twine
+          python -m build
+      - name: Check metadata
+        run: twine check --strict dist/*
+      - name: Check the sdist ships the tests and examples
+        run: |
+          tar tzf dist/*.tar.gz > sdist-files.txt
+          grep -q "/tests/test_estimator.py$" sdist-files.txt
+          grep -q "/examples/custom_backend.py$" sdist-files.txt
+      - name: Install the wheel into a clean environment
+        run: |
+          python -m venv /tmp/wheel-env
+          /tmp/wheel-env/bin/pip install dist/*.whl
+          cd /tmp && /tmp/wheel-env/bin/python -c "import s3e; print(s3e.__version__)"
+
+  citation:
+    name: Validate CITATION.cff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Validate
+        run: |
+          pip install cffconvert
+          cffconvert --validate
 
   docs:
     name: Build documentation
