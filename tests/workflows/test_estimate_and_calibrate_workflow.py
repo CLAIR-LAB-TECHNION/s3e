@@ -1,6 +1,6 @@
-"""Contract tests for the MLSS workflow (make_predictions.py, calibrate_vlm.py).
+"""Workflow tests: per-sample estimation, serialization, and offline calibration.
 
-MLSS pattern: one long-lived estimator per domain; per sample it swaps the
+Pattern: one long-lived estimator per domain; per sample it swaps the
 problem, estimates a relevant-atom subset, serializes prediction details to
 JSON, and later refits calibration offline without a VLM.
 """
@@ -43,7 +43,7 @@ class TestPerSampleLoop:
 class TestDetailsSerialization:
     def test_details_to_json_and_back_without_backend(self, estimator):
         results = estimator.estimate([make_blank_image()])
-        payload = json.dumps(results.to_dict())          # what MLSS writes
+        payload = json.dumps(results.to_dict())          # as written to a results file
         restored = PredictionSet.from_dict(json.loads(payload))
         for predicate in results:
             assert restored[predicate].probability == pytest.approx(
@@ -52,7 +52,7 @@ class TestDetailsSerialization:
             assert restored[predicate].score == pytest.approx(
                 results[predicate].score
             )
-            # fields MLSS's payload builder reads:
+            # per-predicate detail fields:
             p = restored[predicate]
             assert p.masses is not None
             assert p.null_mass is not None

@@ -1,6 +1,6 @@
 """Shared fake VLM backend implementing the full VLMBackend contract.
 
-Used by engine, estimator, calibration, and consumer tests. Honors the
+Used by engine, estimator, calibration, and workflow tests. Honors the
 interest_tokens contract: when interest tokens are requested, the returned
 token_probs contains exactly those keys (absent tokens get 0.0).
 """

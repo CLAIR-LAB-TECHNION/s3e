@@ -9,7 +9,7 @@ Quick start::
         vlm="HuggingFaceTB/SmolVLM-256M-Instruct",
         translator=TemplateTranslator({"on": "Is {0} on {1}?"}),
     )
-    state = estimator(images)  # dict[str, bool | None]
+    state = estimator(images)  # dict[str, bool]
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -30,6 +30,7 @@ from .engine import (
     Prediction,
     PredictionSet,
     QueryEngine,
+    UnmatchedAnswerWarning,
 )
 from .estimator import SemanticStateEstimator
 from .translation import (
@@ -54,6 +55,7 @@ __all__ = [
     "CategoricalAnswers",
     "Prediction",
     "PredictionSet",
+    "UnmatchedAnswerWarning",
     "VLMBackend",
     "VLMOutput",
     "resolve_backend",

@@ -9,6 +9,7 @@ from s3e import (
     PrewrittenTranslator,
     SemanticStateEstimator,
     TemplateTranslator,
+    UnmatchedAnswerWarning,
 )
 
 from conftest import BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM, make_blank_image
@@ -117,7 +118,7 @@ class TestEstimate:
     def test_confidence_argument_overrides_default(self, images):
         estimator = make_estimator(FakeVLM({"yes": 0.6, "no": 0.4}))
         assert all(v is True for v in estimator(images).values())
-        assert all(v is None for v in estimator(images, confidence=0.9).values())
+        assert all(v is False for v in estimator(images, confidence=0.9).values())
 
     def test_calibrator_applied_when_passed(self, images):
         class HalfCalibrator:
@@ -196,11 +197,29 @@ class TestSharedBackend:
 
 
 class TestNullTokens:
-    def test_null_dominated_predicate_is_none_in_state(self, images):
+    def test_null_dominated_predicate_is_uninformative(self, images):
         fake = FakeVLM({"yes": 0.1, "no": 0.05, "unknown": 0.7})
         estimator = make_estimator(fake, null_tokens=["unknown"])
-        state = estimator(images)
-        assert all(value is None for value in state.values())
+        results = estimator.estimate(images)
+        assert all(p.null_dominated for p in results.values())
+        assert all(p.probability == 0.5 for p in results.values())
+        # Always a state: confidence decides what "no answer" becomes.
+        assert all(v is True for v in estimator(images).values())
+        assert all(v is False for v in estimator(images, confidence=0.6).values())
+
+    def test_calibration_does_not_override_unknown(self, images):
+        class ConfidentCalibrator:
+            def apply(self, results):
+                return PredictionSet(
+                    {k: p.with_probability(0.9) for k, p in results.items()}
+                )
+
+        fake = FakeVLM({"yes": 0.1, "no": 0.05, "unknown": 0.7})
+        estimator = make_estimator(fake, null_tokens=["unknown"])
+        results = estimator.estimate(images, calibrator=ConfidentCalibrator())
+        assert all(p.probability == 0.5 for p in results.values())
+        # The calibrated value is kept for anyone who wants another rule.
+        assert all(p.probability_override == 0.9 for p in results.values())
 
 
 class TestCalibrationMeta:
@@ -333,6 +352,49 @@ class TestTextMatchScoring:
         assert all(call["generate"] is True for call in fake.calls)
         assert all(call["interest_tokens"] is None for call in fake.calls)
 
+    def test_matched_reply_gives_exact_probability(self, images):
+        estimator = make_estimator(FakeVLM(text="Yes."), scoring="text_match")
+        results = estimator.estimate(images)
+        assert all(p.probability == 1.0 for p in results.values())
+        assert all(v is True for v in estimator(images, confidence=1.0).values())
+
+    def test_reply_is_matched_at_its_start_only(self, images):
+        fake = FakeVLM(text="No, I would not say yes.")
+        estimator = make_estimator(fake, scoring="text_match")
+        assert all(v is False for v in estimator(images).values())
+
+    def test_unmatched_reply_warns_and_is_uninformative(self, images):
+        fake = FakeVLM(text="I cannot tell from the image.")
+        estimator = make_estimator(fake, scoring="text_match")
+        with pytest.warns(UnmatchedAnswerWarning, match="I cannot tell"):
+            results = estimator.estimate(images)
+        assert all(not p.matched for p in results.values())
+        assert all(p.probability == 0.5 for p in results.values())
+        with pytest.warns(UnmatchedAnswerWarning):
+            assert all(v is True for v in estimator(images).values())
+        with pytest.warns(UnmatchedAnswerWarning):
+            assert all(
+                v is False for v in estimator(images, confidence=0.9).values()
+            )
+
+    def test_warning_points_at_the_callers_line(self, images):
+        estimator = make_estimator(FakeVLM(text="Maybe."), scoring="text_match")
+        with pytest.warns(UnmatchedAnswerWarning) as record:
+            estimator(images)
+        with pytest.warns(UnmatchedAnswerWarning) as averaged:
+            estimator.estimate_averaged([images, images])
+        assert {w.filename for w in [*record, *averaged]} == {__file__}
+
+    def test_null_token_reply_does_not_warn(self, images, recwarn):
+        fake = FakeVLM(text="unknown")
+        estimator = make_estimator(
+            fake, scoring="text_match", null_tokens=["unknown"]
+        )
+        results = estimator.estimate(images)
+        assert not [w for w in recwarn if w.category is UnmatchedAnswerWarning]
+        assert all(p.matched and p.null_dominated for p in results.values())
+        assert all(p.probability == 0.5 for p in results.values())
+
     def test_logprobs_scoring_does_not_generate(self, images):
         fake = FakeVLM()
         make_estimator(fake).estimate(images)
@@ -386,7 +448,9 @@ class TestEstimateAveraged:
         assert prediction.masses["no"] == pytest.approx(0.15)
         assert prediction.null_mass == pytest.approx(0.4)
         assert prediction.null_dominated is True
-        assert results.to_state() == {"on(a,b)": None}
+        assert prediction.probability == 0.5
+        assert results.to_state() == {"on(a,b)": True}
+        assert results.to_state(confidence=0.6) == {"on(a,b)": False}
 
 
     def test_calibration_is_applied_per_scene_then_averaged(self):
@@ -467,6 +531,26 @@ class TestCollectIntegration:
         )
         assert len(data.samples) == len(target)
         assert data.meta["true_label"] == "yes"
+
+    def test_collect_skips_predictions_with_no_answer(self, images):
+        """Their probability is fixed at 0.5 whatever a calibrator says, so
+        they are not training points."""
+        from s3e.calibration import CalibrationExample, CalibrationSet
+
+        fake = FakeVLM({"yes": 0.8, "no": 0.1})
+        fake.script_responses(
+            {
+                "Is a on b?": {"yes": 0.1, "no": 0.05, "unknown": 0.7},
+                "Is b on a?": {},  # top-k backend: no answer token at all
+            }
+        )
+        estimator = make_estimator(fake, null_tokens=["unknown"])
+        target = {"on(a,b)": True, "on(b,a)": False, "clear(a)": True}
+        with pytest.warns(UnmatchedAnswerWarning):
+            data = CalibrationSet.collect(
+                estimator, [CalibrationExample(images=images, state_dict=target)]
+            )
+        assert [s.predicate for s in data.samples] == ["clear(a)"]
 
     def test_collect_restores_estimator_problem(self, images):
         """Per-example set_problem calls are collection plumbing; collect must

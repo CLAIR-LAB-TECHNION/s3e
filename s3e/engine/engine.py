@@ -1,5 +1,7 @@
 """QueryEngine: images + queries + an answer space -> predictions."""
 
+import sys
+import warnings
 from collections.abc import Sequence
 
 from PIL.Image import Image
@@ -7,6 +9,42 @@ from PIL.Image import Image
 from ..backends import VLMBackend, resolve_backend
 from .answers import SCORING_MODES, AnswerSpace, BinaryAnswers
 from .results import Prediction, PredictionSet
+
+
+class UnmatchedAnswerWarning(UserWarning):
+    """Some queries got an answer outside the answer space (see ``Prediction.matched``)."""
+
+
+def _external_stacklevel() -> int:
+    """``stacklevel`` pointing a warning at the first frame outside ``s3e``."""
+    level, frame = 1, sys._getframe(1)
+    while frame is not None:
+        if frame.f_globals.get("__name__", "").partition(".")[0] != "s3e":
+            break
+        level += 1
+        frame = frame.f_back
+    return level
+
+
+def _warn_unmatched(predictions: dict[str, Prediction], scoring: str) -> None:
+    unmatched = [p for p in predictions.values() if not p.matched]
+    if not unmatched:
+        return
+    first = unmatched[0]
+    if scoring == "text_match":
+        reply = first.text and first.text[:80]
+        problem = "got a reply that starts with none of the answer tokens"
+        example = f"{first.query!r} -> {reply!r}"
+    else:
+        problem = "put zero probability on every answer token"
+        example = repr(first.query)
+    warnings.warn(
+        f"{len(unmatched)} of {len(predictions)} queries {problem}; they have "
+        "no answer (P(true) = 0.5 for binary spaces, a uniform distribution "
+        f"otherwise). First: {example}",
+        UnmatchedAnswerWarning,
+        stacklevel=_external_stacklevel(),
+    )
 
 
 def _validate_scoring(scoring: str) -> str:
@@ -78,7 +116,11 @@ class QueryEngine:
         inference_kwargs: "dict | None" = None,
         keep_raw: bool = False,
     ) -> PredictionSet:
-        """Answer each query about one scene (a list of images shown together)."""
+        """Answer each query about one scene (a list of images shown together).
+
+        Emits one :class:`UnmatchedAnswerWarning` when any query's answer
+        matched none of the answer space's options (including the null option).
+        """
         space = answers if answers is not None else self.answers
         mode = _validate_scoring(scoring) if scoring is not None else self.scoring
         merged_kwargs = {**self.inference_kwargs, **(inference_kwargs or {})}
@@ -114,6 +156,7 @@ class QueryEngine:
                 argmax_in_interest=output.argmax_in_interest,
                 raw=output if keep_raw else None,
             )
+        _warn_unmatched(predictions, mode)
         return PredictionSet(predictions)
 
     def ask_each(

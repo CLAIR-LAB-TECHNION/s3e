@@ -15,9 +15,13 @@ from ..backends import VLMOutput
 SCORING_MODES = ("logprobs", "text_match")
 
 
-def _is_word_in_text(word: str, text: str) -> bool:
-    """Check if word appears as a complete word in text (with word boundaries)."""
-    return bool(re.search(r"\b" + re.escape(word) + r"\b", text))
+def _starts_with_token(text: str, token: str) -> bool:
+    """Check if text begins with token as a whole word (or phrase).
+
+    The token must be followed by a non-word character or the end of the
+    text, so ``"No."`` starts with ``"No"`` but ``"Nothing"`` does not.
+    """
+    return re.match(re.escape(token) + r"(?!\w)", text) is not None
 
 
 def expand_token_variants(label: str) -> tuple[str, ...]:
@@ -132,15 +136,31 @@ class AnswerSpace:
         return ScoredMasses(masses=masses, null_mass=null_mass, unassigned_mass=unassigned)
 
     def _score_text(self, output: VLMOutput) -> ScoredMasses:
-        text = output.text or ""
-        matched: "str | None" = None
-        null_matched = False
+        """Score the option whose token the generated text starts with.
+
+        Leading/trailing whitespace is ignored on both the text and the
+        tokens; matching is otherwise exact (case-sensitive). Longer tokens
+        are tried first, so a multi-word token wins over its own first word.
+        """
+        text = (output.text or "").strip()
         candidates = list(self.options) + (
             [self.null_option] if self.null_option else []
         )
-        for option in candidates:
-            if any(token.strip() and _is_word_in_text(token.strip(), text) for token in option.tokens):
-                if self.null_option and option is self.null_option:
+        forms = sorted(
+            (
+                (token.strip(), option)
+                for option in candidates
+                for token in option.tokens
+                if token.strip()
+            ),
+            key=lambda pair: len(pair[0]),
+            reverse=True,
+        )
+        matched: "str | None" = None
+        null_matched = False
+        for form, option in forms:
+            if _starts_with_token(text, form):
+                if option is self.null_option:
                     null_matched = True
                 else:
                     matched = option.label
