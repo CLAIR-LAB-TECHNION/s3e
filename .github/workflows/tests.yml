@@ -38,6 +38,19 @@ jobs:
       - name: Run fast test suite
         run: pytest -m "not slow"
 
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Check
+        run: ruff check .
+
   docs:
     name: Build documentation
     runs-on: ubuntu-latest

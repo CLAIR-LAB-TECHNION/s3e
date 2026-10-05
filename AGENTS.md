@@ -24,7 +24,7 @@
 - `tests/fakes.py`: shared `FakeVLM` double implementing the full `VLMBackend` contract
 - `docs/`: Sphinx API reference (`conf.py`, MyST Markdown pages, `api/*.rst` autodoc pages) plus the walkthrough notebook `docs/s3e_walkthrough.ipynb`; built on Read the Docs via `.readthedocs.yaml`
 - `paper/`: JOSS paper (`paper.md`, `paper.bib`, `s3e-pipeline.png`); keep it the only `paper.md` in the repo
-- `.github/workflows/`: `tests.yml` (fast suite on Python 3.10–3.14 + strict docs build) and `draft-pdf.yml` (JOSS draft PDF)
+- `.github/workflows/`: `tests.yml` (fast suite on Python 3.10–3.14, ruff, strict docs build) and `draft-pdf.yml` (JOSS draft PDF)
 - Project metadata: `CHANGELOG.md`, `CITATION.cff`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `.mailmap`
 
 ## Environment
@@ -40,21 +40,16 @@
 
 ## Build Commands
 - Packaging is configured through setuptools in `pyproject.toml`.
-- If the `build` package is installed, create wheel/sdist with: `python -m build`
-- In the analyzed environment, `python -m build` currently fails because `build` is not installed.
+- Create wheel/sdist with `python -m build` (requires `pip install build`; it is not part of any extra).
 - Do not document or automate a different build flow unless you add the necessary config in the same change.
 - Docs: `pip install -e '.[docs]'` then `sphinx-build -W -b html docs docs/_build/html`. The build mocks torch/transformers/vllm, so new public modules must import cleanly under those mocks; add new public APIs to the matching `docs/api/*.rst` page.
 - JOSS paper: the `Draft PDF` workflow builds `paper/paper.pdf` on changes under `paper/`. Keep the paper between 750 and 1750 words (the JOSS bot counts the whole file).
 
 ## Lint And Static Checks
-- There is no configured linter or formatter in this repository.
-- No repo config exists for `ruff`, `black`, `isort`, `flake8`, `mypy`, or `pyright`.
-- Do not invent repo-standard lint commands.
-- If you want lightweight validation, use:
-  - `python -m compileall s3e tests`
-  - `pytest -m "not slow"`
-- If you introduce a lint or type-check tool, update `pyproject.toml`, CI, and this file together.
-- CI (`.github/workflows/tests.yml`) installs CPU-only torch, then `pip install -e '.[dev]'`, and runs `pytest -m "not slow"` on Python 3.10–3.14, plus the strict docs build.
+- Linter: `ruff check .` (installed by the `dev` extra). The rule set in `pyproject.toml` (`[tool.ruff.lint]`) is correctness-focused (`E4`, `E7`, `E9`, `F`, `W`, `B`); `E402` is ignored because optional backends import their dependency after `require()`.
+- There is no formatter and no type checker; do not run `ruff format` or reformat files.
+- If you introduce or change a lint or type-check tool, update `pyproject.toml`, CI, and this file together.
+- CI (`.github/workflows/tests.yml`) installs CPU-only torch, then `pip install -e '.[dev]'`, and runs `pytest -m "not slow"` on Python 3.10–3.14, plus `ruff check .` and the strict docs build.
 
 ## Test Commands
 - Full suite: `pytest`
@@ -156,7 +151,7 @@
 
 ## Quick Reference
 - Dev install: `pip install -e '.[dev]'` (CPU) or `pip install -e '.[dev-gpu]'` (CUDA hosts, adds vLLM)
-- Fast verification: `pytest -m "not slow"`
+- Fast verification: `pytest -m "not slow"` and `ruff check .`
 - Single test: `pytest tests/test_cache.py::TestMakeCacheKey::test_basic_key`
 - Test discovery: `pytest --collect-only -q`
 - Optional package build: `python -m build`

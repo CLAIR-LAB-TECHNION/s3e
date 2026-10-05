@@ -44,7 +44,7 @@ pddl = ["unified-planning>=1.3.0"]
 calibration = ["scikit-learn"]
 # Everything except vllm, which has hard platform constraints.
 all = ["s3e[hf,openai,pddl,calibration]"]
-dev = ["pytest", "s3e[all]"]
+dev = ["pytest", "ruff", "s3e[all]"]
 # dev plus vllm: needed for the vLLM test coverage; requires a CUDA host.
 dev-gpu = ["s3e[dev,vllm]"]
 # Sphinx API reference; heavy backends (torch, transformers, vllm) are mocked.
@@ -59,3 +59,14 @@ Changelog = "https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["s3e*"]
+
+[tool.ruff.lint]
+# Correctness-focused rules only; there is no formatter.
+select = ["E4", "E7", "E9", "F", "W", "B"]
+ignore = [
+    "E402",  # optional backends import their dependency after require()
+    "B905",  # zip(strict=...) would change behavior
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B018"]  # bare attribute access inside pytest.raises
