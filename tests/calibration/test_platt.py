@@ -132,3 +132,14 @@ class TestPlattPersistence:
         path = tmp_path / "platt.json"
         cal.save(path)
         assert "format_version" in json.loads(path.read_text())
+
+    def test_loads_utf8_file_with_non_ascii_group_keys(self, tmp_path):
+        cal = PlattCalibrator.fit(
+            CalibrationSet(samples=make_samples(predicate="sur(a,é)"), meta={}),
+            scope="grounded",
+        )
+        path = tmp_path / "platt.json"
+        cal.save(path)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        assert PlattCalibrator.load(path).group_keys() == ["sur(a,é)"]

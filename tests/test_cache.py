@@ -43,6 +43,23 @@ class TestSaveAndLoadCache:
         loaded = load_cache(str(tmp_path), "test_cache.json")
         assert loaded == queries
 
+    def test_reads_and_merges_utf8_files(self, tmp_path):
+        """A hand-edited cache with non-ASCII text loads on any platform
+        (open() would otherwise use the locale encoding, e.g. cp1252)."""
+        path = tmp_path / "edited.json"
+        path.write_text(
+            json.dumps({"on(a,b)": "¿Está a sobre b?"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        assert load_cache(str(tmp_path), "edited.json") == {
+            "on(a,b)": "¿Está a sobre b?"
+        }
+        save_cache(str(tmp_path), "edited.json", {"clear(a)": "¿Está a libre?"})
+        assert load_cache(str(tmp_path), "edited.json") == {
+            "on(a,b)": "¿Está a sobre b?",
+            "clear(a)": "¿Está a libre?",
+        }
+
     def test_load_nonexistent_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             load_cache(str(tmp_path), "nonexistent.json")

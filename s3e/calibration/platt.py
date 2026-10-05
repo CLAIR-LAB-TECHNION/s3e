@@ -222,7 +222,9 @@ class PlattCalibrator(Calibrator):
                 for key, params in self.groups.items()
             },
         }
-        Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        Path(path).write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     @classmethod
     def load(cls, path: str | Path) -> "PlattCalibrator":
@@ -231,7 +233,7 @@ class PlattCalibrator(Calibrator):
         Raises:
             ValueError: If the file has an unsupported ``format_version``.
         """
-        data = json.loads(Path(path).read_text())
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
         version = data.get("format_version")
         if version != cls.PLATT_FORMAT_VERSION:
             raise ValueError(

@@ -45,7 +45,7 @@ def load_cache(cache_dir: str, cache_key: str) -> dict[str, str]:
         FileNotFoundError: If the cache file does not exist.
     """
     path = os.path.join(cache_dir, cache_key)
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -65,10 +65,10 @@ def save_cache(cache_dir: str, cache_key: str, queries: dict[str, str]) -> None:
 
     existing: dict[str, str] = {}
     if os.path.exists(path):
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             existing = json.load(f)
 
     existing.update(queries)
 
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(existing, f, indent=4)

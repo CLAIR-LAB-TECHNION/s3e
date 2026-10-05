@@ -155,9 +155,12 @@ class CalibrationSet:
 
     def save(self, path: "str | Path") -> None:
         """Write this set to a JSON file."""
-        Path(path).write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n")
+        Path(path).write_text(
+            json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     @classmethod
     def load(cls, path: "str | Path") -> "CalibrationSet":
         """Read a set written by :meth:`save`."""
-        return cls.from_dict(json.loads(Path(path).read_text()))
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
