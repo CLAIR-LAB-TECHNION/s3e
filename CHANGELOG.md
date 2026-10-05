@@ -78,8 +78,12 @@ its changes ship in 0.4.1.)
   explicit predicate list.
 - **Breaking:** `s3e.vlm` renamed to `s3e.backends`; vLLM is selected by
   passing a `VLLMBackend` instance instead of a flag.
-- Optional dependencies are tiered into extras; `import s3e` no longer pulls
-  in torch, Unified Planning, scikit-learn, or openai.
+- **Breaking:** torch, torchvision, transformers, accelerate, and
+  unified-planning moved from the core dependencies into the `hf` and `pddl`
+  extras, so `pip install -U s3e` alone no longer brings the HuggingFace
+  backend or PDDL support; install `s3e[all]` (or the extras you need).
+  `import s3e` no longer pulls in torch, Unified Planning, scikit-learn, or
+  openai.
 
 ### Removed
 - **Breaking:** `StateEstimator`, `ProbabilisticStateEstimator`,
@@ -88,12 +92,19 @@ its changes ship in 0.4.1.)
 - **Breaking:** estimator methods `swap_problem`, `estimate_prediction_details`,
   `estimate_probabilities`, `estimate_raw`, and the `*_platt_scaling*` family,
   superseded by `set_problem`, `estimate`, and the `s3e.calibration` package.
+- **Breaking:** modules `s3e.semantic_state_estimator` and
+  `s3e.state_estimator` (now `s3e.estimator`), `s3e.cache` (now
+  `s3e.translation.cache`), and `PlattScalingProfile` (now `PlattCalibrator`).
 
 ### Fixed
-- Many input-validation fixes: configuration is validated before any model is
-  loaded; duplicate or empty answer tokens are rejected; overflow-safe Platt
-  sigmoid; the estimator's problem is restored after
-  `CalibrationSet.collect`; only boolean fluents are grounded as predicates.
+- `LLMTranslator` puts the domain text, not a `.pddl` file path, into its
+  prompt.
+- `OpenAIVLM` honors generate mode instead of always requesting
+  log-probabilities, and fails clearly when log-probabilities are missing.
+- Translation cache keys strip path separators from every part of the name,
+  not only from the model id.
+- Only boolean fluents are grounded as predicates; the Platt sigmoid is
+  overflow-safe; and configuration is validated before any model is loaded.
 
 ## 0.3.2 — 2026-08-04
 
@@ -103,6 +114,12 @@ its changes ship in 0.4.1.)
   HuggingFace and vLLM backends.
 
 ### Changed
+- **Breaking for custom backends:** the estimator now passes
+  `interest_tokens=` to every backend's `query`, so `VLMBackend` subclasses
+  must accept that argument.
+- The `SemanticStateEstimator.use_vllm` attribute was removed; the
+  `use_vllm` constructor flag still selects vLLM (and is ignored, with a
+  warning, for OpenAI models).
 - `s3e.__version__` is read from the installed package metadata.
 
 ### Fixed
@@ -118,7 +135,8 @@ its changes ship in 0.4.1.)
 
 ### Added
 - `VLLMBackend` for local, single-node multi-GPU inference (requires
-  `vllm>=0.11.0`, the `vllm` extra).
+  `vllm>=0.11.0`, the `vllm` extra), selected with
+  `SemanticStateEstimator(..., use_vllm=True)`.
 
 ### Changed
 - **Breaking:** estimator configuration arguments are keyword-only.
