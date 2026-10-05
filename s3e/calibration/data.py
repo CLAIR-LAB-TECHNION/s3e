@@ -70,6 +70,11 @@ class CalibrationSet:
         problem; the estimator is restored to its original problem before
         returning (even on error).
 
+        Predictions with no answer (null-dominated or unmatched) are skipped:
+        their probability is fixed at 0.5 whatever a calibrator says, so they
+        are not valid training points. Each skipped prediction is one label
+        in ``state_dict`` without a sample.
+
         Raises:
             ValueError: If the estimator does not use ``scoring="logprobs"`` —
                 grouped log-odds scores are not defined for text-match masses.
@@ -93,10 +98,13 @@ class CalibrationSet:
                     example.images, predicates=list(example.state_dict)
                 )
                 for predicate, label in example.state_dict.items():
+                    prediction = results[predicate]
+                    if prediction.null_dominated or not prediction.matched:
+                        continue
                     samples.append(
                         CalibrationSample(
                             predicate=predicate,
-                            score=results[predicate].score,
+                            score=prediction.score,
                             label=bool(label),
                             problem=example.problem,
                         )

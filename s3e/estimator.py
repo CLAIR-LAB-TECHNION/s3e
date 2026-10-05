@@ -46,9 +46,9 @@ class SemanticStateEstimator:
         prompt_template: Wrapper for each query; must contain ``{query}``.
         additional_instructions: Appended to the system prompt.
         confidence: Default acceptance threshold for :meth:`__call__`: a
-            predicate is True when P(true) >= confidence, False when
-            P(false) >= confidence, else None (see
-            :meth:`PredictionSet.to_state`).
+            predicate is True when P(true) >= confidence, else False (see
+            :meth:`PredictionSet.to_state`). Applies only to binary answer
+            spaces.
         scoring: ``"logprobs"`` or ``"text_match"``.
         batch_size / vlm_kwargs / inference_kwargs: Forwarded to
             :class:`QueryEngine`.
@@ -260,8 +260,14 @@ class SemanticStateEstimator:
 
     def __call__(
         self, images: list[Image], confidence: "float | None" = None
-    ) -> "dict[str, bool | None]":
-        """Estimate and threshold into a boolean state."""
+    ) -> dict[str, bool]:
+        """Estimate and threshold into a boolean state (binary answer spaces).
+
+        Every predicate gets a value: True when P(true) >= confidence, else
+        False. Predicates with no answer (null-dominated or unmatched) have
+        P(true) = 0.5; check ``estimate()`` results for ``null_dominated`` /
+        ``matched`` to tell them apart.
+        """
         threshold = confidence if confidence is not None else self.confidence
         return self.estimate(images).to_state(confidence=threshold)
 

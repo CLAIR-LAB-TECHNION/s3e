@@ -17,6 +17,19 @@ class Prediction:
     and the unassigned remainder. ``raw`` holds the backend
     :class:`~s3e.backends.VLMOutput` only when the engine was asked to keep
     it and is never serialized.
+
+    A prediction carries *no answer* when the null option is the model's top
+    answer (:attr:`null_dominated`) or no option received any mass at all
+    (not :attr:`matched`). Such predictions are uninformative: binary
+    :attr:`probability` is 0.5 and :meth:`distribution` is uniform.
+
+    The decision rule never alters stored data. ``masses``, ``null_mass``,
+    ``unassigned_mass`` and ``probability_override`` (a calibrator's
+    yes-vs-no probability) keep their original values, so other rules can be
+    derived from them. For example, counting null mass as half true and half
+    false: ``(T + n / 2) / (T + F + n)`` from the raw masses, or
+    ``w * probability_override + (1 - w) * 0.5`` with ``w = (T + F) / (T + F + n)``
+    for calibrated predictions (fall back to 0.5 when ``T + F + n == 0``).
     """
 
     def __init__(
@@ -50,49 +63,87 @@ class Prediction:
         return self.null_mass > max(self.masses.values())
 
     @cached_property
+    def matched(self) -> bool:
+        """True when any answer option or the null option received mass.
+
+        In ``text_match`` scoring, False means the generated text started with
+        none of the answer space's tokens. In ``logprobs`` scoring it means
+        every interest token had zero probability, which happens with
+        backends that return only the top-k tokens; for full-vocabulary
+        backends, ``argmax_in_interest`` and ``unassigned_mass`` are the more
+        useful signals of an off-target answer.
+        """
+        return sum(self.masses.values()) + self.null_mass > 0.0
+
+    @cached_property
+    def _no_answer(self) -> bool:
+        return self.null_dominated or not self.matched
+
+    @cached_property
     def answer(self):
-        """Argmax label; a bool for binary spaces; None when null-dominated."""
-        if self.null_dominated:
-            return None
-        label = max(self.masses, key=self.masses.__getitem__)
+        """The decided answer; never None.
+
+        For binary spaces, ``probability >= 0.5`` (the state at the default
+        confidence). For other spaces, the most likely label in
+        :meth:`distribution`; ties, including the uniform distribution of a
+        prediction with no answer, go to the first listed option.
+        """
         if isinstance(self.answers, BinaryAnswers):
-            return label == self.answers.true_label
-        return label
+            return bool(self.probability >= 0.5)
+        distribution = self.distribution()
+        return max(distribution, key=distribution.__getitem__)
 
     @cached_property
     def probability(self) -> float:
-        """Normalized P(true) for binary spaces (override wins when set)."""
+        """P(true) for binary spaces.
+
+        0.5 when the prediction has no answer (null-dominated or unmatched),
+        even if calibrated. Otherwise the calibrated probability when an
+        override is set, else ``T / (T + F)`` over the true and false masses.
+        """
+        self._require_binary("probability")
+        if self._no_answer:
+            return 0.5
         if self.probability_override is not None:
             return self.probability_override
-        self._require_binary("probability")
         true_mass = self.masses[self.answers.true_label]
         false_mass = self.masses[self.answers.false_label]
-        return (true_mass + EPS) / (true_mass + false_mass + 2 * EPS)
+        return true_mass / (true_mass + false_mass)
 
     @cached_property
     def score(self) -> float:
-        """Grouped log-odds log(true_mass / false_mass) for binary spaces."""
+        """Grouped log-odds log(true_mass / false_mass) for binary spaces.
+
+        Computed from the raw masses only (null mass is ignored); this is the
+        input calibrators fit on. ``EPS`` keeps it finite for zero masses.
+        """
         self._require_binary("score")
         true_mass = self.masses[self.answers.true_label]
         false_mass = self.masses[self.answers.false_label]
         return math.log((true_mass + EPS) / (false_mass + EPS))
 
     def distribution(self) -> dict[str, float]:
-        """Masses normalized over the answer options."""
-        total = sum(self.masses.values())
-        if total <= 0.0:
+        """Masses normalized over the answer options (uncalibrated).
+
+        Uniform when the prediction has no answer (null-dominated or
+        unmatched).
+        """
+        if self._no_answer:
             uniform = 1.0 / len(self.masses)
             return {label: uniform for label in self.masses}
+        total = sum(self.masses.values())
         return {label: mass / total for label, mass in self.masses.items()}
 
     def confident(self, threshold: float) -> bool:
-        """Whether either boolean outcome reaches the threshold.
+        """Whether either boolean outcome reaches the threshold (binary only).
 
         True when P(true) >= threshold or P(false) >= threshold. No range is
-        enforced on ``threshold``; see :meth:`PredictionSet.to_state` for the
-        decision rule it feeds.
+        enforced on ``threshold``. Useful for filtering, e.g.
+        ``results.where(lambda p: p.confident(0.9))``.
         """
-        return self.probability >= threshold or (1.0 - self.probability) >= threshold
+        return bool(
+            self.probability >= threshold or (1.0 - self.probability) >= threshold
+        )
 
     def with_probability(self, probability: float) -> "Prediction":
         """Copy of this prediction with an overriding probability (calibration)."""
@@ -160,30 +211,19 @@ class PredictionSet(Mapping):
         """Per-query P(true) (binary spaces)."""
         return {key: p.probability for key, p in self._predictions.items()}
 
-    def to_state(self, confidence: float = 0.5) -> "dict[str, bool | None]":
-        """Threshold probabilities into a three-valued boolean state.
+    def to_state(self, confidence: float = 0.5) -> dict[str, bool]:
+        """Threshold P(true) into a boolean state (binary answer spaces only).
 
         ``confidence`` is an acceptance threshold on P(true): a predicate is
-        accepted as True whenever P(true) >= confidence. Otherwise it is
-        False when P(false) = 1 - P(true) >= confidence, and None when neither
-        side reaches the threshold or the prediction is null-dominated.
-
-        The True check runs first, so the rule is well defined for any value
-        of ``confidence``. Below 0.5 the two checks can both hold and True wins;
-        at 0.5 every non-null prediction is decided by its argmax; above 0.5
-        the checks are mutually exclusive and undecided predicates become None.
+        True when P(true) >= confidence and False otherwise, so every
+        predicate gets a value. A prediction with no answer (null-dominated or
+        unmatched) has P(true) = 0.5, so it is True for confidence <= 0.5 and
+        False above. Raises ``ValueError`` for non-binary answer spaces.
         """
-        state: dict[str, bool | None] = {}
-        for key, p in self._predictions.items():
-            if p.null_dominated:
-                state[key] = None
-            elif p.probability >= confidence:
-                state[key] = True
-            elif (1.0 - p.probability) >= confidence:
-                state[key] = False
-            else:
-                state[key] = None
-        return state
+        return {
+            key: bool(p.probability >= confidence)
+            for key, p in self._predictions.items()
+        }
 
     def where(self, predicate) -> "PredictionSet":
         """Subset of predictions for which ``predicate(prediction)`` is true."""
@@ -218,6 +258,11 @@ class PredictionSet(Mapping):
         the averaged prediction carries their mean. When only some — or no —
         members have an override, the averaged prediction has none and its
         probability is re-derived from the averaged masses.
+
+        The decision rule is applied after averaging, to the averaged data: a
+        member with no answer contributes its raw masses and override, not its
+        effective 0.5, and the averaged prediction has no answer only if its
+        averaged null mass dominates or every member was unmatched.
 
         Non-numeric per-member data does not average: ``text`` is dropped,
         and ``argmax_in_interest`` is kept only when every member agrees

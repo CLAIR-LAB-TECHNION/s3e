@@ -1,5 +1,6 @@
 """QueryEngine: images + queries + an answer space -> predictions."""
 
+import warnings
 from collections.abc import Sequence
 
 from PIL.Image import Image
@@ -7,6 +8,34 @@ from PIL.Image import Image
 from ..backends import VLMBackend, resolve_backend
 from .answers import SCORING_MODES, AnswerSpace, BinaryAnswers
 from .results import Prediction, PredictionSet
+
+
+class UnmatchedAnswerWarning(UserWarning):
+    """Some queries got an answer outside the answer space.
+
+    Their predictions have no answer: P(true) is 0.5 and the distribution is
+    uniform. Filter with ``warnings.simplefilter("ignore", UnmatchedAnswerWarning)``.
+    """
+
+
+def _warn_unmatched(predictions: dict[str, Prediction], scoring: str) -> None:
+    unmatched = [p for p in predictions.values() if not p.matched]
+    if not unmatched:
+        return
+    first = unmatched[0]
+    if scoring == "text_match":
+        reply = first.text if first.text is None else first.text[:80]
+        problem = "got a reply that starts with none of the answer tokens"
+        example = f"{first.query!r} -> {reply!r}"
+    else:
+        problem = "put zero probability on every answer token"
+        example = repr(first.query)
+    warnings.warn(
+        f"{len(unmatched)} of {len(predictions)} queries {problem}; they have "
+        f"no answer (P(true) = 0.5, uniform distribution). First: {example}",
+        UnmatchedAnswerWarning,
+        stacklevel=3,
+    )
 
 
 def _validate_scoring(scoring: str) -> str:
@@ -114,6 +143,7 @@ class QueryEngine:
                 argmax_in_interest=output.argmax_in_interest,
                 raw=output if keep_raw else None,
             )
+        _warn_unmatched(predictions, mode)
         return PredictionSet(predictions)
 
     def ask_each(
