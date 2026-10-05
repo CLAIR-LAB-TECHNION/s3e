@@ -84,6 +84,20 @@ class TestConstructionFromPddl:
                 BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM
             )
 
+    def test_to_up_state_holds_the_estimated_values(self, images):
+        fake = FakeVLM()
+        fake.script_responses({"Is a on b?": {"yes": 0.9, "no": 0.1}})
+        estimator = make_estimator(fake)
+        state = estimator(images, confidence=0.8)
+
+        up_state = estimator.to_up_state(state)
+
+        on_ab = estimator.up_problem.fluent("on")(*map(estimator.up_problem.object, "ab"))
+        on_ba = estimator.up_problem.fluent("on")(*map(estimator.up_problem.object, "ba"))
+        assert state["on(a,b)"] is True and state["on(b,a)"] is False
+        assert up_state.get_value(on_ab).bool_constant_value() is True
+        assert up_state.get_value(on_ba).bool_constant_value() is False
+
 
 class TestEstimate:
     def test_returns_prediction_set_keyed_by_predicate(self, images):
