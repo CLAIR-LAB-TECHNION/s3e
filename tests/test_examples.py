@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
+"""The scripts in ``examples/`` run end to end (fake backends unless slow)."""
+
+import importlib.util
+import json
+import re
+import runpy
+from pathlib import Path
+
+import pytest
+
+from fakes import FakeVLM
+
+pytest.importorskip("unified_planning", reason="examples need s3e[pddl]")
+pytest.importorskip("sklearn", reason="examples need s3e[calibration]")
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+
+
+def load_example(name: str):
+    spec = importlib.util.spec_from_file_location(name, EXAMPLES / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestCustomBackendExample:
+    def test_calibration_improves_held_out_brier_score(self, capsys):
+        runpy.run_path(str(EXAMPLES / "custom_backend.py"), run_name="__main__")
+        out = capsys.readouterr().out
+
+        rows = dict(re.findall(r"^(uncalibrated|calibrated)\s+([\d.]+\s+[\d.]+)$", out, re.M))
+        uncalibrated_acc, uncalibrated_brier = map(float, rows["uncalibrated"].split())
+        calibrated_acc, calibrated_brier = map(float, rows["calibrated"].split())
+        assert calibrated_acc == uncalibrated_acc  # Platt scaling is monotone
+        assert calibrated_brier < uncalibrated_brier
+        assert "as a Unified Planning state: UPState" in out
+
+
+class TestBlocksworldBenchmarkExample:
+    @pytest.fixture(scope="class")
+    def bench(self):
+        return load_example("blocksworld_benchmark")
+
+    def test_true_state_is_a_consistent_arrangement(self, bench):
+        blocks = ["red", "green", "blue"]
+        towers = [["red", "green"], ["blue"]]
+        state = bench.true_state(towers, blocks)
+
+        assert {p for p, value in state.items() if value} == {
+            "ontable(red)", "on(green,red)", "clear(green)",
+            "ontable(blue)", "clear(blue)",
+        }
+        assert len(state) == 3 * 3 + 2 * 3
+
+    def test_metrics_on_known_rows(self, bench):
+        rows = [
+            {"probability": 0.9, "truth": True, "state": True, "has_answer": True},
+            {"probability": 0.5, "truth": False, "state": True, "has_answer": False},
+        ]
+        result = bench.metrics(rows)
+        assert result["accuracy"] == 0.5
+        assert result["brier"] == pytest.approx((0.01 + 0.25) / 2)
+        assert result["no_answer_rate"] == 0.5
+        # Two singleton bins: |1 - 0.9| and |0 - 0.5|, each weighted 1/2.
+        assert result["ece"] == pytest.approx((0.1 + 0.5) / 2)
+
+    def test_report_with_fake_backend(self, bench):
+        report = bench.run_benchmark(
+            FakeVLM({"yes": 0.7, "no": 0.2}, text="yes"),
+            num_scenes=4,
+            num_blocks=2,
+            calibrate_fraction=0.5,
+        )
+
+        assert set(report["summary"]) == {"logprobs", "text_match", "logprobs+platt"}
+        assert len(report["instances"]["logprobs"]) == 4 * (2 * 2 + 2 * 2)
+        for summary in report["summary"].values():
+            assert 0.0 <= summary["accuracy"] <= 1.0
+            assert 0.0 <= summary["brier"] <= 1.0
+        provenance = report["provenance"]
+        assert provenance["backend"] == "FakeVLM"
+        assert provenance["queries"]["on(red,green)"].startswith("Is the red block")
+        assert provenance["inference_kwargs"]["logprobs"] == {}
+        json.dumps(report)  # the whole report is JSON-serializable
+
+    def test_command_line_writes_the_report(self, bench, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(
+            bench, "resolve_backend", lambda vlm, **kw: FakeVLM(text="no")
+        )
+        output = tmp_path / "results.json"
+        bench.main([
+            "--model", "fake", "--num-scenes", "2", "--num-blocks", "2",
+            "--scoring", "text_match", "--output", str(output),
+        ])
+
+        report = json.loads(output.read_text(encoding="utf-8"))
+        assert set(report["summary"]) == {"text_match"}
+        assert report["provenance"]["inference_kwargs"]["text_match"] == {"max_new_tokens": 8}
+        assert "text_match" in capsys.readouterr().out
+
+    def test_rejects_unsupported_block_count(self, bench):
+        with pytest.raises(ValueError, match="num_blocks"):
+            bench.run_benchmark(FakeVLM(), num_blocks=7)
+
+    @pytest.mark.slow
+    def test_real_model_records_its_revision(self, bench):
+        torch = pytest.importorskip("torch")
+        report = bench.run_benchmark(
+            "katuni4ka/tiny-random-llava",
+            num_scenes=1,
+            num_blocks=2,
+            generation_kwargs={"max_new_tokens": 2},
+            vlm_kwargs={"device_map": "cpu", "torch_dtype": torch.float32},
+        )
+        assert re.fullmatch(r"[0-9a-f]{40}", report["provenance"]["model_revision"])
+        assert report["provenance"]["backend"] == "HuggingFaceVLM"
