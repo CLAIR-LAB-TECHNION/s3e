@@ -22,10 +22,11 @@
 - `tests/`: mirrors the package layout (`tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, `tests/workflows/`, `tests/test_estimator.py`, `tests/test_imports.py`, ...)
 - `tests/conftest.py`: shared fixtures and Blocksworld sample data
 - `tests/fakes.py`: shared `FakeVLM` double implementing the full `VLMBackend` contract
+- `examples/`: runnable scripts (`custom_backend.py`, `blocksworld_benchmark.py`), run by `tests/test_examples.py` with fake backends
 - `docs/`: Sphinx API reference (`conf.py`, MyST Markdown pages, `api/*.rst` autodoc pages) plus the walkthrough notebook `docs/s3e_walkthrough.ipynb`; built on Read the Docs via `.readthedocs.yaml`
 - `paper/`: JOSS paper (`paper.md`, `paper.bib`, `s3e-pipeline.png`); keep it the only `paper.md` in the repo
-- `.github/workflows/`: `tests.yml` (fast suite on Python 3.10–3.14, ruff, strict docs build) and `draft-pdf.yml` (JOSS draft PDF)
-- Project metadata: `CHANGELOG.md`, `CITATION.cff`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `.mailmap`
+- `.github/workflows/`: `tests.yml` (fast suite on Linux 3.10–3.14 plus macOS/Windows, lowest-dependency job, coverage with vLLM, ruff, packaging, `CITATION.cff`, strict docs build), `slow-tests.yml` (weekly real-model tests incl. README/getting-started/notebook execution), and `draft-pdf.yml` (JOSS draft PDF)
+- Project metadata: `CHANGELOG.md`, `CITATION.cff`, `CONTRIBUTING.md` (incl. the release process), `CODE_OF_CONDUCT.md`, `GOVERNANCE.md`, `SECURITY.md`, `.mailmap`
 
 ## Environment
 - Python requirement: `>=3.10`
@@ -49,7 +50,7 @@
 - Linter: `ruff check .` (installed by the `dev` extra). The rule set in `pyproject.toml` (`[tool.ruff.lint]`) is correctness-focused (`E4`, `E7`, `E9`, `F`, `W`, `B`); `E402` is ignored because optional backends import their dependency after `require()`.
 - There is no formatter and no type checker; do not run `ruff format` or reformat files.
 - If you introduce or change a lint or type-check tool, update `pyproject.toml`, CI, and this file together.
-- CI (`.github/workflows/tests.yml`) installs CPU-only torch, then `pip install -e '.[dev]'`, and runs `pytest -m "not slow"` on Python 3.10–3.14, plus `ruff check .` and the strict docs build.
+- CI (`.github/workflows/tests.yml`) runs `pytest -m "not slow"` on Linux (Python 3.10–3.14, CPU-only torch) and on macOS/Windows (3.10, 3.14); a job at the dependency floors (`uv pip install --resolution lowest-direct`, Python 3.10); a coverage job with vLLM installed that fails below 97%; `ruff check .`; a build/`twine check` packaging job; `cffconvert --validate`; and the strict docs build. Dependency floors in `pyproject.toml` must stay the lowest versions that pass.
 
 ## Test Commands
 - Full suite: `pytest`
@@ -79,7 +80,7 @@
 - Follow the existing repository style; do not impose a new style system.
 - Use 4-space indentation.
 - Keep modules focused on one responsibility.
-- Start modules with a concise top-level docstring.
+- Start every Python file with the two-line SPDX header (`# SPDX-FileCopyrightText: CLAIR Lab Technion` / `# SPDX-License-Identifier: MIT`; `tests/test_license_headers.py` enforces it), then a concise module docstring.
 - Add docstrings for public classes and important functions.
 - Prefer clear names and small helpers over extra comments.
 
@@ -141,6 +142,7 @@
 - Mark real-model or download-heavy tests with `@pytest.mark.slow`.
 - When behavior changes, update the nearest relevant test module.
 - Record user-facing changes under "Unreleased" in `CHANGELOG.md`.
+- Tests marked `slow` include `tests/test_documentation.py`, which runs the README Quick Start, the getting-started example, and the walkthrough notebook against a real model; keep those runnable when editing them.
 
 ## Agent Workflow
 - Inspect the target module and its nearest tests before editing.

@@ -75,7 +75,9 @@ Continuous integration runs the fast suite on Linux, macOS, and Windows and
 at the lowest supported dependency versions, plus coverage, `ruff`, the
 documentation build, and packaging checks, on every pull request and every
 push to `main`. The slow tests run weekly. A pull request should keep
-coverage at or above 97%.
+coverage at or above 97%, as measured by the CI coverage job, which installs
+vLLM; without vLLM (a CPU `.[dev]` install), `s3e/backends/vllm.py` is not
+covered and the local total is lower.
 
 ### Workflow
 
