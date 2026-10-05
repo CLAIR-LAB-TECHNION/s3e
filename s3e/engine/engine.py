@@ -41,7 +41,7 @@ def _warn_unmatched(predictions: dict[str, Prediction], scoring: str) -> None:
         return
     first = unmatched[0]
     if scoring == "text_match":
-        reply = first.text if first.text is None else first.text[:80]
+        reply = first.text and first.text[:80]
         problem = "got a reply that starts with none of the answer tokens"
         example = f"{first.query!r} -> {reply!r}"
     else:

@@ -287,7 +287,7 @@ Common methods:
 
 `probability` is `T / (T + F)` over the true and false masses, or the calibrated value when a calibrator was applied. A prediction has **no answer** (`has_answer` is `False`) when the null option is the model's top answer (`null_dominated`) or no answer token got any mass (`matched` is `False`, e.g. a `text_match` reply that starts with none of the tokens). Then `probability` is `0.5` even after calibration, `distribution()` is uniform, and `answer` falls to the first option on the resulting tie (`True` for binary). The engine emits one `UnmatchedAnswerWarning` per call that had unmatched queries; replies that match the null option do not warn.
 
-Because the stored data is untouched, other rules can be derived from it. For example, to count null mass as half true and half false instead: `(T + n/2) / (T + F + n)` from `masses` and `null_mass`, or `w * probability_override + (1 - w) * 0.5` with `w = (T + F) / (T + F + n)` for calibrated predictions.
+Because the stored data is untouched, other rules can be derived from it. For example, to count null mass as half true and half false instead: `(T + n/2) / (T + F + n)` from `masses` and `null_mass`, or `w * probability_override + (1 - w) * 0.5` with `w = (T + F) / (T + F + n)` for calibrated predictions (use `0.5` when `T + F + n == 0`). Apply such rules per scene, before `PredictionSet.average`: averaging already applies the built-in rule to which overrides it keeps.
 
 ### Translators
 

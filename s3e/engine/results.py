@@ -254,18 +254,17 @@ class PredictionSet(Mapping):
     def average(cls, sets: "Sequence[PredictionSet]") -> "PredictionSet":
         """Mean of stored data across prediction sets over the same queries.
 
-        Probability overrides are stored data too: when *every* member of a
-        key carries one (e.g. each scene was calibrated before averaging),
-        the averaged prediction carries their mean. When only some — or no —
-        members have an override, the averaged prediction has none and its
-        probability is re-derived from the averaged masses.
+        Masses are averaged over all members, so a member with no answer
+        still contributes its raw masses; the averaged prediction has no
+        answer only if its averaged null mass dominates or every member was
+        unmatched.
 
-        The decision rule is applied after averaging, to the averaged data: a
-        member with no answer still contributes its raw masses, and the
-        averaged prediction has no answer only if its averaged null mass
-        dominates or every member was unmatched. A member's override is not in
-        effect when it has no answer, so the override mean skips such members
-        (if none has an answer, neither does the average).
+        Probability overrides are averaged only over members with an answer,
+        since a member's override is not in effect without one. When every
+        such member carries an override (e.g. each scene was calibrated
+        before averaging), the averaged prediction carries their mean;
+        otherwise it has none and its probability is re-derived from the
+        averaged masses.
 
         Non-numeric per-member data does not average: ``text`` is dropped,
         and ``argmax_in_interest`` is kept only when every member agrees
@@ -282,10 +281,7 @@ class PredictionSet(Mapping):
         for key in keys:
             members = [s[key] for s in sets]
             first = members[0]
-            overrides = [m.probability_override for m in members]
-            answered_overrides = [
-                m.probability_override for m in members if m.has_answer
-            ]
+            answered = [m for m in members if m.has_answer]
             argmax_flags = {m.argmax_in_interest for m in members}
             averaged[key] = Prediction(
                 query=first.query,
@@ -300,8 +296,9 @@ class PredictionSet(Mapping):
                     argmax_flags.pop() if len(argmax_flags) == 1 else None
                 ),
                 probability_override=(
-                    sum(answered_overrides) / len(answered_overrides)
-                    if all(o is not None for o in overrides) and answered_overrides
+                    sum(m.probability_override for m in answered) / len(answered)
+                    if answered
+                    and all(m.probability_override is not None for m in answered)
                     else None
                 ),
             )

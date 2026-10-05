@@ -72,8 +72,8 @@ class CalibrationSet:
 
         Predictions with no answer (``Prediction.has_answer`` is False) are
         skipped: their probability is fixed at 0.5 whatever a calibrator says,
-        so they are not valid training points. Each skipped prediction is one
-        label in ``state_dict`` without a sample.
+        so they are not valid training points. There can therefore be fewer
+        samples than labels.
 
         Raises:
             ValueError: If the estimator does not use ``scoring="logprobs"`` —

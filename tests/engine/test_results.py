@@ -297,6 +297,12 @@ class TestAverage:
         )["q"]
         assert raw.probability == pytest.approx(0.9)
 
+    def test_average_ignores_missing_override_on_member_without_answer(self):
+        a = PredictionSet({"q": make_prediction(0.0, 0.0)})
+        b = PredictionSet({"q": make_prediction(0.9, 0.1, probability_override=0.7)})
+        avg = PredictionSet.average([a, b])["q"]
+        assert avg.probability_override == pytest.approx(0.7)
+
     def test_average_of_members_all_without_answer_has_no_override(self):
         a = PredictionSet({"q": make_prediction(0.2, 0.1, null_mass=0.6, probability_override=0.9)})
         b = PredictionSet({"q": make_prediction(0.0, 0.0, probability_override=0.7)})
