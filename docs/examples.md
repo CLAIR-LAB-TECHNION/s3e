@@ -73,7 +73,7 @@ your own experiment, this is where `s3e` exposes each of them:
 | What to report | Where to find it |
 |---|---|
 | Library versions | `s3e.__version__`, `importlib.metadata.version(...)` for `torch`, `transformers`, `vllm`, `openai` |
-| Model and exact revision | the model id; pin a Hugging Face commit with `HuggingFaceVLM(..., revision=...)` and read the loaded one from `backend.model.config._commit_hash` |
+| Model and exact revision | the model id; pin a Hugging Face commit with `HuggingFaceVLM(..., revision=...)`, or read the loaded one from `backend.model.config._commit_hash` (a transformers internal, `None` for models loaded from a local path) |
 | Full prompts | `estimator.engine.system_prompt`, `estimator.engine.prompt_template`, and `estimator.queries` (predicate → question) |
 | Answer tokens | `estimator.engine.answers.to_dict()` |
 | Scoring and decoding settings | `estimator.engine.scoring` and `estimator.engine.inference_kwargs` |
