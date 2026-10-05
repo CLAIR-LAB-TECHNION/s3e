@@ -522,7 +522,7 @@ class TestDuplicateQueries:
 class TestCollectIntegration:
     def test_collect_produces_scored_samples(self, images):
         pytest.importorskip("sklearn")
-        from s3e.calibration import CalibrationExample, CalibrationSet, PlattCalibrator
+        from s3e.calibration import CalibrationExample, CalibrationSet
 
         estimator = make_estimator(FakeVLM({"yes": 0.8, "no": 0.1}))
         target = {p: (i % 2 == 0) for i, p in enumerate(estimator.predicates)}

@@ -12,7 +12,6 @@ require("torch", "hf", "HuggingFaceVLM")
 require("transformers", "hf", "HuggingFaceVLM")
 
 import torch
-import numpy as np
 from transformers import AutoProcessor
 
 from .backend import VLMBackend, VLMOutput, _validate_num_logprobs

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from s3e.calibration import CalibrationExample, CalibrationSample, CalibrationSet
+from s3e.calibration import CalibrationSample, CalibrationSet
 
 
 class TestCalibrationSetPersistence:

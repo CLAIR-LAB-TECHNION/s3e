@@ -2,7 +2,6 @@
 
 import pytest
 
-from s3e.translation.translator import QueryTranslator
 from s3e.translation.identity import IdentityTranslator
 from s3e.translation.prewritten import PrewrittenTranslator
 from s3e.translation.template import TemplateTranslator
@@ -140,7 +139,7 @@ class TestTemplateTranslator:
         assert result["done()"] == "Is the task done?"
 
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from s3e.translation.llm import LLMTranslator
 
 

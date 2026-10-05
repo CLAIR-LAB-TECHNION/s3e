@@ -14,7 +14,6 @@ from s3e.backends.openai import OpenAIVLM
 class TestOpenAIVLM:
     def _make_mock_response(self, token_logprobs):
         """Create a mock OpenAI response with given token->logprob pairs."""
-        import math
 
         mock_top_logprobs = []
         for token, logprob in token_logprobs:

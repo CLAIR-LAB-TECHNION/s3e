@@ -9,7 +9,6 @@ type checks must work without importing vllm.
 import json
 import sys
 
-import pytest
 
 from s3e import SemanticStateEstimator, TemplateTranslator, resolve_backend
 from s3e.backends import VLMBackend
