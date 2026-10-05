@@ -23,6 +23,18 @@ try:
 except ImportError:
     from transformers import AutoModelForVision2Seq as _AutoModelClass
 
+# from_pretrained kwargs that select *which* files to load; the processor
+# shares them with the model.
+_HUB_KWARGS = (
+    "revision",
+    "cache_dir",
+    "token",
+    "local_files_only",
+    "force_download",
+    "proxies",
+    "trust_remote_code",
+)
+
 
 class HuggingFaceVLM(VLMBackend):
     """VLM backend using HuggingFace Transformers Auto classes.
@@ -44,7 +56,11 @@ class HuggingFaceVLM(VLMBackend):
         skip_pad_invariance_check: Skip the one-time check that padded batches
             reproduce unbatched answers, for models already known to be
             pad-invariant. Defaults to False.
-        **model_kwargs: Additional kwargs for from_pretrained().
+        **model_kwargs: Additional kwargs for the model's from_pretrained().
+            Hub kwargs that select the files to load (``revision``,
+            ``cache_dir``, ``token``, ``local_files_only``, ``force_download``,
+            ``proxies``, ``trust_remote_code``) are also passed to the
+            processor, so a pinned revision pins both.
 
     Notes:
         There is intentionally no ``max_new_tokens`` constructor parameter
@@ -80,7 +96,12 @@ class HuggingFaceVLM(VLMBackend):
             load_kwargs["attn_implementation"] = attn_implementation
 
         self.model = _AutoModelClass.from_pretrained(model_id, **load_kwargs)
-        self.processor = AutoProcessor.from_pretrained(model_id)
+        # The processor must come from the same snapshot as the weights (e.g.
+        # a pinned ``revision``), but not get model-only kwargs.
+        processor_kwargs = {
+            key: model_kwargs[key] for key in _HUB_KWARGS if key in model_kwargs
+        }
+        self.processor = AutoProcessor.from_pretrained(model_id, **processor_kwargs)
         self.model.eval()
 
         # Batched inference reads logits[:, -1, :]; left padding makes that
