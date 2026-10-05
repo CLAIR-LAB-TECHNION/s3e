@@ -46,7 +46,7 @@ bibliography: paper.bib
 
 Automated planners reason over *symbolic states*: sets of facts such as
 `on(a,b)` ("block a is on block b"), written in the Planning Domain Definition
-Language [PDDL, @mcdermott1998pddl; @haslum2019pddl]. A robot, however, sees
+Language (PDDL) [@mcdermott1998pddl; @haslum2019pddl]. A robot, however, sees
 images, not facts. `s3e` (Semantic Symbolic State Estimation) is a Python
 library that turns images into such facts using vision-language models (VLMs),
 AI models that answer questions about pictures. Given a planning problem and
