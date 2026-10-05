@@ -7,7 +7,14 @@ from .translator import QueryTranslator
 
 
 class PrewrittenTranslator(QueryTranslator):
-    """Translator using a user-provided dictionary of queries."""
+    """Translator using a user-provided dictionary of queries.
+
+    Example:
+        >>> from s3e import PrewrittenTranslator
+        >>> translator = PrewrittenTranslator({"holding(a)": "Is the robot holding block a?"})
+        >>> translator.translate(["holding(a)"])
+        {'holding(a)': 'Is the robot holding block a?'}
+    """
 
     def __init__(self, queries: dict[str, str]):
         self.queries = queries

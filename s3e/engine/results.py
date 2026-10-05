@@ -27,6 +27,18 @@ class Prediction:
     uninformative: binary :attr:`probability` is 0.5 and :meth:`distribution`
     is uniform. The stored data is never altered, so other rules can be
     derived from it.
+
+    Example:
+        The engine builds predictions; here one is built by hand:
+
+        >>> from s3e import BinaryAnswers, Prediction
+        >>> yes_no = BinaryAnswers(null_tokens=["unknown"])
+        >>> p = Prediction("Is a on b?", {"yes": 0.6, "no": 0.2}, 0.1, 0.1, yes_no)
+        >>> round(p.probability, 2), p.answer, p.has_answer
+        (0.75, True, True)
+        >>> unsure = Prediction("Is b clear?", {"yes": 0.1, "no": 0.2}, 0.6, 0.1, yes_no)
+        >>> unsure.null_dominated, unsure.has_answer, unsure.probability
+        (True, False, 0.5)
     """
 
     def __init__(
@@ -188,7 +200,29 @@ class Prediction:
 
 
 class PredictionSet(Mapping):
-    """Ordered mapping of query (or predicate) to :class:`Prediction`."""
+    """Ordered mapping of query (or predicate) to :class:`Prediction`.
+
+    Example:
+        Threshold, average across views, and round-trip through JSON-ready
+        dicts without re-running a model:
+
+        >>> from s3e import BinaryAnswers, Prediction, PredictionSet
+        >>> yes_no = BinaryAnswers()
+        >>> def view(on_ab, clear_b):  # (yes, no) masses per predicate
+        ...     return PredictionSet({
+        ...         "on(a,b)": Prediction("Is a on b?", dict(zip(["yes", "no"], on_ab)), 0.0, 0.0, yes_no),
+        ...         "clear(b)": Prediction("Is b clear?", dict(zip(["yes", "no"], clear_b)), 0.0, 0.0, yes_no),
+        ...     })
+        >>> front, side = view((0.9, 0.1), (0.3, 0.6)), view((0.7, 0.3), (0.5, 0.4))
+        >>> front.to_state()
+        {'on(a,b)': True, 'clear(b)': False}
+        >>> front.to_state(confidence=0.95)
+        {'on(a,b)': False, 'clear(b)': False}
+        >>> {k: round(p, 2) for k, p in PredictionSet.average([front, side]).probabilities().items()}
+        {'on(a,b)': 0.8, 'clear(b)': 0.44}
+        >>> PredictionSet.from_dict(front.to_dict()).to_state()
+        {'on(a,b)': True, 'clear(b)': False}
+    """
 
     def __init__(self, predictions: Mapping[str, Prediction]):
         self._predictions = dict(predictions)

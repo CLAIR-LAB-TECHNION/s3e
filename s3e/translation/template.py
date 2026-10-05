@@ -97,6 +97,15 @@ class TemplateTranslator(QueryTranslator):
     (e.g., ``{x}``, ``{name}``). Keyword placeholders can match either the
     predicate argument names from the PDDL signature or custom names mapped
     left-to-right onto predicate arguments.
+
+    Example:
+        >>> from s3e import TemplateTranslator
+        >>> translator = TemplateTranslator({
+        ...     "on": "Is the {0} block on top of the {1} block?",
+        ...     "clear": "Is the top of the {block} block clear?",
+        ... })
+        >>> translator.translate(["on(red,blue)", "clear(blue)"])
+        {'on(red,blue)': 'Is the red block on top of the blue block?', 'clear(blue)': 'Is the top of the blue block clear?'}
     """
 
     def __init__(self, templates: dict[str, str]):

@@ -127,6 +127,25 @@ class PlattCalibrator(Calibrator):
         meta: Provenance recorded from the :class:`CalibrationSet` (scoring
             mode, answer space, domain fingerprint), checked by
             :meth:`SemanticStateEstimator.estimate` before applying.
+
+    Example:
+        Fit on scores and labels (normally from :meth:`CalibrationSet.collect`),
+        then apply to new predictions without querying a model. This model's
+        raw scores were overconfident, so calibration pulls them toward 0.5:
+
+        >>> from s3e import (BinaryAnswers, CalibrationSample, CalibrationSet,
+        ...                  PlattCalibrator, Prediction, PredictionSet)
+        >>> scored = [(2.0, True), (1.5, True), (1.0, False), (0.5, True),
+        ...           (-0.5, False), (-1.0, True), (-2.0, False), (-1.5, False)]
+        >>> data = CalibrationSet(
+        ...     samples=[CalibrationSample("on(a,b)", s, y) for s, y in scored], meta={})
+        >>> calibrator = PlattCalibrator.fit(data, scope="lifted")
+        >>> calibrator.group_keys()
+        ['on']
+        >>> raw = PredictionSet({"on(c,d)": Prediction(
+        ...     "Is c on d?", {"yes": 0.9, "no": 0.1}, 0.0, 0.0, BinaryAnswers())})
+        >>> round(raw["on(c,d)"].probability, 2), round(calibrator.apply(raw)["on(c,d)"].probability, 2)
+        (0.9, 0.82)
     """
 
     PLATT_FORMAT_VERSION = 1

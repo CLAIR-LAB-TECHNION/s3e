@@ -67,6 +67,7 @@
 
 ## Test Suite Notes
 - `pytest.ini` defines a `slow` marker for tests that download and run real HuggingFace models.
+- Docstring examples are doctests: bare `pytest` collects `tests/` and `s3e/` with `--doctest-modules` (except `s3e/backends/`, which imports heavy dependencies). Keep examples to model-free APIs and round floats in their output.
 - `pytest -m "not slow"` is the default verification command for normal development.
 - Running the suite assumes a dev install (`dev` or `dev-gpu`). Without `vllm`, the vLLM unit tests skip with a reason; the slow vLLM integration tests additionally require CUDA. Other partial installs (missing torch/openai/unified-planning) are supported for the *library* (see `tests/test_imports.py`) but not for running the test suite itself.
 - Reuse fixtures from `tests/conftest.py` and the shared `FakeVLM` double from `tests/fakes.py` instead of duplicating common setup.
