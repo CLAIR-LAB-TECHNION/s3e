@@ -43,9 +43,10 @@ the commit history and PyPI release dates when this file was introduced.
   model: `revision`, `cache_dir`, `token`, and the other file-selection
   kwargs are forwarded to it, so a pinned revision no longer pairs with the
   processor from `main`.
-- Translation-cache file names are valid on Windows: `<>:"|?*` become `_`.
-  Cache files for inference kwargs containing those characters get new
-  names, so their translations are regenerated once.
+- Translation-cache file names are valid on Windows: `<>:"|?*` and control
+  characters become `_`. Cache files whose model id or inference kwargs
+  contain those characters get new names, so their translations are
+  regenerated once.
 - Calibration data, Platt calibrators, and translation caches are read and
   written as UTF-8 on every platform, not in the locale's encoding.
 

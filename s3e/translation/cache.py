@@ -19,8 +19,8 @@ def make_cache_key(model_id: str, problem_name: str, **kwargs) -> str:
     The filename format is: ``model_id--(problem_name;k1=v1;k2=v2).json``
     where path separators anywhere in the name (model IDs, kwarg values,
     ...) are replaced with double underscores, and the other characters
-    Windows forbids in file names (``<>:"|?*``) with single underscores, so
-    a cache directory works on every platform.
+    Windows forbids in file names (``<>:"|?*`` and control characters) with
+    single underscores, so a cache directory works on every platform.
 
     Args:
         model_id: The model identifier (e.g. ``"meta-llama/Llama-3"``).
@@ -35,7 +35,7 @@ def make_cache_key(model_id: str, problem_name: str, **kwargs) -> str:
         params += ";" + ";".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
     name = f"{model_id}--({params}).json"
     name = name.replace("/", "__").replace("\\", "__")
-    return re.sub(r'[<>:"|?*]', "_", name)
+    return re.sub(r'[<>:"|?*\x00-\x1f]', "_", name)
 
 
 def load_cache(cache_dir: str, cache_key: str) -> dict[str, str]:

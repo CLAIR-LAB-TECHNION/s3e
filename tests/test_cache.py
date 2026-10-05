@@ -37,9 +37,10 @@ class TestMakeCacheKey:
         """Dict-valued kwargs put ':' and '"' into str(); Windows rejects
         those (and ':' would open an NTFS alternate data stream)."""
         key = make_cache_key(
-            "OpenAI/gpt-4o", "p1", response_format={"type": "json_object"}, stop="<|?*|>"
+            "OpenAI/gpt-4o", "p1", response_format={"type": "json_object"}, stop="<|?*|>\n"
         )
         assert not set('<>:"|?*') & set(key)
+        assert all(ord(char) >= 32 for char in key)
         assert "response_format={'type'_ 'json_object'}" in key
 
     def test_same_inputs_same_key(self):
