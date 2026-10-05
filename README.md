@@ -25,7 +25,7 @@ Research that grounds symbolic planners in perception — task planning, task-an
 
 Each layer works standalone: you can use `QueryEngine` to answer arbitrary visual questions without PDDL, or use `SemanticStateEstimator.from_pddl` for the full predicate-grounding workflow.
 
-For a longer tutorial, see the [tutorial notebook](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb); the full API reference is at [s3e.readthedocs.io](https://s3e.readthedocs.io).
+For a longer tutorial, see the [tutorial notebook](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb) ([run it in Colab](https://colab.research.google.com/github/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb)); for runnable scripts, including a custom backend and a benchmark on synthetic Blocksworld scenes, see [`examples/`](https://github.com/CLAIR-LAB-TECHNION/s3e/tree/main/examples). The documentation at [s3e.readthedocs.io](https://s3e.readthedocs.io) has a user guide, a developer guide, and the full API reference.
 
 ## Features
 
@@ -342,7 +342,7 @@ pytest -m slow                # downloads and runs real models
 pytest                        # everything
 ```
 
-Continuous integration runs the fast suite on Python 3.10–3.14 for every pull request and every push to `main`. On a machine without a CUDA GPU, install CPU-only PyTorch first to avoid the much larger CUDA build: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`.
+Continuous integration runs the fast suite on Linux with Python 3.10–3.14, on macOS and Windows, and with every dependency at its lowest supported version, for every pull request and every push to `main`; it also reports test coverage. A weekly workflow runs the slow tests on CPU, including the Quick Start above and the tutorial notebook. On a machine without a CUDA GPU, install CPU-only PyTorch first to avoid the much larger CUDA build: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`.
 
 How each part of the library can be verified without special hardware:
 
@@ -357,8 +357,9 @@ How each part of the library can be verified without special hardware:
 - **Contributing:** see [`CONTRIBUTING.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CONTRIBUTING.md) for the development setup, test commands, and conventions. Pull requests are welcome.
 - **Code of conduct:** this project follows the [Contributor Covenant](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CODE_OF_CONDUCT.md).
 - **Changes between versions:** see [`CHANGELOG.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CHANGELOG.md).
+- **Security issues:** report them privately as described in [`SECURITY.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/SECURITY.md).
 
-`s3e` is maintained by the [CLAIR Lab](https://github.com/CLAIR-LAB-TECHNION) at the Technion – Israel Institute of Technology, which uses it in its own research. Issues and pull requests are triaged by the maintainers on a best-effort basis.
+`s3e` is maintained by the [CLAIR Lab](https://github.com/CLAIR-LAB-TECHNION) at the Technion – Israel Institute of Technology, which uses it in its own research. Issues and pull requests are triaged by the maintainers on a best-effort basis; [`GOVERNANCE.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/GOVERNANCE.md) describes how decisions and releases are made.
 
 ## License
 
@@ -377,3 +378,5 @@ If you use `s3e` in your research, please cite the S3E paper (GitHub's "Cite thi
   url       = {https://openreview.net/forum?id=gw4hYNFUIC}
 }
 ```
+
+If you use `s3e` in a publication, please let us know by opening an issue, so we can list it in the [documentation](https://s3e.readthedocs.io/en/latest/citing.html).
