@@ -190,7 +190,8 @@ class PlattCalibrator(Calibrator):
         """Return a new PredictionSet with calibrated probabilities.
 
         Predictions whose group has no fitted parameters are passed
-        through unchanged.
+        through unchanged, and predictions with no answer keep
+        P(true) = 0.5 (see :attr:`Prediction.has_answer`).
         """
         calibrated = {}
         for key, prediction in results.items():

@@ -32,7 +32,7 @@ For a longer tutorial, see the [tutorial notebook](https://github.com/CLAIR-LAB-
 - Translate predicates with pluggable strategies: `IdentityTranslator`, `TemplateTranslator`, `PrewrittenTranslator`, and `LLMTranslator`.
 - Use HuggingFace VLMs, OpenAI VLMs, vLLM-backed local models, or custom `VLMBackend` implementations.
 - Query one scene at a time, or average predictions across several scenes of the same state (`estimate_averaged` / `PredictionSet.average`).
-- Lazy, cached derivations on results: probability, argmax answer, null-domination, confidence — computed on demand, never re-running inference.
+- Lazy, cached derivations on results: probability, decided answer, has-answer / null-domination, confidence — computed on demand, never re-running inference.
 - Offline calibration: collect VLM scores once, then fit/refit/apply a calibrator without querying the model again.
 - Convert estimated states back into Unified Planning-compatible state objects.
 
@@ -83,7 +83,7 @@ FlashAttention installation is platform- and hardware-dependent. If your chosen 
 
 ## Quick Start
 
-The snippets below run as-is, in order, on CPU or GPU, with `pip install "s3e[pddl,hf,calibration]"`. They use a tiny model (`HuggingFaceTB/SmolVLM-256M-Instruct`, ~500 MB, downloaded on first use) and a synthetic scene so nothing else needs to be on disk. A model this small is useful for trying the API, not for accurate estimates — expect poorly calibrated probabilities, which is what the calibration layer is for. On a GPU each snippet takes seconds; on a laptop-class CPU, expect up to about a minute per query (SmolVLM splits each image into many tiles).
+The snippets below run as-is, in order, on CPU or GPU, with `pip install "s3e[pddl,hf,calibration]"`. They use a tiny model (`HuggingFaceTB/SmolVLM-256M-Instruct`, ~500 MB, downloaded on first use) and a synthetic scene so nothing else needs to be on disk. A model this small is useful for trying the API, not for accurate estimates — expect poorly calibrated probabilities, which is what the calibration layer is for. On a GPU each snippet takes seconds; on a laptop-class CPU, expect a minute or more per query (SmolVLM splits each image into many tiles).
 
 ```python
 from PIL import Image, ImageDraw
@@ -249,7 +249,7 @@ calibrated_state = estimator.estimate(scene, calibrator=calibrator).to_state()
 
 `CalibrationSet.collect` skips predictions with no answer: their probability stays `0.5` whatever the calibrator says, so they are not training points.
 
-`scope` groups samples for fitting: `"global"` (one calibrator for everything), `"lifted"` (one per predicate name, e.g. all `on(...)` instances share a fit), or `"grounded"` (one per fully-grounded predicate). Every group needs both true and false labels. When examples span multiple problem instances, set `CalibrationExample.problem` on each — `CalibrationSet.collect` re-grounds the estimator against that problem before querying it, and the saved sample carries the problem string alongside its score and label.
+`scope` groups samples for fitting: `"global"` (one calibrator for everything), `"lifted"` (one per predicate name, e.g. all `on(...)` instances share a fit), or `"grounded"` (one per fully-grounded predicate). Every group needs both true and false labels, unless you pass `pass_through_single_class=True` to leave single-class groups uncalibrated; since `collect` drops unanswered predictions, check this on small datasets. When examples span multiple problem instances, set `CalibrationExample.problem` on each — `CalibrationSet.collect` re-grounds the estimator against that problem before querying it, and the saved sample carries the problem string alongside its score and label.
 
 ## API Reference / Configuration
 

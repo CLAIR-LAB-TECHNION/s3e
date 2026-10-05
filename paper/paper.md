@@ -140,9 +140,10 @@ mass for exactly the requested tokens and whether the model's most likely
 token was among them, a contract checked by shared tests for the local
 backends. A prediction whose top answer is the explicit "unknown" option, or
 whose answer tokens received no mass, has no answer and an uninformative
-P(true) of 0.5, and the engine warns about replies outside the answer space
-instead of silently misreading them; for local backends, options with no
-single-token form are rejected before inference. Reading one next-token
+P(true) of 0.5. The engine warns when a reply matches no answer token at all,
+and each prediction records whether the model's top token was an answer
+token; for local backends, options with no single-token form are rejected
+before inference. Reading one next-token
 distribution is cheap and batches well, at the cost of requiring answers
 expressible as single tokens; a text-matching mode, which reads the start of
 the generated reply, remains for APIs that do not expose log-probabilities.
@@ -150,11 +151,11 @@ the generated reply, remains for APIs that do not expose log-probabilities.
 **Store data, derive views.** A `Prediction` stores raw masses (per option,
 for the explicit null option, and the unassigned remainder) plus any
 calibrated probability; probabilities, answers, whether a prediction has an
-answer at all, and thresholded true/false states are derived on demand. Because no derived view requires
-re-running the model, users can change thresholds, recalibrate, or average
-predictions across views after the fact, and results serialize to JSON
-without backend dependencies. This matters when VLM inference dominates the
-cost of an experiment.
+answer at all, and thresholded true/false states are derived on demand.
+Because no derived view requires re-running the model, users can change
+thresholds, recalibrate, or average predictions across views after the fact,
+and results serialize to JSON without backend dependencies. This matters when
+VLM inference dominates the cost of an experiment.
 
 **Offline calibration with provenance.** Calibration is split into an
 expensive step that queries the model once on labeled scenes and a cheap,
@@ -181,10 +182,10 @@ independently developed ViPlan benchmark for VLM-grounded planning
 [@merler2025viplan]. Our follow-up work [@azran2026bridging] extends
 VLM-as-grounder planning to belief-space planning over the Most Likely Subset
 of States (MLSS), using the next-token probabilities of predicate queries.
-Within our group, `s3e` is the state-estimation component of two research
-pipelines that predate the 0.4 redesign: the MLSS prediction-and-calibration
-pipeline runs `s3e` 0.2.0, and a ViPlan-based evaluation pipeline runs a
-pre-0.4 release.
+Within our group, earlier releases of `s3e` provide state estimation for two
+research pipelines that still use the pre-0.4 API: the MLSS
+prediction-and-calibration pipeline uses `s3e` 0.2.0, and a ViPlan-based
+evaluation pipeline uses a pre-0.4 release.
 <!-- TODO(authors): give the exact s3e version of the ViPlan-based pipeline;
 if true, state that the experiments reported in azran2026bridging were run
 with the MLSS pipeline on s3e 0.2.0 (with a code link); and cite any other
@@ -194,13 +195,13 @@ research use. -->
 
 # AI usage disclosure
 
-Generative AI coding assistants were used in developing `s3e`. Of the 195
-commits made between March and August 2026, 99 were made with Anthropic's
-Claude Code, as were all commits made in October 2026, including the
-always-boolean state rework and the work preparing this submission; each
-records the assisting model in a `Co-Authored-By` trailer. This assistance
-covered implementing the 0.4 architecture redesign and later behavior
-changes, tests, documentation, the walkthrough notebook, docstrings,
+Generative AI coding assistants were used in developing `s3e`. Of the 192
+non-merge commits made between March and August 2026, 98 were made with
+Anthropic's Claude Code, as were all non-merge commits made in October 2026,
+including the always-boolean state rework and the work preparing this
+submission; each records the assisting model in a `Co-Authored-By` trailer.
+This assistance covered implementing the 0.4 architecture redesign and later
+behavior changes, tests, documentation, the walkthrough notebook, docstrings,
 packaging, continuous integration, community guidelines, and the first draft
 of this paper. An initial implementation of the vLLM backend was drafted with
 OpenAI Codex. The authors reviewed all AI-assisted code, tests, and text. The

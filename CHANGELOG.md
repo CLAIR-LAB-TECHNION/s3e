@@ -22,7 +22,8 @@ the commit history and PyPI release dates when this file was introduced.
 - `MANIFEST.in` so the source distribution ships the full test suite.
 - `Prediction.has_answer` and `Prediction.matched`, and an
   `UnmatchedAnswerWarning` emitted once per `QueryEngine.ask` call when some
-  replies fall outside the answer space.
+  queries match no answer option (a `text_match` reply that starts with no
+  answer token, or zero mass on every answer token).
 
 ### Changed
 - **Breaking:** `to_state` and `SemanticStateEstimator.__call__` always return
@@ -32,11 +33,18 @@ the commit history and PyPI release dates when this file was introduced.
   its top answer or no answer token received any mass. Its P(true) is 0.5 (a
   uniform distribution for categorical spaces), even when calibrated, so it is
   True at the default confidence of 0.5 and False above it.
+- **Breaking:** for binary spaces, `Prediction.answer` is
+  `probability >= 0.5`, so it follows a calibrated probability; previously it
+  was the argmax of the raw masses. Categorical ties, including the uniform
+  distribution of a prediction with no answer, go to the first listed option.
 - **Breaking:** `text_match` scoring matches only when the reply *starts* with
-  an answer token (as a whole word, longest token first); previously a token
-  anywhere in the reply matched.
+  an answer token (as a whole word, longest token first, with the null option
+  competing); previously a token anywhere in the reply matched. Replies such
+  as `Answer: yes`, `**Yes**`, or a leading `<think>` block now match nothing.
 - `Prediction.probability` is `T / (T + F)` without smoothing, so a matched
   `text_match` reply gives exactly 1.0. Calibration scores are unchanged.
+- `Prediction.probability` raises `ValueError` for non-binary answer spaces
+  even when a calibrated probability is set.
 
 ### Fixed
 - `CalibrationSet.collect` skips predictions with no answer, which are not
@@ -61,8 +69,8 @@ its changes ship in 0.4.1.)
   `CalibrationSet` / `CalibrationExample` / `CalibrationSample`.
 - Public `resolve_backend()` and helpful `ImportError`s that name the extra to
   install for each optional dependency.
-- `dev-gpu` extra; contract tests for every backend and for downstream
-  research workflows.
+- `dev-gpu` extra; contract tests for the local backends (HuggingFace, vLLM)
+  and end-to-end workflow tests.
 
 ### Changed
 - **Breaking:** `SemanticStateEstimator` is now a thin facade
