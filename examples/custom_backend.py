@@ -17,9 +17,10 @@ script:
 4. converts one estimated state into a Unified Planning state.
 
 Run it with ``python examples/custom_backend.py`` after
-``pip install "s3e[pddl,calibration]"``. To use a real model instead, pass a
-model id (or a ``HuggingFaceVLM`` / ``OpenAIVLM`` / ``VLLMBackend``) as
-``vlm=``; everything else stays the same.
+``pip install "s3e[pddl,calibration]"``. With a real model, pass a model id
+(or a ``HuggingFaceVLM`` / ``OpenAIVLM`` / ``VLLMBackend``) as ``vlm=``, real
+scene images instead of these blank ones, and a translator that turns
+predicates into questions; the calibration and evaluation code is unchanged.
 """
 
 import random

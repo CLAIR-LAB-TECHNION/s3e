@@ -28,10 +28,11 @@ calibrated         0.770     0.165
 ...
 ```
 
-Calibration leaves accuracy unchanged (Platt scaling is monotone) and lowers
-the Brier score, because the simulated model's 95% confidence overstates its
-80% accuracy. To use a real model, pass a model id or backend instance as
-`vlm=`; nothing else changes.
+Calibration lowers the Brier score because the simulated model's 95%
+confidence overstates its 80% accuracy. (Accuracy can shift slightly, since
+the fitted sigmoid can move the 0.5 decision threshold; here it does not.)
+With a real model, pass a model id or backend instance as `vlm=`, real
+images, and a translator; the calibration code stays the same.
 
 ```{literalinclude} ../examples/custom_backend.py
 :language: python

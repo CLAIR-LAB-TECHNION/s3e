@@ -12,8 +12,9 @@ probabilities; ``text_match`` generates a reply and matches its start):
   error (ECE, 10 equal-width bins) of P(true);
 * the share of predictions with no answer (``Prediction.has_answer`` False);
 * wall-clock time per query and peak memory (on a GPU, the peak allocated
-  during that mode; on CPU, the process's peak resident memory so far,
-  which includes the model);
+  on the first device by this process during that mode, so not vLLM's
+  engine process or other shards; on CPU, the process's peak resident
+  memory so far, which includes the model);
 * optionally, metrics on held-out scenes before and after Platt scaling
   fitted offline on the other scenes, without querying the model again.
 
@@ -75,6 +76,13 @@ DOMAIN = """
   (:types block)
   (:predicates (on ?x - block ?y - block) (ontable ?x - block) (clear ?x - block)))
 """
+
+# A cap on the generated reply for text_match scoring; the kwarg's name
+# depends on the backend. Other backends (e.g. OpenAI) get no cap.
+DEFAULT_GENERATION_KWARGS = {
+    "HuggingFaceVLM": {"max_new_tokens": 8},
+    "VLLMBackend": {"max_tokens": 8},
+}
 
 REPORTED_PACKAGES = (
     "s3e", "torch", "transformers", "accelerate", "vllm", "openai",
@@ -269,6 +277,8 @@ def calibrate(run: dict, scenes: list[dict], split: int) -> dict:
         for predicate, prediction in results.items()
         if prediction.has_answer
     ]
+    if not samples:
+        return {"skipped": "no prediction in the calibration scenes has an answer"}
     calibrator = PlattCalibrator.fit(
         CalibrationSet(samples=samples, meta=run["estimator"].calibration_meta()),
         scope="lifted",
@@ -301,17 +311,24 @@ def package_versions() -> dict:
     return versions
 
 
-def git_commit() -> "str | None":
-    """The s3e source commit, when running from a git checkout."""
+def git_commit() -> "dict | None":
+    """The s3e source commit and whether the checkout has local changes,
+    when s3e runs from its own git checkout (not, e.g., a virtualenv inside
+    another repository)."""
+    package_dir = Path(s3e.__file__).resolve().parent
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=package_dir, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
     try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=Path(s3e.__file__).resolve().parent,
-            capture_output=True, text=True, check=True,
-        )
+        toplevel = Path(git("rev-parse", "--show-toplevel"))
+        if toplevel.resolve() != package_dir.parent:
+            return None
+        return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
     except (OSError, subprocess.CalledProcessError):
         return None
-    return out.stdout.strip()
 
 
 def device_name() -> str:
@@ -345,8 +362,10 @@ def run_benchmark(
         num_blocks: Blocks per scene (2 to 6).
         seed: Seed for the random arrangements.
         scoring_modes: Any of ``"logprobs"`` and ``"text_match"``.
-        generation_kwargs: ``inference_kwargs`` for ``text_match`` (backend
-            specific, e.g. ``{"max_new_tokens": 8}`` for HuggingFace).
+        generation_kwargs: ``inference_kwargs`` for ``text_match``; their
+            names are backend specific. Defaults to a short reply cap for
+            HuggingFace (``max_new_tokens``) and vLLM (``max_tokens``), and
+            to nothing for other backends.
         calibrate_fraction: If set, fit Platt scaling (``logprobs`` only) on
             this share of the scenes and report metrics on the remaining
             scenes before (``logprobs held-out``) and after
@@ -355,7 +374,11 @@ def run_benchmark(
     """
     if not 2 <= num_blocks <= len(COLORS):
         raise ValueError(f"num_blocks must be between 2 and {len(COLORS)}")
+    if num_scenes < 1:
+        raise ValueError("num_scenes must be at least 1")
     if calibrate_fraction:
+        if "logprobs" not in scoring_modes:
+            raise ValueError("calibrate_fraction needs the logprobs scoring mode")
         split = calibration_split(num_scenes, calibrate_fraction)
     started = datetime.now(timezone.utc)
     rng = random.Random(seed)
@@ -375,8 +398,10 @@ def run_benchmark(
     report = {"summary": {}, "instances": {}}
     estimator = None
     inference = {}
+    if generation_kwargs is None:
+        generation_kwargs = DEFAULT_GENERATION_KWARGS.get(type(backend).__name__, {})
     for scoring in scoring_modes:
-        kwargs = dict(generation_kwargs or {}) if scoring == "text_match" else {}
+        kwargs = dict(generation_kwargs) if scoring == "text_match" else {}
         inference[scoring] = kwargs
         run = evaluate(backend, scenes, problem, scoring, kwargs)
         estimator = run["estimator"]
@@ -388,6 +413,9 @@ def run_benchmark(
         report["instances"][scoring] = run["rows"]
         if calibrate_fraction and scoring == "logprobs":
             calibration = calibrate(run, scenes, split)
+            if "skipped" in calibration:
+                report["calibration"] = calibration
+                continue
             for name, key in (("held-out", "uncalibrated"), ("held-out+platt", "calibrated")):
                 report["summary"][f"logprobs {name}"] = metrics(calibration[key])
                 report["instances"][f"logprobs {name}"] = calibration[key]
@@ -429,8 +457,9 @@ def main(argv=None) -> None:
     parser.add_argument("--num-blocks", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--scoring", choices=["logprobs", "text_match", "both"], default="both")
-    parser.add_argument("--generation-kwargs", type=json.loads, default={"max_new_tokens": 8},
-                        help='JSON inference kwargs for text_match (default: \'{"max_new_tokens": 8}\')')
+    parser.add_argument("--generation-kwargs", type=json.loads, default=None,
+                        help="JSON inference kwargs for text_match (default: a short reply "
+                             "cap for HuggingFace and vLLM, none otherwise)")
     parser.add_argument("--vlm-kwargs", type=json.loads, default={},
                         help='JSON backend kwargs, e.g. \'{"revision": "<commit>"}\'')
     parser.add_argument("--calibrate-fraction", type=float, default=None,

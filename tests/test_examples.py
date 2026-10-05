@@ -32,9 +32,8 @@ class TestCustomBackendExample:
         out = capsys.readouterr().out
 
         rows = dict(re.findall(r"^(uncalibrated|calibrated)\s+([\d.]+\s+[\d.]+)$", out, re.M))
-        uncalibrated_acc, uncalibrated_brier = map(float, rows["uncalibrated"].split())
-        calibrated_acc, calibrated_brier = map(float, rows["calibrated"].split())
-        assert calibrated_acc == uncalibrated_acc  # Platt scaling is monotone
+        uncalibrated_brier = float(rows["uncalibrated"].split()[1])
+        calibrated_brier = float(rows["calibrated"].split()[1])
         assert calibrated_brier < uncalibrated_brier
         assert "as a Unified Planning state: UPState" in out
 
@@ -110,12 +109,40 @@ class TestBlocksworldBenchmarkExample:
 
         report = json.loads(output.read_text(encoding="utf-8"))
         assert set(report["summary"]) == {"text_match"}
-        assert report["provenance"]["inference_kwargs"]["text_match"] == {"max_new_tokens": 8}
+        # FakeVLM is neither HuggingFace nor vLLM: no default reply cap.
+        assert report["provenance"]["inference_kwargs"]["text_match"] == {}
         assert "text_match" in capsys.readouterr().out
 
     def test_rejects_unsupported_block_count(self, bench):
         with pytest.raises(ValueError, match="num_blocks"):
             bench.run_benchmark(FakeVLM(), num_blocks=7)
+
+    def test_default_reply_cap_depends_on_the_backend(self, bench):
+        assert bench.DEFAULT_GENERATION_KWARGS["HuggingFaceVLM"] == {"max_new_tokens": 8}
+        assert bench.DEFAULT_GENERATION_KWARGS["VLLMBackend"] == {"max_tokens": 8}
+        assert "OpenAIVLM" not in bench.DEFAULT_GENERATION_KWARGS
+
+    def test_calibration_without_answers_is_skipped(self, bench):
+        from s3e import UnmatchedAnswerWarning
+
+        with pytest.warns(UnmatchedAnswerWarning):
+            report = bench.run_benchmark(
+                FakeVLM({"maybe": 1.0}), num_scenes=2, num_blocks=2,
+                scoring_modes=("logprobs",), calibrate_fraction=0.5,
+            )
+        assert "skipped" in report["calibration"]
+        assert set(report["summary"]) == {"logprobs"}
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"num_scenes": 0},
+            {"calibrate_fraction": 0.5, "scoring_modes": ("text_match",)},
+        ],
+    )
+    def test_rejects_invalid_settings(self, bench, kwargs):
+        with pytest.raises(ValueError):
+            bench.run_benchmark(FakeVLM(), **kwargs)
 
     @pytest.mark.parametrize("fraction", [0.1, 1.0])
     def test_rejects_calibration_split_without_both_sides(self, bench, fraction):
