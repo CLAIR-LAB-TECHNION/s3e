@@ -1,7 +1,7 @@
-"""Contract tests for the ViPlan++ workflow (mpst_exp/predict.py, estimators.py).
+"""Workflow tests: one shared backend feeding per-episode estimators.
 
-ViPlan pattern: a shared prebuilt backend feeds estimators built per domain;
-an adapter prepares (build or set_problem) per episode and estimates a
+Pattern: a shared prebuilt backend feeds estimators built per domain;
+each episode prepares an estimator (build or set_problem) and estimates a
 relevant-atom subset; payloads read per-predicate detail fields; backend
 type checks must work without importing vllm.
 """
@@ -42,7 +42,7 @@ class TestSharedBackend:
 
 class TestAdapterPattern:
     def test_prepare_then_estimate_subset(self):
-        """The S3EAdapter shape: lazy build, then set_problem per episode."""
+        """Lazy build, then set_problem per episode."""
         estimator = None
         for _episode in range(2):
             if estimator is None:
@@ -60,7 +60,7 @@ class TestAdapterPattern:
 
 
 class TestPayloadFields:
-    def test_every_field_the_payload_builder_reads(self):
+    def test_every_detail_field_is_json_serializable(self):
         results = build_estimator(FakeVLM()).estimate([make_blank_image()])
         predicate = next(iter(results))
         p = results[predicate]
@@ -74,7 +74,7 @@ class TestPayloadFields:
             "argmax_in_interest": p.argmax_in_interest,
             "answer": p.answer,
         }
-        json.dumps(payload)  # must be JSON-serializable as ViPlan writes it
+        json.dumps(payload)  # must be JSON-serializable
 
 
 class TestBackendDetectionWithoutVllm:

@@ -19,7 +19,7 @@
 - `s3e/translation/`: predicate-to-query translators, including `cache.py` (JSON cache helpers for `LLMTranslator`)
 - `s3e/pddl/`: Unified Planning / PDDL helpers (parsing, grounding, state conversion)
 - `s3e/_deps.py`: `require(module, extra)` helper for lazy, informative optional-dependency errors
-- `tests/`: mirrors the package layout (`tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, `tests/consumers/`, `tests/test_estimator.py`, `tests/test_imports.py`, ...)
+- `tests/`: mirrors the package layout (`tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, `tests/workflows/`, `tests/test_estimator.py`, `tests/test_imports.py`, ...)
 - `tests/conftest.py`: shared fixtures and Blocksworld sample data
 - `tests/fakes.py`: shared `FakeVLM` double implementing the full `VLMBackend` contract
 
@@ -68,7 +68,7 @@
 - `pytest -m "not slow"` is the default verification command for normal development.
 - Running the suite assumes a dev install (`dev` or `dev-gpu`). Without `vllm`, the vLLM unit tests skip with a reason; the slow vLLM integration tests additionally require CUDA. Other partial installs (missing torch/openai/unified-planning) are supported for the *library* (see `tests/test_imports.py`) but not for running the test suite itself.
 - Reuse fixtures from `tests/conftest.py` and the shared `FakeVLM` double from `tests/fakes.py` instead of duplicating common setup.
-- The test tree mirrors the package: `tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, plus `tests/test_estimator.py`, `tests/test_translators.py`, `tests/test_cache.py`, `tests/test_imports.py` (import-hygiene for bare/partial installs), and `tests/consumers/` (MLSS/ViPlan++ workflow contract tests).
+- The test tree mirrors the package: `tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, plus `tests/test_estimator.py`, `tests/test_translators.py`, `tests/test_cache.py`, `tests/test_imports.py` (import-hygiene for bare/partial installs), and `tests/workflows/` (end-to-end usage-pattern tests that span modules).
 
 ## Code Style Guidelines
 
