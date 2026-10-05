@@ -263,10 +263,8 @@ class SemanticStateEstimator:
     ) -> dict[str, bool]:
         """Estimate and threshold into a boolean state (binary answer spaces).
 
-        Every predicate gets a value: True when P(true) >= confidence, else
-        False. Predicates with no answer (null-dominated or unmatched) have
-        P(true) = 0.5; check ``has_answer`` on ``estimate()`` results to tell
-        them apart.
+        True when P(true) >= confidence, else False; see
+        :meth:`PredictionSet.to_state`.
         """
         threshold = confidence if confidence is not None else self.confidence
         return self.estimate(images).to_state(confidence=threshold)

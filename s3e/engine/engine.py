@@ -12,20 +12,11 @@ from .results import Prediction, PredictionSet
 
 
 class UnmatchedAnswerWarning(UserWarning):
-    """Some queries got an answer outside the answer space.
-
-    Their predictions have no answer: P(true) is 0.5 and the distribution is
-    uniform. Filter with ``warnings.simplefilter("ignore", UnmatchedAnswerWarning)``.
-    """
+    """Some queries got an answer outside the answer space (see ``Prediction.matched``)."""
 
 
 def _external_stacklevel() -> int:
-    """``stacklevel`` for a warning raised here that points at user code.
-
-    Counts frames from the caller of this helper up to the first frame
-    outside the ``s3e`` package, so the warning names the user's line whether
-    they called ``QueryEngine.ask`` directly or went through the estimator.
-    """
+    """``stacklevel`` pointing a warning at the first frame outside ``s3e``."""
     level, frame = 1, sys._getframe(1)
     while frame is not None:
         if frame.f_globals.get("__name__", "").partition(".")[0] != "s3e":

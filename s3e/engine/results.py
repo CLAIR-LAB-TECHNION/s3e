@@ -22,15 +22,8 @@ class Prediction:
     option is the model's top answer (:attr:`null_dominated`) or no option
     received any mass at all (:attr:`matched` is False). Such predictions are
     uninformative: binary :attr:`probability` is 0.5 and :meth:`distribution`
-    is uniform.
-
-    The decision rule never alters stored data. ``masses``, ``null_mass``,
-    ``unassigned_mass`` and ``probability_override`` (a calibrator's
-    yes-vs-no probability) keep their original values, so other rules can be
-    derived from them. For example, counting null mass as half true and half
-    false: ``(T + n / 2) / (T + F + n)`` from the raw masses, or
-    ``w * probability_override + (1 - w) * 0.5`` with ``w = (T + F) / (T + F + n)``
-    for calibrated predictions (fall back to 0.5 when ``T + F + n == 0``).
+    is uniform. The stored data is never altered, so other rules can be
+    derived from it.
     """
 
     def __init__(
@@ -67,12 +60,8 @@ class Prediction:
     def matched(self) -> bool:
         """True when any answer option or the null option received mass.
 
-        In ``text_match`` scoring, False means the generated text started with
-        none of the answer space's tokens. In ``logprobs`` scoring it means
-        every interest token had zero probability, which happens with
-        backends that return only the top-k tokens; for full-vocabulary
-        backends, ``argmax_in_interest`` and ``unassigned_mass`` are the more
-        useful signals of an off-target answer.
+        False for a ``text_match`` reply that starts with no answer token, or
+        when a top-k ``logprobs`` backend returned no answer token at all.
         """
         return sum(self.masses.values()) + self.null_mass > 0.0
 
@@ -254,17 +243,10 @@ class PredictionSet(Mapping):
     def average(cls, sets: "Sequence[PredictionSet]") -> "PredictionSet":
         """Mean of stored data across prediction sets over the same queries.
 
-        Masses are averaged over all members, so a member with no answer
-        still contributes its raw masses; the averaged prediction has no
-        answer only if its averaged null mass dominates or every member was
-        unmatched.
-
-        Probability overrides are averaged only over members with an answer,
-        since a member's override is not in effect without one. When every
-        such member carries an override (e.g. each scene was calibrated
-        before averaging), the averaged prediction carries their mean;
-        otherwise it has none and its probability is re-derived from the
-        averaged masses.
+        Masses are averaged over all members. Probability overrides are
+        averaged over the members that have an answer, provided each of them
+        carries one (e.g. every scene was calibrated); otherwise the averaged
+        prediction has none and its probability comes from the averaged masses.
 
         Non-numeric per-member data does not average: ``text`` is dropped,
         and ``argmax_in_interest`` is kept only when every member agrees
