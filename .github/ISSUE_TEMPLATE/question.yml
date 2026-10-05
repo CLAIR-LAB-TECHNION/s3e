@@ -1,0 +1,22 @@
+name: Question / support
+description: Ask how to use s3e.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the [README](https://github.com/CLAIR-LAB-TECHNION/s3e#readme),
+        the [documentation](https://s3e.readthedocs.io), and the
+        [walkthrough notebook](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb) first.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What are you trying to do, and what have you tried so far?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: s3e version, backend (HuggingFace / OpenAI / vLLM / custom), and a code snippet if relevant.

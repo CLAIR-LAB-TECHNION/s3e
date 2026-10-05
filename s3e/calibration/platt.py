@@ -15,6 +15,16 @@ GLOBAL_CALIBRATION_KEY = "__global__"
 
 @dataclass(frozen=True)
 class PlattParameters:
+    """Fitted sigmoid ``P(true) = 1 / (1 + exp(a * score + b))`` for one group.
+
+    Attributes:
+        a: Slope applied to the grouped log-odds score.
+        b: Intercept.
+        sample_count: Number of samples the parameters were fitted on.
+        positive_count: Samples labeled True.
+        negative_count: Samples labeled False.
+    """
+
     a: float
     b: float
     sample_count: int
@@ -28,6 +38,14 @@ def grouped_log_odds(
     false_tokens: list[str],
     eps: float = EPS,
 ) -> float:
+    """Log-odds ``log(true_mass / false_mass)`` over grouped token masses.
+
+    Args:
+        token_probs: Token string to probability mass.
+        true_tokens: Tokens whose masses sum to the "true" mass.
+        false_tokens: Tokens whose masses sum to the "false" mass.
+        eps: Smoothing added to both masses to keep the ratio finite.
+    """
     true_mass = sum(token_probs.get(token, 0.0) for token in true_tokens)
     false_mass = sum(token_probs.get(token, 0.0) for token in false_tokens)
     return math.log((true_mass + eps) / (false_mass + eps))
@@ -43,6 +61,16 @@ def apply_platt_scaling(score: float, params: PlattParameters) -> float:
 
 
 def fit_platt_parameters(scores: list[float], labels: list[bool]) -> PlattParameters:
+    """Fit Platt scaling parameters by logistic regression (scikit-learn).
+
+    Args:
+        scores: Grouped log-odds scores, one per sample.
+        labels: Ground-truth truth values aligned with ``scores``.
+
+    Raises:
+        ImportError: If scikit-learn (the ``calibration`` extra) is missing.
+        ValueError: If there are no samples, or only one label class.
+    """
     from .._deps import require
 
     require("sklearn", "calibration", "Platt scaling fitting")
@@ -82,7 +110,20 @@ def _group_key(predicate: str, scope: str) -> str:
 
 
 class PlattCalibrator(Calibrator):
-    """Per-group Platt scaling fitted on grouped log-odds scores."""
+    """Per-group Platt scaling fitted on grouped log-odds scores.
+
+    Build one with :meth:`fit` (or :meth:`load`) rather than the
+    constructor.
+
+    Args:
+        scope: How predicates are grouped: ``"global"`` (one sigmoid for
+            all), ``"lifted"`` (one per predicate name, e.g. every
+            ``on(...)``), or ``"grounded"`` (one per grounded predicate).
+        groups: Fitted parameters per group key.
+        meta: Provenance recorded from the :class:`CalibrationSet` (scoring
+            mode, answer space, domain fingerprint), checked by
+            :meth:`SemanticStateEstimator.estimate` before applying.
+    """
 
     PLATT_FORMAT_VERSION = 1
 
@@ -98,6 +139,20 @@ class PlattCalibrator(Calibrator):
         scope: str = "global",
         pass_through_single_class: bool = False,
     ) -> "PlattCalibrator":
+        """Fit one sigmoid per group of samples; cheap, offline, VLM-free.
+
+        Args:
+            data: Scores and labels from :meth:`CalibrationSet.collect`.
+            scope: ``"global"``, ``"lifted"``, or ``"grounded"`` grouping.
+            pass_through_single_class: Skip (leave uncalibrated) groups
+                whose samples are all positive or all negative instead of
+                raising.
+
+        Raises:
+            ValueError: On an unknown scope, an empty set, data not
+                collected with ``scoring="logprobs"``, or a single-class
+                group when ``pass_through_single_class`` is False.
+        """
         if scope not in VALID_SCOPES:
             raise ValueError(f"Unknown scope {scope!r}; expected one of {VALID_SCOPES}")
         if not data.samples:
@@ -128,9 +183,16 @@ class PlattCalibrator(Calibrator):
         return cls(scope=scope, groups=groups, meta=dict(data.meta))
 
     def group_keys(self) -> list[str]:
+        """Keys of the groups that have fitted parameters."""
         return list(self.groups)
 
     def apply(self, results: "PredictionSet") -> "PredictionSet":
+        """Return a new PredictionSet with calibrated probabilities.
+
+        Predictions whose group has no fitted parameters are passed
+        through unchanged, and predictions with no answer keep
+        P(true) = 0.5 (see :attr:`Prediction.has_answer`).
+        """
         calibrated = {}
         for key, prediction in results.items():
             params = self.groups.get(_group_key(key, self.scope))
@@ -143,6 +205,7 @@ class PlattCalibrator(Calibrator):
         return type(results)(calibrated)
 
     def save(self, path: str | Path) -> None:
+        """Write the fitted parameters and metadata to a JSON file."""
         payload = {
             "format_version": self.PLATT_FORMAT_VERSION,
             "kind": "platt",
@@ -163,6 +226,11 @@ class PlattCalibrator(Calibrator):
 
     @classmethod
     def load(cls, path: str | Path) -> "PlattCalibrator":
+        """Restore a calibrator written by :meth:`save`.
+
+        Raises:
+            ValueError: If the file has an unsupported ``format_version``.
+        """
         data = json.loads(Path(path).read_text())
         version = data.get("format_version")
         if version != cls.PLATT_FORMAT_VERSION:

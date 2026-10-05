@@ -157,6 +157,7 @@ class Prediction:
             )
 
     def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict (``raw`` is never included)."""
         return {
             "query": self.query,
             "masses": dict(self.masses),
@@ -170,6 +171,7 @@ class Prediction:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Prediction":
+        """Rebuild a prediction from the output of :meth:`to_dict`."""
         return cls(
             query=data["query"],
             masses=data["masses"],
@@ -222,6 +224,7 @@ class PredictionSet(Mapping):
         )
 
     def to_dict(self) -> dict:
+        """Serialize to a versioned, backend-free, JSON-compatible dict."""
         return {
             "format_version": PREDICTION_SET_FORMAT_VERSION,
             "predictions": {k: p.to_dict() for k, p in self._predictions.items()},
@@ -229,6 +232,11 @@ class PredictionSet(Mapping):
 
     @classmethod
     def from_dict(cls, data: dict) -> "PredictionSet":
+        """Rebuild a set from the output of :meth:`to_dict`.
+
+        Raises:
+            ValueError: If ``data`` has an unsupported ``format_version``.
+        """
         version = data.get("format_version")
         if version != PREDICTION_SET_FORMAT_VERSION:
             raise ValueError(

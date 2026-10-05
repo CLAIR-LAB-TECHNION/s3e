@@ -1,10 +1,20 @@
 # S3E: Semantic Symbolic State Estimation
 
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Tests](https://github.com/CLAIR-LAB-TECHNION/s3e/actions/workflows/tests.yml/badge.svg)](https://github.com/CLAIR-LAB-TECHNION/s3e/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/s3e)](https://pypi.org/project/s3e/)
+[![Python versions](https://img.shields.io/pypi/pyversions/s3e)](https://pypi.org/project/s3e/)
+[![Documentation](https://readthedocs.org/projects/s3e/badge/?version=latest)](https://s3e.readthedocs.io)
+[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/LICENSE)
 
 ## Overview
 
-`s3e` estimates grounded PDDL state predicates from images using vision-language models (VLMs). It is built as concentric, independently usable layers:
+`s3e` estimates grounded PDDL state predicates from images using vision-language models (VLMs). Given a planning domain, a problem, and images of a scene, it asks a VLM one question per grounded predicate (e.g. `on(a,b)` → "Is block a on top of block b?"), reads the probability the model assigns to the answer tokens instead of parsing its text, and returns a probability per predicate (optionally calibrated against labeled examples) plus a symbolic state you can hand back to a planner.
+
+### Statement of need
+
+Research that grounds symbolic planners in perception — task planning, task-and-motion planning, embodied AI, neuro-symbolic reasoning — keeps re-implementing the same pipeline: enumerate grounded predicates, phrase a question for each, prompt a particular model API with images, and turn the output into truth values. Parsing generated text throws away the model's uncertainty, and hard-wiring one provider makes cross-model comparisons and calibration studies laborious. `s3e` packages this pipeline as a backend-agnostic library with probabilities as a first-class output: answer-token probability scoring, an optional explicit "unknown" answer, multi-view averaging, and offline calibration, over HuggingFace, vLLM, and OpenAI models. Its query engine also works without PDDL, for anyone who needs probabilistic yes/no or multiple-choice answers from a VLM.
+
+`s3e` is built as concentric, independently usable layers:
 
 1. **Backends** (`s3e.backends`) — a uniform `VLMBackend` interface over HuggingFace, OpenAI, and vLLM models.
 2. **Engine** (`s3e.engine`) — `QueryEngine`: images + free-form queries + an answer space → `Prediction`s. No PDDL involved.
@@ -13,7 +23,7 @@
 
 Each layer works standalone: you can use `QueryEngine` to answer arbitrary visual questions without PDDL, or use `SemanticStateEstimator.from_pddl` for the full predicate-grounding workflow.
 
-For a longer tutorial, see the [tutorial notebook](docs/s3e_walkthrough.ipynb).
+For a longer tutorial, see the [tutorial notebook](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb); the full API reference is at [s3e.readthedocs.io](https://s3e.readthedocs.io).
 
 ## Features
 
@@ -22,7 +32,7 @@ For a longer tutorial, see the [tutorial notebook](docs/s3e_walkthrough.ipynb).
 - Translate predicates with pluggable strategies: `IdentityTranslator`, `TemplateTranslator`, `PrewrittenTranslator`, and `LLMTranslator`.
 - Use HuggingFace VLMs, OpenAI VLMs, vLLM-backed local models, or custom `VLMBackend` implementations.
 - Query one scene at a time, or average predictions across several scenes of the same state (`estimate_averaged` / `PredictionSet.average`).
-- Lazy, cached derivations on results: probability, argmax answer, null-domination, confidence — computed on demand, never re-running inference.
+- Lazy, cached derivations on results: probability, decided answer, has-answer / null-domination, confidence — computed on demand, never re-running inference.
 - Offline calibration: collect VLM scores once, then fit/refit/apply a calibrator without querying the model again.
 - Convert estimated states back into Unified Planning-compatible state objects.
 
@@ -32,34 +42,39 @@ For a longer tutorial, see the [tutorial notebook](docs/s3e_walkthrough.ipynb).
 
 - Python `>=3.10`
 - `pip`
-- `git` if installing from source
 - For larger HuggingFace VLMs, a GPU-capable PyTorch environment is recommended
+
+### Install from PyPI
+
+```bash
+pip install "s3e[pddl,hf]"
+```
+
+A bare `pip install s3e` installs only the core (`Pillow`, `numpy`, `tqdm`): the engine, result objects, answer spaces, and non-LLM translators, with no heavy dependencies. Add extras for the pieces you need:
+
+```bash
+pip install "s3e[pddl]"          # PDDL grounding (SemanticStateEstimator.from_pddl)
+pip install "s3e[hf]"            # HuggingFace VLM backend
+pip install "s3e[openai]"        # OpenAI VLM backend
+pip install "s3e[vllm]"          # local multi-GPU inference via vLLM (CUDA only)
+pip install "s3e[calibration]"   # Platt-scaling calibration (scikit-learn)
+pip install "s3e[all]"           # everything except vllm (platform-constrained)
+```
+
+Using a feature whose extra is missing raises an `ImportError` that names the extra to install.
 
 ### Install from source
 
 ```bash
 git clone https://github.com/CLAIR-LAB-TECHNION/s3e.git
 cd s3e
-pip install -e ".[pddl,hf]"
+pip install -e ".[pddl,hf]"     # or ".[dev]" / ".[dev-gpu]" for contributing
 ```
 
-You can also install directly from the GitHub repository without cloning:
+You can also install the latest development version without cloning:
 
 ```bash
-pip install "git+https://github.com/CLAIR-LAB-TECHNION/s3e.git#egg=s3e[pddl,hf]"
-```
-
-A bare `pip install s3e` installs only the core (`Pillow`, `numpy`, `tqdm`): the engine, result objects, answer spaces, and non-LLM translators, with no heavy dependencies. Add extras for the pieces you need:
-
-```bash
-pip install -e ".[pddl]"          # PDDL grounding (SemanticStateEstimator.from_pddl)
-pip install -e ".[hf]"            # HuggingFace VLM backend
-pip install -e ".[openai]"        # OpenAI VLM backend
-pip install -e ".[vllm]"          # local multi-GPU inference via vLLM
-pip install -e ".[calibration]"   # Platt-scaling calibration (scikit-learn)
-pip install -e ".[all]"           # everything except vllm (platform-constrained)
-pip install -e ".[dev]"           # pytest + s3e[all], for contributing
-pip install -e ".[dev-gpu]"       # dev + vllm, for contributing on CUDA hosts
+pip install "s3e[pddl,hf] @ git+https://github.com/CLAIR-LAB-TECHNION/s3e.git"
 ```
 
 Optional acceleration for supported HuggingFace models:
@@ -68,22 +83,32 @@ FlashAttention installation is platform- and hardware-dependent. If your chosen 
 
 ## Quick Start
 
+The snippets below run as-is, in order, on CPU or GPU, with `pip install "s3e[pddl,hf,calibration]"`. They use a tiny model (`HuggingFaceTB/SmolVLM-256M-Instruct`, ~500 MB, downloaded on first use) and a synthetic scene so nothing else needs to be on disk. A model this small is useful for trying the API, not for accurate estimates — expect poorly calibrated probabilities, which is what the calibration layer is for. On a GPU each snippet takes seconds; on a laptop-class CPU, expect a minute or more per query (SmolVLM splits each image into many tiles).
+
+```python
+from PIL import Image, ImageDraw
+
+# A synthetic scene: a blue block stacked on an orange block.
+# For real data, use Image.open("photo.png"). A scene is a list of images shown together.
+image = Image.new("RGB", (256, 256), "white")
+draw = ImageDraw.Draw(image)
+draw.rectangle((78, 60, 178, 130), fill="deepskyblue", outline="black", width=3)
+draw.rectangle((78, 130, 178, 200), fill="orange", outline="black", width=3)
+scene = [image]
+```
+
 ### Engine-only: answer a visual question, no PDDL
 
 `QueryEngine` is the PDDL-free heart of `s3e`: images + queries + an answer space → predictions.
 
 ```python
-from PIL import Image
-
 from s3e import QueryEngine
 
 engine = QueryEngine("HuggingFaceTB/SmolVLM-256M-Instruct")
+predictions = engine.ask(scene, ["Is there a blue block?", "Is there a green block?"])
 
-scene = [Image.open("kitchen.png")]
-predictions = engine.ask(scene, ["Is the stove on?", "Is the fridge door open?"])
-
-print(predictions["Is the stove on?"].probability)   # P(true), e.g. 0.83
-print(predictions.to_state())                        # {'Is the stove on?': True, ...}
+print(predictions["Is there a blue block?"].probability)  # P(true), a float in [0, 1]
+print(predictions.to_state())                             # {'Is there a blue block?': True, ...}
 ```
 
 ### Categorical answers
@@ -91,16 +116,17 @@ print(predictions.to_state())                        # {'Is the stove on?': True
 Answer spaces are not limited to yes/no. `CategoricalAnswers` scores an arbitrary set of labeled options:
 
 ```python
-from s3e import CategoricalAnswers, QueryEngine
+from s3e import CategoricalAnswers
 
-engine = QueryEngine(
+color_engine = QueryEngine(
     "HuggingFaceTB/SmolVLM-256M-Instruct",
-    answers=CategoricalAnswers(["red", "green", "blue"]),
+    answers=CategoricalAnswers(["blue", "orange", "green"]),
 )
-predictions = engine.ask(scene, ["What color is the mug?"])
+question = "What color is the top block? Answer with one word."
+predictions = color_engine.ask(scene, [question])
 
-print(predictions["What color is the mug?"].answer)         # e.g. "red"
-print(predictions["What color is the mug?"].distribution())  # {"red": 0.7, "green": 0.2, "blue": 0.1}
+print(predictions[question].answer)          # the most likely label, e.g. "blue"
+print(predictions[question].distribution())  # {"blue": ..., "orange": ..., "green": ...}
 ```
 
 ### Full workflow: `SemanticStateEstimator.from_pddl`
@@ -108,8 +134,6 @@ print(predictions["What color is the mug?"].distribution())  # {"red": 0.7, "gre
 `SemanticStateEstimator` grounds a PDDL domain/problem into predicates, translates them into queries with a pluggable `QueryTranslator`, and drives a `QueryEngine`.
 
 ```python
-from PIL import Image
-
 from s3e import SemanticStateEstimator, TemplateTranslator
 
 domain_pddl = """
@@ -124,11 +148,11 @@ domain_pddl = """
 """
 
 problem_pddl = """
-(define (problem bw-2)
+(define (problem two-blocks)
   (:domain blocksworld)
-  (:objects a b - block)
-  (:init (on a b) (clear a))
-  (:goal (on b a))
+  (:objects blue orange - block)
+  (:init (on blue orange) (clear blue))
+  (:goal (on orange blue))
 )
 """
 
@@ -144,32 +168,33 @@ estimator = SemanticStateEstimator.from_pddl(
     problem_pddl,
     vlm="HuggingFaceTB/SmolVLM-256M-Instruct",
     translator=translator,
+    prompt_template="Answer with exactly one word, yes or no: {query}",
 )
 
-images = [Image.open("scene.png")]
-
-state = estimator(images)                # dict[str, bool]
-results = estimator.estimate(images)     # PredictionSet: full detail per predicate
+state = estimator(scene)                 # dict[str, bool]
+results = estimator.estimate(scene)      # PredictionSet: full detail per predicate
 probabilities = results.probabilities()  # dict[str, float]
 
 print(state)
 print(probabilities)
 ```
 
-Query only a subset of predicates (relevant-atom masking), or average across several scenes depicting the same state:
+Query only a subset of predicates (relevant-atom masking), or average across several scenes depicting the same state (e.g. different camera views):
 
 ```python
-subset_state = estimator.estimate(images, predicates=["on(a,b)", "clear(a)"]).to_state()
+from PIL import ImageOps
 
-scenes = [[Image.open("scene-1.png")], [Image.open("scene-2.png")]]
-averaged = estimator.estimate_averaged(scenes)
+subset_state = estimator.estimate(scene, predicates=["on(blue,orange)", "clear(blue)"]).to_state()
+
+views = [scene, [ImageOps.mirror(image)]]
+averaged = estimator.estimate_averaged(views)
 ```
 
 Inspect the normalized backend output behind a prediction with `keep_raw=True`:
 
 ```python
-results = estimator.estimate(images, keep_raw=True)
-print(results["on(a,b)"].raw)   # VLMOutput: token_probs, text, argmax_in_interest
+results = estimator.estimate(scene, keep_raw=True)
+print(results["on(blue,orange)"].raw)   # VLMOutput: token_probs, text, argmax_in_interest
 ```
 
 Convert the boolean state back into a Unified Planning state object:
@@ -178,7 +203,7 @@ Convert the boolean state back into a Unified Planning state object:
 up_state = estimator.to_up_state(state)
 ```
 
-For OpenAI-backed models, install the optional dependency (`pip install -e ".[openai]"`) and use an `OpenAI/`-prefixed model ID, e.g. `vlm="OpenAI/gpt-4o"`. For local multi-GPU inference, construct `VLLMBackend(...)` explicitly and pass the instance as `vlm=`:
+For OpenAI-backed models, install the optional dependency (`pip install "s3e[openai]"`), set `OPENAI_API_KEY`, and use an `OpenAI/`-prefixed model ID, e.g. `vlm="OpenAI/gpt-4o"`. For local multi-GPU inference on CUDA hosts, install `s3e[vllm]`, construct `VLLMBackend(...)` explicitly, and pass the instance as `vlm=`:
 
 ```python
 from s3e import SemanticStateEstimator, VLLMBackend
@@ -191,20 +216,19 @@ estimator = SemanticStateEstimator.from_pddl(
 
 ### Calibration
 
-Calibration is a self-contained pipeline over prediction data, in `s3e.calibration`. It never touches estimator internals, and the expensive step (querying the VLM on labeled examples) is separate from fitting, which is cheap and offline:
+Calibration is a self-contained pipeline over prediction data, in `s3e.calibration`. It never touches estimator internals, and the expensive step (querying the VLM on labeled examples) is separate from fitting, which is cheap and offline. In practice, collect many labeled scenes that are held out from evaluation; one scene keeps this example short:
 
 ```python
-from PIL import Image
-
 from s3e import CalibrationExample, CalibrationSet, PlattCalibrator
 
 examples = [
     CalibrationExample(
-        images=[Image.open("calibration-scene-1.png")],
+        images=scene,
         state_dict={
-            "on(a,b)": True,
-            "clear(a)": True,
-            "clear(b)": False,
+            "on(blue,orange)": True,
+            "on(orange,blue)": False,
+            "clear(blue)": True,
+            "clear(orange)": False,
         },
     ),
 ]
@@ -220,12 +244,12 @@ calibrator.save("platt-profile.json")
 
 calibrator = PlattCalibrator.load("platt-profile.json")
 calibrated_results = calibrator.apply(results)                       # new PredictionSet
-calibrated_state = estimator.estimate(images, calibrator=calibrator).to_state()
+calibrated_state = estimator.estimate(scene, calibrator=calibrator).to_state()
 ```
 
 `CalibrationSet.collect` skips predictions with no answer: their probability stays `0.5` whatever the calibrator says, so they are not training points.
 
-`scope` groups samples for fitting: `"global"` (one calibrator for everything), `"lifted"` (one per predicate name, e.g. all `on(...)` instances share a fit), or `"grounded"` (one per fully-grounded predicate). When examples span multiple problem instances, set `CalibrationExample.problem` on each — `CalibrationSet.collect` re-grounds the estimator against that problem before querying it, and the saved sample carries the problem string alongside its score and label.
+`scope` groups samples for fitting: `"global"` (one calibrator for everything), `"lifted"` (one per predicate name, e.g. all `on(...)` instances share a fit), or `"grounded"` (one per fully-grounded predicate). Every group needs both true and false labels, unless you pass `pass_through_single_class=True` to leave single-class groups uncalibrated; since `collect` drops unanswered predictions, check this on small datasets. When examples span multiple problem instances, set `CalibrationExample.problem` on each — `CalibrationSet.collect` re-grounds the estimator against that problem before querying it, and the saved sample carries the problem string alongside its score and label.
 
 ## API Reference / Configuration
 
@@ -301,46 +325,51 @@ Because the stored data is untouched, other rules can be derived from it. For ex
 - `OPENAI_API_KEY`: required for `OpenAIVLM` and OpenAI-backed `LLMTranslator` usage.
 - `cache_dir` on `LLMTranslator`: enables on-disk caching of generated predicate translations.
 
-## Contributing
+## Testing
 
-Install development dependencies:
+Install the development dependencies and run the test suite:
 
 ```bash
 pip install -e ".[dev]"       # CPU: full fast suite; vLLM-dependent tests skip
 pip install -e ".[dev-gpu]"   # CUDA hosts: adds vllm for the vLLM test coverage
+
+pytest -m "not slow"          # fast suite: CPU only, no model downloads
+pytest -m slow                # downloads and runs real models
+pytest                        # everything
 ```
 
-Run the fast test loop:
+Continuous integration runs the fast suite on Python 3.10–3.14 for every pull request and every push to `main`. On a machine without a CUDA GPU, install CPU-only PyTorch first to avoid the much larger CUDA build: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`.
 
-```bash
-pytest -m "not slow"
-```
+How each part of the library can be verified without special hardware:
 
-Run the full test suite:
+- **Engine, answer spaces, results, translators, calibration, PDDL grounding:** covered by the fast suite, which drives everything through deterministic fake backends (`tests/fakes.py`).
+- **HuggingFace backend:** mocked in the fast suite; `pytest -m slow tests/backends/test_huggingface.py` and the Quick Start above run real small models on a CPU.
+- **OpenAI backend:** mocked in the fast suite; real use needs an `OPENAI_API_KEY`.
+- **vLLM backend:** mocked in the fast suite when `vllm` is installed; the real-engine tests (`pytest -m slow tests/backends/test_vllm.py`) need a CUDA GPU.
 
-```bash
-pytest
-```
+## Getting help and contributing
 
-To contribute:
+- **Questions and bug reports:** open an issue on the [issue tracker](https://github.com/CLAIR-LAB-TECHNION/s3e/issues/new/choose) (templates are provided for bugs, feature requests, and questions).
+- **Contributing:** see [`CONTRIBUTING.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CONTRIBUTING.md) for the development setup, test commands, and conventions. Pull requests are welcome.
+- **Code of conduct:** this project follows the [Contributor Covenant](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CODE_OF_CONDUCT.md).
+- **Changes between versions:** see [`CHANGELOG.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CHANGELOG.md).
 
-1. Fork the repository and create a feature branch.
-2. Add or update tests for behavioral changes.
-3. Run the relevant test commands before submitting.
-4. Open a pull request with a concise description of the change and its motivation.
+`s3e` is maintained by the [CLAIR Lab](https://github.com/CLAIR-LAB-TECHNION) at the Technion – Israel Institute of Technology, which uses it in its own research. Issues and pull requests are triaged by the maintainers on a best-effort basis.
 
 ## License
 
-This project is licensed under the MIT License. See [`LICENSE`](LICENSE) for details.
+This project is licensed under the MIT License. See [`LICENSE`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/LICENSE) for details.
 
 ## Citation
 
+If you use `s3e` in your research, please cite the S3E paper (GitHub's "Cite this repository" button reads the same metadata from [`CITATION.cff`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CITATION.cff)):
+
 ```bibtex
-@inproceedings{azranS3ESemanticSymbolic2025,
-  title = {{{S3E}}: {{Semantic Symbolic State Estimation With Vision-Language Foundation Models}}},
-  shorttitle = {{{S3E}}},
-  booktitle = {{{AAAI}} 2025 {{Workshop LM4Plan}}},
-  author = {Azran, Guy and Goshen, Yuval and Yuan, Kai and Keren, Sarah},
-  year = 2025,
+@inproceedings{azran2025s3e,
+  title     = {{S3E}: Semantic Symbolic State Estimation With Vision-Language Foundation Models},
+  author    = {Azran, Guy and Goshen, Yuval and Yuan, Kai and Keren, Sarah},
+  booktitle = {Workshop on Planning in the Era of LLMs (LM4Plan) at the AAAI Conference on Artificial Intelligence},
+  year      = {2025},
+  url       = {https://openreview.net/forum?id=gw4hYNFUIC}
 }
 ```

@@ -99,10 +99,12 @@ class AnswerSpace:
 
     @property
     def labels(self) -> list[str]:
+        """Option labels in order (excluding the null option)."""
         return [o.label for o in self.options]
 
     @property
     def interest_tokens(self) -> list[str]:
+        """Every token string to score, null option included."""
         tokens: list[str] = []
         for option in self.options + (
             (self.null_option,) if self.null_option else ()
@@ -169,6 +171,7 @@ class AnswerSpace:
         return ScoredMasses(masses=masses, null_mass=null_mass, unassigned_mass=unassigned)
 
     def to_dict(self) -> dict:
+        """Serialize the options and null option to a JSON-compatible dict."""
         return {
             "type": "categorical",
             "options": [
@@ -186,6 +189,7 @@ class AnswerSpace:
 
     @classmethod
     def from_dict(cls, data: dict) -> "AnswerSpace":
+        """Rebuild the concrete answer space from :meth:`to_dict` output."""
         if data["type"] == "binary":
             return BinaryAnswers._from_dict(data)
         if data["type"] == "categorical":
@@ -225,6 +229,7 @@ class BinaryAnswers(AnswerSpace):
         )
 
     def to_dict(self) -> dict:
+        """Serialize, recording the true and false labels."""
         data = super().to_dict()
         data["type"] = "binary"
         data["true_label"] = self.true_label
