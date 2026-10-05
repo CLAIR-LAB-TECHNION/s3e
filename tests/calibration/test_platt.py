@@ -143,3 +143,30 @@ class TestPlattPersistence:
         payload = json.loads(path.read_text(encoding="utf-8"))
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         assert PlattCalibrator.load(path).group_keys() == ["sur(a,é)"]
+
+    def test_bad_format_version_rejected(self, tmp_path):
+        path = tmp_path / "platt.json"
+        path.write_text('{"format_version": 99}', encoding="utf-8")
+        with pytest.raises(ValueError, match="format_version"):
+            PlattCalibrator.load(path)
+
+
+class TestFitValidation:
+    def test_no_samples_rejected(self):
+        from s3e.calibration.platt import fit_platt_parameters
+
+        with pytest.raises(ValueError, match="at least one"):
+            fit_platt_parameters([], [])
+
+    def test_single_class_rejected(self):
+        from s3e.calibration.platt import fit_platt_parameters
+
+        with pytest.raises(ValueError, match="both positive and negative"):
+            fit_platt_parameters([1.0, 2.0], [True, True])
+
+    def test_single_class_group_rejected_without_pass_through(self):
+        samples = make_samples() + [
+            CalibrationSample(predicate="clear(a)", score=1.0, label=True)
+        ]
+        with pytest.raises(ValueError, match="only positive samples"):
+            PlattCalibrator.fit(CalibrationSet(samples=samples, meta={}), scope="lifted")

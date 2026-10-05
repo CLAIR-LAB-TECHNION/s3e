@@ -9,6 +9,7 @@ from s3e.pddl.up_utils import (
     create_up_problem,
     get_object_names_dict,
     get_all_grounded_predicates_for_objects,
+    get_lifted_predicate_key,
     ground_predicate_str_to_fnode,
     convert_state_dict_to_up_compatible,
     state_dict_to_up_state,
@@ -117,6 +118,18 @@ class TestGroundPredicateStrToFnode:
         fnode = ground_predicate_str_to_fnode(up_problem, "clear(a)")
         assert fnode.fluent().name == "clear"
         assert len(fnode.args) == 1
+
+    def test_nullary_predicate(self):
+        domain = BLOCKSWORLD_DOMAIN.replace(
+            "(clear ?x - block)", "(clear ?x - block)\n    (handempty)"
+        )
+        problem = create_up_problem(domain, BLOCKSWORLD_PROBLEM)
+        fnode = ground_predicate_str_to_fnode(problem, "handempty()")
+        assert fnode.fluent().name == "handempty"
+        assert len(fnode.args) == 0
+
+    def test_lifted_key_is_the_predicate_name(self, up_problem):
+        assert get_lifted_predicate_key(up_problem, "on(a,b)") == "on"
 
 
 class TestStateConversion:

@@ -78,6 +78,22 @@ class TestOpenAIVLM:
         assert len(results) == 2
 
     @patch("s3e.backends.openai.openai")
+    def test_system_prompt_sent_as_developer_message(self, mock_openai_module):
+        import math
+
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._make_mock_response(
+            [("yes", math.log(0.7))]
+        )
+
+        OpenAIVLM("gpt-4o").query([Image.new("RGB", (8, 8))], "q", system_prompt="Be brief.")
+
+        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        assert messages[0] == {"role": "developer", "content": "Be brief."}
+        assert messages[1]["role"] == "user"
+
+    @patch("s3e.backends.openai.openai")
     def test_interest_tokens_filter_and_backfill(self, mock_openai_module):
         import math
 

@@ -216,3 +216,9 @@ class TestEmptyOptions:
     def test_empty_categorical_rejected(self):
         with pytest.raises(ValueError, match="at least one"):
             CategoricalAnswers([])
+
+
+class TestUnknownSerializedType:
+    def test_unknown_answer_space_type_rejected(self):
+        with pytest.raises(ValueError, match="Unknown answer space type"):
+            AnswerSpace.from_dict({"type": "ternary"})
