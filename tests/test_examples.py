@@ -75,11 +75,23 @@ class TestBlocksworldBenchmarkExample:
             calibrate_fraction=0.5,
         )
 
-        assert set(report["summary"]) == {"logprobs", "text_match", "logprobs+platt"}
-        assert len(report["instances"]["logprobs"]) == 4 * (2 * 2 + 2 * 2)
+        assert set(report["summary"]) == {
+            "logprobs", "text_match", "logprobs held-out", "logprobs held-out+platt",
+        }
+        predicates_per_scene = 2 * 2 + 2 * 2
+        assert len(report["instances"]["logprobs"]) == 4 * predicates_per_scene
+        # Before/after calibration compare the same held-out scenes.
+        before = report["instances"]["logprobs held-out"]
+        after = report["instances"]["logprobs held-out+platt"]
+        assert [(r["scene"], r["predicate"]) for r in before] == [
+            (r["scene"], r["predicate"]) for r in after
+        ]
+        assert {r["scene"] for r in before} == {2, 3}
+        assert report["calibration"]["scenes"] == [0, 1]
         for summary in report["summary"].values():
             assert 0.0 <= summary["accuracy"] <= 1.0
             assert 0.0 <= summary["brier"] <= 1.0
+        assert set(report["instances"]["logprobs"][0]["masses"]) == {"yes", "no"}
         provenance = report["provenance"]
         assert provenance["backend"] == "FakeVLM"
         assert provenance["queries"]["on(red,green)"].startswith("Is the red block")
@@ -104,6 +116,11 @@ class TestBlocksworldBenchmarkExample:
     def test_rejects_unsupported_block_count(self, bench):
         with pytest.raises(ValueError, match="num_blocks"):
             bench.run_benchmark(FakeVLM(), num_blocks=7)
+
+    @pytest.mark.parametrize("fraction", [0.1, 1.0])
+    def test_rejects_calibration_split_without_both_sides(self, bench, fraction):
+        with pytest.raises(ValueError, match="calibrate_fraction"):
+            bench.run_benchmark(FakeVLM(), num_scenes=4, calibrate_fraction=fraction)
 
     @pytest.mark.slow
     def test_real_model_records_its_revision(self, bench):

@@ -11,14 +11,17 @@ probabilities; ``text_match`` generates a reply and matches its start):
 * accuracy of the thresholded state, Brier score, and expected calibration
   error (ECE, 10 equal-width bins) of P(true);
 * the share of predictions with no answer (``Prediction.has_answer`` False);
-* wall-clock time per query and peak memory;
-* optionally, the same metrics after Platt scaling fitted offline on a
-  held-out share of the scenes, without querying the model again.
+* wall-clock time per query and peak memory (on a GPU, the peak allocated
+  during that mode; on CPU, the process's peak resident memory so far,
+  which includes the model);
+* optionally, metrics on held-out scenes before and after Platt scaling
+  fitted offline on the other scenes, without querying the model again.
 
-Every per-predicate result is written to a JSON file together with the
-provenance needed to report and reproduce the run: library versions, the
-model id and resolved Hugging Face revision, the full prompts, decoding
-settings, dates, and hardware.
+Every per-predicate result (with the raw answer masses) is written to a
+JSON file together with the provenance needed to report and reproduce the
+run: library versions, the model id and resolved Hugging Face revision,
+the full prompts, answer tokens, decoding settings, the fitted calibrator,
+dates, and hardware.
 
 This is a template for your own evaluation, not a published benchmark: the
 scenes are deliberately simple, and small models still do poorly on them.
@@ -163,7 +166,8 @@ def metrics(rows: list[dict]) -> dict:
 
 
 def peak_memory_bytes() -> "tuple[str, int | None]":
-    """Peak CUDA memory if a GPU is in use, else the process's peak RSS."""
+    """Peak CUDA memory since the last reset if a GPU is in use, else the
+    process's peak resident set size since it started."""
     try:
         import torch
 
@@ -190,6 +194,26 @@ def reset_peak_memory() -> None:
         pass
 
 
+def prediction_rows(scene: dict, results) -> list[dict]:
+    """One JSON-ready row per predicate, with the stored masses."""
+    state = results.to_state()
+    return [
+        {
+            "scene": scene["id"],
+            "predicate": predicate,
+            "truth": scene["state"][predicate],
+            "probability": prediction.probability,
+            "state": state[predicate],
+            "has_answer": prediction.has_answer,
+            "masses": prediction.masses,
+            "null_mass": prediction.null_mass,
+            "unassigned_mass": prediction.unassigned_mass,
+            "text": prediction.text,
+        }
+        for predicate, prediction in results.items()
+    ]
+
+
 def evaluate(backend, scenes, problem, scoring, inference_kwargs) -> dict:
     """Estimate every scene under one scoring mode; return rows and timing."""
     estimator = SemanticStateEstimator.from_pddl(
@@ -211,17 +235,7 @@ def evaluate(backend, scenes, problem, scoring, inference_kwargs) -> dict:
         results = estimator.estimate(scene["images"])
         elapsed += time.perf_counter() - start
         results_per_scene.append(results)
-        state = results.to_state()
-        for predicate, prediction in results.items():
-            rows.append({
-                "scene": scene["id"],
-                "predicate": predicate,
-                "truth": scene["state"][predicate],
-                "probability": prediction.probability,
-                "state": state[predicate],
-                "has_answer": prediction.has_answer,
-                "text": prediction.text,
-            })
+        rows.extend(prediction_rows(scene, results))
     memory_kind, memory = peak_memory_bytes()
     return {
         "estimator": estimator,
@@ -232,12 +246,23 @@ def evaluate(backend, scenes, problem, scoring, inference_kwargs) -> dict:
     }
 
 
-def calibrated_rows(run: dict, scenes: list[dict], fraction: float) -> list[dict]:
-    """Fit Platt scaling on the first ``fraction`` of scenes; score the rest.
+def calibration_split(num_scenes: int, fraction: float) -> int:
+    """Number of scenes to fit on; at least one scene on each side."""
+    split = int(num_scenes * fraction)
+    if not 1 <= split < num_scenes:
+        raise ValueError(
+            f"calibrate_fraction={fraction} of {num_scenes} scenes leaves no "
+            "scene to fit on or none to evaluate on"
+        )
+    return split
+
+
+def calibrate(run: dict, scenes: list[dict], split: int) -> dict:
+    """Fit Platt scaling on the first ``split`` scenes; evaluate the rest
+    before and after calibration.
 
     Uses the predictions already computed: calibration never queries the model.
     """
-    split = max(1, int(len(scenes) * fraction))
     samples = [
         CalibrationSample(predicate, prediction.score, scene["state"][predicate])
         for scene, results in zip(scenes[:split], run["results"][:split])
@@ -249,20 +274,21 @@ def calibrated_rows(run: dict, scenes: list[dict], fraction: float) -> list[dict
         scope="lifted",
         pass_through_single_class=True,
     )
-    rows = []
-    for scene, results in zip(scenes[split:], run["results"][split:]):
-        calibrated = calibrator.apply(results)
-        state = calibrated.to_state()
-        for predicate, prediction in calibrated.items():
-            rows.append({
-                "scene": scene["id"],
-                "predicate": predicate,
-                "truth": scene["state"][predicate],
-                "probability": prediction.probability,
-                "state": state[predicate],
-                "has_answer": prediction.has_answer,
-            })
-    return rows
+    held_out = list(zip(scenes[split:], run["results"][split:]))
+    return {
+        "uncalibrated": [r for s, res in held_out for r in prediction_rows(s, res)],
+        "calibrated": [
+            r for s, res in held_out for r in prediction_rows(s, calibrator.apply(res))
+        ],
+        "fit": {
+            "scenes": [scene["id"] for scene in scenes[:split]],
+            "samples": len(samples),
+            "scope": calibrator.scope,
+            "groups": {
+                key: vars(params) for key, params in calibrator.groups.items()
+            },
+        },
+    }
 
 
 def package_versions() -> dict:
@@ -322,11 +348,15 @@ def run_benchmark(
         generation_kwargs: ``inference_kwargs`` for ``text_match`` (backend
             specific, e.g. ``{"max_new_tokens": 8}`` for HuggingFace).
         calibrate_fraction: If set, fit Platt scaling (``logprobs`` only) on
-            this share of the scenes and report metrics on the rest.
+            this share of the scenes and report metrics on the remaining
+            scenes before (``logprobs held-out``) and after
+            (``logprobs held-out+platt``) calibration.
         vlm_kwargs: Backend constructor kwargs when ``vlm`` is a model id.
     """
     if not 2 <= num_blocks <= len(COLORS):
         raise ValueError(f"num_blocks must be between 2 and {len(COLORS)}")
+    if calibrate_fraction:
+        split = calibration_split(num_scenes, calibrate_fraction)
     started = datetime.now(timezone.utc)
     rng = random.Random(seed)
     blocks = list(COLORS[:num_blocks])
@@ -357,12 +387,11 @@ def run_benchmark(
         }
         report["instances"][scoring] = run["rows"]
         if calibrate_fraction and scoring == "logprobs":
-            rows = calibrated_rows(run, scenes, calibrate_fraction)
-            report["summary"]["logprobs+platt"] = {
-                **metrics(rows),
-                "calibration_scenes": max(1, int(len(scenes) * calibrate_fraction)),
-            }
-            report["instances"]["logprobs+platt"] = rows
+            calibration = calibrate(run, scenes, split)
+            for name, key in (("held-out", "uncalibrated"), ("held-out+platt", "calibrated")):
+                report["summary"][f"logprobs {name}"] = metrics(calibration[key])
+                report["instances"][f"logprobs {name}"] = calibration[key]
+            report["calibration"] = calibration["fit"]
 
     model = getattr(backend, "model", None)
     report["provenance"] = {
@@ -422,11 +451,11 @@ def main(argv=None) -> None:
     )
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
-    print(f"{'mode':16}{'accuracy':>10}{'Brier':>8}{'ECE':>8}{'no answer':>11}{'s/query':>9}")
+    print(f"{'mode':24}{'accuracy':>10}{'Brier':>8}{'ECE':>8}{'no answer':>11}{'s/query':>9}")
     for mode, summary in report["summary"].items():
         seconds = summary.get("seconds_per_query")
         print(
-            f"{mode:16}{summary['accuracy']:>10.3f}{summary['brier']:>8.3f}"
+            f"{mode:24}{summary['accuracy']:>10.3f}{summary['brier']:>8.3f}"
             f"{summary['ece']:>8.3f}{summary['no_answer_rate']:>11.3f}"
             + (f"{seconds:>9.3f}" if seconds is not None else f"{'-':>9}")
         )

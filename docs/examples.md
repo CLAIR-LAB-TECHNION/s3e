@@ -45,8 +45,10 @@ the Brier score, because the simulated model's 95% confidence overstates its
 (colored blocks on a table) with known ground truth and asks a model about
 every grounded predicate. For each scoring mode (`logprobs` and `text_match`)
 it reports accuracy, Brier score, expected calibration error, the share of
-predictions with no answer, time per query, and peak memory, optionally after
-Platt scaling fitted offline on a share of the scenes:
+predictions with no answer, time per query, and peak memory (per mode on a
+GPU; on CPU, the process's peak so far, model included). With
+`--calibrate-fraction`, it also fits Platt scaling offline on that share of
+the scenes and reports the remaining scenes before and after calibration:
 
 ```bash
 pip install "s3e[pddl,hf,calibration]"
@@ -63,8 +65,9 @@ benchmark.
 ## Reporting experiments
 
 Results from foundation models are hard to reproduce unless the exact setup is
-reported. The benchmark's JSON output records the items below for every run;
-when you write your own experiment, this is where `s3e` exposes each of them:
+reported. The benchmark's JSON output records each item below (raw results as
+per-predicate masses, the calibrator as its fitted parameters); when you write
+your own experiment, this is where `s3e` exposes each of them:
 
 | What to report | Where to find it |
 |---|---|

@@ -6,7 +6,7 @@ root; each script's docstring explains what it shows.
 | Script | What it shows | Needs |
 |---|---|---|
 | [`custom_backend.py`](custom_backend.py) | Implementing a `VLMBackend` (a simulated, overconfident model), then the full pipeline: PDDL grounding, calibration data collection, Platt scaling, held-out accuracy and Brier score before/after calibration, and conversion to a Unified Planning state. Downloads nothing; runs in seconds. | `s3e[pddl,calibration]` |
-| [`blocksworld_benchmark.py`](blocksworld_benchmark.py) | Evaluating a real model on rendered Blocksworld scenes with known ground truth: accuracy, Brier score, calibration error, unanswered-query rate, time per query, and peak memory for `logprobs` vs `text_match` scoring, optionally after offline Platt scaling. Writes per-predicate results plus provenance (versions, model revision, prompts, decoding settings, dates, hardware) to JSON. | `s3e[pddl,hf,calibration]`; a GPU is strongly recommended |
+| [`blocksworld_benchmark.py`](blocksworld_benchmark.py) | Evaluating a real model on rendered Blocksworld scenes with known ground truth: accuracy, Brier score, calibration error, unanswered-query rate, time per query, and peak memory for `logprobs` vs `text_match` scoring, and optionally held-out metrics before and after offline Platt scaling. Writes per-predicate results (with raw answer masses) plus provenance (versions, model revision, prompts, answer tokens, decoding settings, the fitted calibrator, dates, hardware) to JSON. | `s3e[pddl,hf,calibration]`; a GPU is strongly recommended |
 
 ```bash
 python examples/custom_backend.py
