@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Shared fake VLM backend implementing the full VLMBackend contract.
 
 Used by engine, estimator, calibration, and workflow tests. Honors the

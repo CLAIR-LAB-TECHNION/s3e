@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Utilities for working with the Unified Planning framework and PDDL.
 
 This module provides functions for PDDL parsing, predicate grounding,

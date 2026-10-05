@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Workflow tests: per-sample estimation, serialization, and offline calibration.
 
 Pattern: one long-lived estimator per domain; per sample it swaps the

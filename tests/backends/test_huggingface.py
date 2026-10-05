@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for the HuggingFace VLM backend: mocked units, slow
 integration against tiny real models, and the shared backend contract.
 """

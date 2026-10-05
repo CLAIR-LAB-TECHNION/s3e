@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Workflow tests: one shared backend feeding per-episode estimators.
 
 Pattern: a shared prebuilt backend feeds estimators built per domain;

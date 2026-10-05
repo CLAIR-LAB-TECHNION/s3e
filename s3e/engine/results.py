@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Lazy prediction objects: store masses, derive everything else on demand."""
 
 import math

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Platt scaling: fit a sigmoid over grouped log-odds scores, then apply it."""
 
 from __future__ import annotations

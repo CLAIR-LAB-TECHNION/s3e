@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Calibration: collect scored examples once, fit and apply calibrators offline."""
 
 from .base import Calibrator

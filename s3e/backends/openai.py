@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """OpenAI API VLM backend.
 
 This module provides a :class:`VLMBackend` implementation that uses the

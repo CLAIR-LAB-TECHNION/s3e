@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for the vLLM backend: mocked-engine units, import behavior,
 slow GPU integration, and the shared backend contract.
 

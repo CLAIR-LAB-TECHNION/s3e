@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Query translation for converting PDDL predicates to VLM-friendly queries.
 
 This subpackage provides multiple strategies for translating grounded

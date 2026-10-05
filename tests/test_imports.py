@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Import hygiene: bare installs import cleanly; optional features fail with
 the exact extra named; heavy modules are never imported eagerly.
 

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Answer spaces: what counts as an answer and how model output scores it.
 
 An :class:`AnswerOption` is a label plus the token strings that express it.

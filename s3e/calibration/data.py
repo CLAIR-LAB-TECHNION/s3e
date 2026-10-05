@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Calibration data: labeled examples, precomputed samples, and sample sets."""
 
 from __future__ import annotations

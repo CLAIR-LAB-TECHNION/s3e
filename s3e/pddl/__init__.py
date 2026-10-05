@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """PDDL utilities for s3e.
 
 This subpackage provides functions for working with PDDL domains and problems

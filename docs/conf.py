@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Sphinx configuration for the s3e documentation."""
 
 from importlib.metadata import PackageNotFoundError, version

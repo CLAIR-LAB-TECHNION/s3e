@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for PDDL utility functions.
 
 These tests use the unified-planning library directly (CPU-only, no models).

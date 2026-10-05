@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Query engine layer: answer spaces, lazy results, and the QueryEngine."""
 
 from .answers import (

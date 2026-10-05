@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Contract tests every VLMBackend implementation must pass.
 
 Concrete backend test modules subclass ``BackendContract`` and provide a

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for the OpenAI VLM backend (client mocked; no API calls)."""
 
 from unittest.mock import MagicMock, patch

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """NL translation cache for storing predicate-to-query mappings.
 
 This module provides simple JSON file I/O for caching the results of
