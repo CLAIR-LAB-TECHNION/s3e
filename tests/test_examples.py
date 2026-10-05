@@ -113,6 +113,29 @@ class TestBlocksworldBenchmarkExample:
         assert report["provenance"]["inference_kwargs"]["text_match"] == {}
         assert "text_match" in capsys.readouterr().out
 
+    def test_model_revision_from_the_hub_cache(self, bench, monkeypatch):
+        import huggingface_hub
+
+        class Backend:
+            model_id = "org/vlm"
+
+        calls = []
+
+        def snapshot_download(repo_id, **kwargs):
+            calls.append((repo_id, kwargs))
+            if repo_id != "org/vlm":
+                raise huggingface_hub.errors.LocalEntryNotFoundError("not cached")
+            return "/cache/models--org--vlm/snapshots/0123abcd"
+
+        monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
+        assert bench.model_revision(Backend(), {"revision": "v1"}) == "0123abcd"
+        assert calls[0][1]["revision"] == "v1"
+        assert calls[0][1]["local_files_only"] is True
+
+        Backend.model_id = "/local/checkpoint"
+        assert bench.model_revision(Backend(), {}) is None
+        assert bench.model_revision(FakeVLM(), {}) is None  # no model_id
+
     def test_rejects_unsupported_block_count(self, bench):
         with pytest.raises(ValueError, match="num_blocks"):
             bench.run_benchmark(FakeVLM(), num_blocks=7)

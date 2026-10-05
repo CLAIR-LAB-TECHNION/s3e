@@ -331,6 +331,34 @@ def git_commit() -> "dict | None":
         return None
 
 
+def model_revision(backend, vlm_kwargs: dict) -> "str | None":
+    """The Hugging Face commit the backend's model was loaded from, if known.
+
+    Older transformers record it as ``config._commit_hash``; otherwise it is
+    the name of the cached snapshot folder that a (pinned or default)
+    revision resolves to. ``None`` for API models and local paths.
+    """
+    config = getattr(getattr(backend, "model", None), "config", None)
+    revision = getattr(config, "_commit_hash", None)
+    if revision:
+        return revision
+    model_id = getattr(backend, "model_id", None)
+    if not model_id:
+        return None
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot = snapshot_download(
+            model_id,
+            revision=vlm_kwargs.get("revision"),
+            cache_dir=vlm_kwargs.get("cache_dir"),
+            local_files_only=True,
+        )
+    except Exception:  # not a cached Hub model: provenance stays unknown
+        return None
+    return Path(snapshot).name
+
+
 def device_name() -> str:
     try:
         import torch
@@ -421,7 +449,6 @@ def run_benchmark(
                 report["instances"][f"logprobs {name}"] = calibration[key]
             report["calibration"] = calibration["fit"]
 
-    model = getattr(backend, "model", None)
     report["provenance"] = {
         "started_utc": started.isoformat(),
         "finished_utc": datetime.now(timezone.utc).isoformat(),
@@ -432,7 +459,7 @@ def run_benchmark(
         "device": device_name(),
         "backend": type(backend).__name__,
         "model_id": vlm if isinstance(vlm, str) else getattr(backend, "model_id", None),
-        "model_revision": getattr(getattr(model, "config", None), "_commit_hash", None),
+        "model_revision": model_revision(backend, vlm_kwargs or {}),
         "vlm_kwargs": vlm_kwargs or {},
         "seed": seed,
         "num_scenes": num_scenes,

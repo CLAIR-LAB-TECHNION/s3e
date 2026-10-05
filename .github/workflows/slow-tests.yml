@@ -4,9 +4,9 @@ name: Slow tests
 # in the README, getting-started guide, and walkthrough notebook, run against
 # small Hugging Face models on CPU. Too slow for every push; run weekly, on
 # demand, and on pull requests that change this workflow or the documentation
-# it executes. (GitHub disables scheduled workflows after 60 days without
-# activity in the repository.) The vLLM integration tests need a CUDA GPU and
-# skip here.
+# and examples it executes. (GitHub disables scheduled workflows after 60 days
+# without activity in the repository.) The vLLM integration tests need a CUDA
+# GPU and skip here.
 
 on:
   schedule:
@@ -16,6 +16,8 @@ on:
     paths:
       - .github/workflows/slow-tests.yml
       - tests/test_documentation.py
+      - tests/test_examples.py
+      - examples/**
       - docs/getting-started.md
       - docs/s3e_walkthrough.ipynb
 
