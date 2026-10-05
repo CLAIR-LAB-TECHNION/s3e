@@ -51,7 +51,7 @@ dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.2", "s3e[all]"]
 # dev plus vllm: needed for the vLLM test coverage; requires a CUDA host.
 dev-gpu = ["s3e[dev,vllm]"]
 # Sphinx API reference; heavy backends (torch, transformers, vllm) are mocked.
-docs = ["sphinx>=7", "myst-parser>=2", "furo", "s3e[openai,pddl,calibration]"]
+docs = ["sphinx>=7", "myst-nb>=1", "furo", "s3e[openai,pddl,calibration]"]
 
 [project.urls]
 Homepage = "https://github.com/CLAIR-LAB-TECHNION/s3e"

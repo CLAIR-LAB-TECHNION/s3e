@@ -12,7 +12,9 @@
 
 ### Statement of need
 
+<!-- docs:statement-of-need:start -->
 Research that grounds symbolic planners in perception — task planning, task-and-motion planning, embodied AI, neuro-symbolic reasoning — keeps re-implementing the same pipeline: enumerate grounded predicates, phrase a question for each, prompt a particular model API with images, and turn the output into truth values. Parsing generated text throws away the model's uncertainty, and hard-wiring one provider makes cross-model comparisons and calibration studies laborious. `s3e` packages this pipeline as a backend-agnostic library with probabilities as a first-class output: answer-token probability scoring, an optional explicit "unknown" answer, multi-view averaging, and offline calibration, over HuggingFace, vLLM, and OpenAI models. Its query engine also works without PDDL, for anyone who needs probabilistic yes/no or multiple-choice answers from a VLM.
+<!-- docs:statement-of-need:end -->
 
 `s3e` is built as concentric, independently usable layers:
 
@@ -251,6 +253,7 @@ calibrated_state = estimator.estimate(scene, calibrator=calibrator).to_state()
 
 `scope` groups samples for fitting: `"global"` (one calibrator for everything), `"lifted"` (one per predicate name, e.g. all `on(...)` instances share a fit), or `"grounded"` (one per fully-grounded predicate). Every group needs both true and false labels, unless you pass `pass_through_single_class=True` to leave single-class groups uncalibrated; since `collect` drops unanswered predictions, check this on small datasets. When examples span multiple problem instances, set `CalibrationExample.problem` on each — `CalibrationSet.collect` re-grounds the estimator against that problem before querying it, and the saved sample carries the problem string alongside its score and label.
 
+<!-- docs:user-guide:start -->
 ## API Reference / Configuration
 
 ### `SemanticStateEstimator`
@@ -325,6 +328,7 @@ Because the stored data is untouched, other rules can be derived from it. For ex
 - `OPENAI_API_KEY`: required for `OpenAIVLM` and OpenAI-backed `LLMTranslator` usage.
 - `cache_dir` on `LLMTranslator`: enables on-disk caching of generated predicate translations.
 
+<!-- docs:user-guide:end -->
 ## Testing
 
 Install the development dependencies and run the test suite:
