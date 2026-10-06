@@ -12,7 +12,7 @@ from tqdm.auto import tqdm
 from .cache import make_cache_key, load_cache, save_cache
 from .translator import QueryTranslator
 from .._deps import require
-from ..backends.resolve import OPENAI_MODEL_IDENTIFIER
+from ..backends.utils.resolve import OPENAI_MODEL_IDENTIFIER
 
 
 _NL_SYSTEM_PROMPT_TEMPLATE = """The following is a PDDL domain:

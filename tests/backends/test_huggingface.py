@@ -1016,7 +1016,7 @@ class TestHuggingFaceVLMThinking:
     def test_open_prompt_is_closed_and_answer_read_after_block(
         self, mock_model_cls, mock_proc_cls
     ):
-        from s3e.backends.thinking import MAX_SEPARATOR_TOKENS
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
         prompt_ids = [1, THINK_START]
         vlm, model, processor = self._make_vlm(
@@ -1122,7 +1122,7 @@ class TestHuggingFaceVLMThinking:
     def test_think_mode_generates_reasoning_then_scores(
         self, mock_model_cls, mock_proc_cls, generated, continuation, reasoning
     ):
-        from s3e.backends.thinking import MAX_SEPARATOR_TOKENS
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
         prompt_ids = [1, THINK_START]
 
@@ -1161,7 +1161,7 @@ class TestHuggingFaceVLMThinking:
         """Without a pad id, generate() pads finished rows with the first
         stop id, the closing delimiter; a row that ended on EOS is cut there
         and closed, not continued through the EOS."""
-        from s3e.backends.thinking import MAX_SEPARATOR_TOKENS
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
         prompt_ids = [1, THINK_START]
 
@@ -1192,7 +1192,7 @@ class TestHuggingFaceVLMThinking:
     def test_think_mode_opens_the_block_the_model_was_about_to_open(
         self, mock_model_cls, mock_proc_cls
     ):
-        from s3e.backends.thinking import MAX_SEPARATOR_TOKENS
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
         prompt_ids = [1, 2]
 

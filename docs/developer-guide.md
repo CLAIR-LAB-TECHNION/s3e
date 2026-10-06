@@ -8,7 +8,8 @@ development setup, test commands, style, and release process, see
 
 | Module | Responsibility |
 |---|---|
-| `s3e/backends/` | The {class}`~s3e.VLMBackend` interface and {class}`~s3e.VLMOutput`; the HuggingFace, OpenAI, and vLLM backends; {func}`~s3e.resolve_backend` (model id → backend); a reverse token index and thinking-block handling (`s3e/backends/thinking.py`) shared by the local backends |
+| `s3e/backends/` | The {class}`~s3e.VLMBackend` interface and {class}`~s3e.VLMOutput`; the HuggingFace, OpenAI, and vLLM backends |
+| `s3e/backends/utils/` | Helpers that are not backends: {func}`~s3e.resolve_backend` (model id → backend); a reverse token index and thinking-block handling shared by the local backends |
 | `s3e/engine/` | {class}`~s3e.QueryEngine`; answer spaces ({class}`~s3e.BinaryAnswers`, {class}`~s3e.CategoricalAnswers`); results ({class}`~s3e.Prediction`, {class}`~s3e.PredictionSet`) |
 | `s3e/calibration/` | The {class}`~s3e.Calibrator` interface, {class}`~s3e.PlattCalibrator`, and calibration data ({class}`~s3e.CalibrationSet`) |
 | `s3e/translation/` | The {class}`~s3e.QueryTranslator` interface and its implementations; the JSON cache used by {class}`~s3e.LLMTranslator` |
@@ -61,17 +62,19 @@ behavior. Subclass it in your backend's test module and provide a
 `make_backend` fixture to run the whole contract against your backend.
 
 A backend for local models that may think before answering can reuse
-`s3e/backends/thinking.py`, as {class}`~s3e.HuggingFaceVLM` and
+`s3e/backends/utils/thinking.py`, as {class}`~s3e.HuggingFaceVLM` and
 {class}`~s3e.VLLMBackend` do:
-{func}`~s3e.backends.thinking.resolve_thinking_tokens` finds the model's
-delimiter pair, {meth}`~s3e.backends.thinking.ThinkingTokens.opens_block`
-and the most likely next token tell whether a query is about to think,
-{meth}`~s3e.backends.thinking.ThinkingTokens.closing_text` or a generated
-reasoning ends the block, and the answer token is read at the first
-non-whitespace position after it
-({func}`~s3e.backends.thinking.leading_whitespace_tokens`). Text replies are
-split with {meth}`~s3e.backends.thinking.ThinkingTokens.split`, and the
-block's text goes in {attr}`VLMOutput.reasoning <s3e.VLMOutput.reasoning>`.
+{func}`~s3e.backends.utils.thinking.resolve_thinking_tokens` finds the
+model's delimiter pair,
+{meth}`~s3e.backends.utils.thinking.ThinkingTokens.opens_block` and the most
+likely next token tell whether a query is about to think,
+{meth}`~s3e.backends.utils.thinking.ThinkingTokens.closing_text` or a
+generated reasoning ends the block, and the answer token is read at the
+first non-whitespace position after it
+({func}`~s3e.backends.utils.thinking.leading_whitespace_tokens`). Text
+replies are split with
+{meth}`~s3e.backends.utils.thinking.ThinkingTokens.split`, and the block's
+text goes in {attr}`VLMOutput.reasoning <s3e.VLMOutput.reasoning>`.
 
 ### A new translator
 

@@ -23,7 +23,7 @@ design with full context):
 * Requires vLLM >= 0.11.0: full-vocab logprobs via ``SamplingParams(logprobs=-1)``
   and ``LLM(max_logprobs=-1)`` landed in 0.11.0 (vllm-project/vllm#25031); older
   engines reject ``-1`` at construction. The pin lives in ``pyproject.toml``.
-* Thinking models (see :mod:`s3e.backends.thinking`): rows whose answer would
+* Thinking models (see :mod:`s3e.backends.utils.thinking`): rows whose answer would
   come after a thinking block are re-run through ``LLM.generate`` on a text
   prompt. ``LLM.chat`` cannot continue a conversation from text we append, and
   re-sending the token ids it returns does not work either: they hold the
@@ -53,14 +53,14 @@ import torch
 from vllm import LLM, SamplingParams
 
 from .backend import VLMBackend, VLMOutput, _validate_num_logprobs
-from .thinking import (
+from .utils.thinking import (
     DEFAULT_MAX_THINKING_TOKENS,
     MAX_SEPARATOR_TOKENS,
     leading_whitespace_tokens,
     resolve_thinking_tokens,
     validate_thinking_options,
 )
-from .token_index import build_token_reverse_index, decode_single_token_ids
+from .utils.token_index import build_token_reverse_index, decode_single_token_ids
 
 
 class VLLMBackend(VLMBackend):

@@ -5,7 +5,7 @@
 
 Answer token groups live with the answer spaces (:mod:`s3e.engine.answers`)
 and the OpenAI model-id prefix lives with backend resolution
-(:mod:`s3e.backends.resolve`); this module holds prompts only.
+(:mod:`s3e.backends.utils.resolve`); this module holds prompts only.
 """
 
 SYSTEM_PROMPT_NO_TRANSLATION = """The following is a PDDL domain

@@ -7,7 +7,7 @@ import pytest
 
 import warnings
 
-from s3e.backends.thinking import (
+from s3e.backends.utils.thinking import (
     KNOWN_THINKING_DELIMITERS,
     MAX_SEPARATOR_TOKENS,
     ThinkingTokens,

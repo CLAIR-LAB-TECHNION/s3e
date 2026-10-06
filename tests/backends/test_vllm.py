@@ -734,7 +734,7 @@ class TestVLLMBackendThinking:
     def test_open_prompt_is_closed_and_answer_read_after_block(
         self, mock_llm_cls, mock_sp_cls
     ):
-        from s3e.backends.thinking import MAX_SEPARATOR_TOKENS
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
         backend, mock_llm = self._make_backend(mock_llm_cls)
         mock_llm.chat.return_value = [

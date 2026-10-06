@@ -47,7 +47,7 @@ class VLMOutput:
             here means the model answered outside the expected token set,
             so the reported masses cover almost none of the distribution.
         reasoning: The text of the model's thinking block, which backends
-            skip before reading the answer (see :mod:`s3e.backends.thinking`).
+            skip before reading the answer (see :mod:`s3e.backends.utils.thinking`).
             ``""`` when the block was closed without reasoning, ``None`` when
             no block was involved.
     """

@@ -43,14 +43,14 @@ with ``enable_thinking=True``). :class:`HuggingFaceVLM` and
 *Thinking models* section covers the options and the models they do not
 cover.
 
-.. autodata:: s3e.backends.thinking.KNOWN_THINKING_DELIMITERS
+.. autodata:: s3e.backends.utils.thinking.KNOWN_THINKING_DELIMITERS
    :no-value:
 
 Helpers for backends that skip thinking blocks (see the developer guide):
 
-.. autofunction:: s3e.backends.thinking.resolve_thinking_tokens
+.. autofunction:: s3e.backends.utils.thinking.resolve_thinking_tokens
 
-.. autoclass:: s3e.backends.thinking.ThinkingTokens
+.. autoclass:: s3e.backends.utils.thinking.ThinkingTokens
    :members: opens_block, closing_text, split
 
-.. autofunction:: s3e.backends.thinking.leading_whitespace_tokens
+.. autofunction:: s3e.backends.utils.thinking.leading_whitespace_tokens

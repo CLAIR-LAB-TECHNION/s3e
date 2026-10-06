@@ -11,7 +11,7 @@ optional dependency. The concrete backends are exposed lazily so that
 import importlib
 
 from .backend import VLMBackend, VLMOutput
-from .resolve import OPENAI_MODEL_IDENTIFIER, resolve_backend
+from .utils.resolve import OPENAI_MODEL_IDENTIFIER, resolve_backend
 
 __all__ = [
     "VLMBackend",

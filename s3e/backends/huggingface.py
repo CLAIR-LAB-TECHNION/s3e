@@ -20,14 +20,14 @@ import torch
 from transformers import AutoProcessor
 
 from .backend import VLMBackend, VLMOutput, _validate_num_logprobs
-from .thinking import (
+from .utils.thinking import (
     DEFAULT_MAX_THINKING_TOKENS,
     MAX_SEPARATOR_TOKENS,
     leading_whitespace_tokens,
     resolve_thinking_tokens,
     validate_thinking_options,
 )
-from .token_index import build_token_reverse_index
+from .utils.token_index import build_token_reverse_index
 
 # transformers 5.x renamed AutoModelForVision2Seq to AutoModelForImageTextToText
 try:

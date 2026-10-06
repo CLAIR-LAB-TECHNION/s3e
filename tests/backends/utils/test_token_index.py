@@ -5,7 +5,7 @@
 
 from unittest.mock import MagicMock
 
-from s3e.backends.token_index import (
+from s3e.backends.utils.token_index import (
     build_token_reverse_index,
     decode_single_token_ids,
 )
