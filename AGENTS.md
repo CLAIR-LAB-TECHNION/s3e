@@ -14,7 +14,7 @@
 ## Layout
 - `s3e/estimator.py`: `SemanticStateEstimator`, the thin state-estimation facade wiring predicates (an explicit list, or grounded from PDDL by `from_pddl`), translation, and a `QueryEngine`
 - `s3e/engine/`: `QueryEngine`, answer spaces (`BinaryAnswers`, `CategoricalAnswers`), and result types (`Prediction`, `PredictionSet`); the PDDL-free core
-- `s3e/backends/`: `VLMBackend` interface, `VLMOutput`, `HuggingFaceVLM`, `OpenAIVLM`, `VLLMBackend`, `resolve_backend()`
+- `s3e/backends/`: `VLMBackend` interface, `VLMOutput`, `HuggingFaceVLM`, `OpenAIVLM`, `VLLMBackend`, `resolve_backend()`, and `thinking.py` (thinking-block detection shared by the HuggingFace and vLLM backends)
 - `s3e/calibration/`: offline calibration over prediction data (`Calibrator`, `PlattCalibrator`, `CalibrationSet`/`CalibrationExample`/`CalibrationSample`)
 - `s3e/translation/`: predicate-to-query translators, including `cache.py` (JSON cache helpers for `LLMTranslator`)
 - `s3e/pddl/`: Unified Planning / PDDL helpers (parsing, grounding, state conversion)

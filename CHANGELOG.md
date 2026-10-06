@@ -27,6 +27,15 @@ the commit history and PyPI release dates when this file was introduced.
   `CITATION.cff` checks, and a weekly workflow that runs the real-model tests,
   the README Quick Start, and the tutorial notebook on CPU.
 - SPDX license headers in every Python source file.
+- Thinking-model support in `HuggingFaceVLM` and `VLLMBackend`: a
+  `chat_template_kwargs` argument (e.g. `{"enable_thinking": False}`), and
+  detection of thinking blocks, whose delimiters are found among those of
+  known model families (`<think>`, Gemma 4's `<|channel>`, Mistral's
+  `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). In logprobs mode a
+  detected block is closed at once (`thinking="close"`, the default) or
+  generated first (`thinking="think"`, up to `max_thinking_tokens`) before the
+  answer token is scored; in text mode the block is cut out of the reply.
+  The block's text is in the new `VLMOutput.reasoning`.
 
 ### Changed
 - Runtime dependencies and extras declare minimum supported versions, which
@@ -39,6 +48,11 @@ the commit history and PyPI release dates when this file was introduced.
   placeholder has no matching argument.
 
 ### Fixed
+- Thinking models (e.g. Qwen3.5-4B and larger, Mistral reasoning models, and
+  Gemma 4 with thinking enabled) no longer break the HuggingFace and vLLM
+  backends: logprobs mode read the token that opens the reasoning, putting
+  almost no mass on the answer tokens without a warning, and text mode
+  returned the reasoning as the reply.
 - `HuggingFaceVLM` loads the processor from the same Hub snapshot as the
   model: `revision`, `cache_dir`, `token`, and the other file-selection
   kwargs are forwarded to it, so a pinned revision no longer pairs with the

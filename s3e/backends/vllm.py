@@ -23,6 +23,16 @@ design with full context):
 * Requires vLLM >= 0.11.0: full-vocab logprobs via ``SamplingParams(logprobs=-1)``
   and ``LLM(max_logprobs=-1)`` landed in 0.11.0 (vllm-project/vllm#25031); older
   engines reject ``-1`` at construction. The pin lives in ``pyproject.toml``.
+* Thinking models (see :mod:`s3e.backends.thinking`): rows whose answer would
+  come after a thinking block are re-run through ``LLM.generate`` on a text
+  prompt. ``LLM.chat`` cannot continue a conversation from text we append, and
+  re-sending the token ids it returns does not work either: they hold the
+  *expanded* image placeholders, which vLLM would expand a second time. So
+  the prompt is re-rendered with the tokenizer's chat template (images as
+  ``{"type": "image"}`` parts, as ``HuggingFaceVLM`` does), the closed block
+  is appended, and the images travel as ``multi_modal_data``, vLLM's
+  documented offline multimodal input. Only those rows pay for the extra
+  calls; other models never leave the ``LLM.chat`` path.
 """
 
 import math
@@ -35,6 +45,13 @@ import torch
 from vllm import LLM, SamplingParams
 
 from .backend import VLMBackend, VLMOutput, _validate_num_logprobs
+from .thinking import (
+    DEFAULT_MAX_THINKING_TOKENS,
+    MAX_SEPARATOR_TOKENS,
+    first_answer_step,
+    resolve_thinking_tokens,
+    validate_thinking_options,
+)
 from .token_index import build_token_reverse_index, decode_single_token_ids
 
 
@@ -66,6 +83,26 @@ class VLLMBackend(VLMBackend):
             ``detokenize=False``; whether the installed vLLM honors it for
             logprobs can be smoke-tested by checking that returned
             ``Logprob.decoded_token`` values are ``None``.
+        chat_template_kwargs: Extra variables for the chat template, e.g.
+            ``{"enable_thinking": False}`` to turn a thinking model's
+            reasoning off. Defaults to None.
+        thinking: What logprobs-mode queries do when the model starts a
+            thinking block: ``"close"`` (default) closes it at once and
+            scores the answer after the empty block; ``"think"`` generates
+            the reasoning first (up to ``max_thinking_tokens``) and scores
+            the answer after it. Text mode always generates freely and moves
+            the block to :attr:`VLMOutput.reasoning`.
+        max_thinking_tokens: Reasoning budget for ``thinking="think"``; a
+            block still open after this many tokens is closed and the answer
+            scored. Defaults to 1024.
+        thinking_delimiters: The tokens that open and close a thinking
+            block, active only when both are single tokens of the model's
+            vocabulary. ``"auto"`` (default) uses the first such pair among
+            those of known model families: ``<think>``/``</think>`` (Qwen3,
+            DeepSeek-R1, GLM, ...), ``<|channel>``/``<channel|>`` (Gemma 4),
+            ``[THINK]``/``[/THINK]`` (Mistral, with HF tokenizer files), and
+            ``<seed:think>``/``</seed:think>``. Pass a pair to use only that
+            one, or ``None`` to turn thinking handling off.
         **engine_kwargs: Forwarded verbatim to the ``vllm.LLM`` constructor
             (e.g. ``gpu_memory_utilization``, ``dtype``, ``max_model_len``,
             ``quantization``), mirroring how :class:`HuggingFaceVLM` forwards
@@ -85,11 +122,24 @@ class VLLMBackend(VLMBackend):
         model_id: str,
         tensor_parallel_size: int | None = None,
         num_logprobs: int | None = None,
+        chat_template_kwargs: dict | None = None,
+        thinking: str = "close",
+        max_thinking_tokens: int = DEFAULT_MAX_THINKING_TOKENS,
+        thinking_delimiters: tuple[str, str] | str | None = "auto",
         **engine_kwargs,
     ):
         self.model_id = model_id
         self.num_logprobs = _validate_num_logprobs(num_logprobs)
+        self.thinking_delimiters = validate_thinking_options(
+            thinking, max_thinking_tokens, thinking_delimiters
+        )
+        self.thinking = thinking
+        self.max_thinking_tokens = max_thinking_tokens
+        self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self._token_reverse_index: dict[str, list[int]] | None = None
+        self._thinking_tokens = None
+        self._thinking_tokens_resolved = False
+        self._tokenizer = None
 
         # Default to every locally visible GPU so the user does not have to
         # specify a count; an explicit value always wins. max(..., 1) keeps a
@@ -154,7 +204,9 @@ class VLLMBackend(VLMBackend):
         resolution-dependent image-placeholder expansion -- mirroring how
         :class:`HuggingFaceVLM` relies on ``processor.apply_chat_template`` and
         owning zero per-model placeholder logic. The trade-off: a model without
-        a chat template is unsupported here.
+        a chat template is unsupported here. Rows that would answer after a
+        thinking block are re-scored through ``LLM.generate`` (see the module
+        notes).
         """
         if not prompts:
             return []
@@ -181,12 +233,188 @@ class VLLMBackend(VLMBackend):
             conversations.append(messages)
 
         # chat() accepts a batched list of conversations and returns outputs in
-        # input order.
-        outputs = self.llm.chat(conversations, sampling_params)
-        return [
+        # input order. Template kwargs are passed only when set, so engines
+        # and templates that predate them see the same call as before.
+        chat_kwargs = (
+            {"chat_template_kwargs": self.chat_template_kwargs}
+            if self.chat_template_kwargs
+            else {}
+        )
+        outputs = self.llm.chat(conversations, sampling_params, **chat_kwargs)
+        results = [
             self._to_vlm_output(output, generate, interest_tokens)
             for output in outputs
         ]
+        if generate:
+            return results
+        return self._skip_thinking(
+            images, prompts, system_prompt, outputs, results,
+            interest_tokens, inference_kwargs,
+        )
+
+    def _get_tokenizer(self):
+        """The engine's tokenizer, fetched once."""
+        if self._tokenizer is None:
+            self._tokenizer = self.llm.get_tokenizer()
+        return self._tokenizer
+
+    def _get_thinking_tokens(self):
+        """The resolved thinking delimiters, or None when inactive (cached)."""
+        if not self._thinking_tokens_resolved:
+            self._thinking_tokens = resolve_thinking_tokens(
+                self.thinking_delimiters, self._get_tokenizer()
+            )
+            self._thinking_tokens_resolved = True
+        return self._thinking_tokens
+
+    def _skip_thinking(
+        self, images, prompts, system_prompt, outputs, results,
+        interest_tokens, inference_kwargs,
+    ):
+        """Re-score the rows whose answer would come after a thinking block.
+
+        A row thinks when its prompt ends inside an open block or its most
+        likely next token opens one. Those rows are re-run through
+        ``LLM.generate`` on the rendered prompt plus the closed block (empty,
+        or the generated reasoning), and read at the answer after it.
+        """
+        tokens = self._get_thinking_tokens()
+        if tokens is None:
+            return results
+
+        rows, prompt_open = [], []
+        for row, output in enumerate(outputs):
+            is_open = tokens.opens_block(output.prompt_token_ids or [])
+            start_entry = output.outputs[0].logprobs[0].get(tokens.start_id)
+            if is_open or (start_entry is not None and start_entry.rank == 1):
+                rows.append(row)
+                prompt_open.append(is_open)
+        if not rows:
+            return results
+
+        prompt_texts = [
+            self._render_prompt(images, prompts[row], system_prompt) for row in rows
+        ]
+        if self.thinking == "think":
+            continuations, reasonings = self._think(
+                images, prompt_texts, prompt_open, tokens
+            )
+        else:
+            continuations = [
+                text + tokens.closing_text(text, is_open)
+                for text, is_open in zip(prompt_texts, prompt_open)
+            ]
+            reasonings = [""] * len(rows)
+
+        answers = self._answer_outputs_after(
+            images, continuations, interest_tokens, inference_kwargs
+        )
+        results = list(results)
+        for row, answer, reasoning in zip(rows, answers, reasonings):
+            answer.reasoning = reasoning
+            results[row] = answer
+        return results
+
+    def _render_prompt(self, images, prompt, system_prompt=None) -> str:
+        """Render one conversation to text with the tokenizer's chat template.
+
+        Images become ``{"type": "image"}`` parts, which multimodal chat
+        templates turn into the model's placeholder text; ``LLM.generate``
+        expands the placeholders when the images come with the prompt.
+        """
+        messages = []
+        if system_prompt is not None:
+            messages.append(
+                {"role": "system", "content": [{"type": "text", "text": system_prompt}]}
+            )
+        content = [{"type": "image"} for _ in images]
+        content.append({"type": "text", "text": prompt})
+        messages.append({"role": "user", "content": content})
+        return self._get_tokenizer().apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            **self.chat_template_kwargs,
+        )
+
+    @staticmethod
+    def _engine_prompt(text: str, images) -> dict:
+        """A text prompt for ``LLM.generate``, with the scene's images."""
+        if not images:
+            return {"prompt": text}
+        return {"prompt": text, "multi_modal_data": {"image": list(images)}}
+
+    def _think(self, images, prompt_texts, prompt_open, tokens):
+        """Generate each prompt's reasoning, up to ``max_thinking_tokens``.
+
+        Returns one continuation per prompt (the prompt plus its reasoning,
+        ending with the closing delimiter, which is appended when the budget
+        ran out or the model stopped first) and the reasoning texts.
+        """
+        tokenizer = self._get_tokenizer()
+        sampling_params = SamplingParams(
+            max_tokens=self.max_thinking_tokens,
+            temperature=0.0,
+            stop_token_ids=[tokens.end_id],
+        )
+        outputs = self.llm.generate(
+            [self._engine_prompt(text, images) for text in prompt_texts],
+            sampling_params,
+        )
+        special_ids = set(getattr(tokenizer, "all_special_ids", []) or [])
+
+        continuations, reasonings = [], []
+        for text, is_open, output in zip(prompt_texts, prompt_open, outputs):
+            completion = output.outputs[0]
+            ids = [int(token_id) for token_id in completion.token_ids]
+            if tokens.end_id in ids:
+                ids = ids[: ids.index(tokens.end_id) + 1]
+            elif completion.stop_reason == tokens.end_id:
+                ids.append(tokens.end_id)
+            else:
+                while ids and ids[-1] in special_ids:
+                    ids.pop()
+            generated = tokenizer.decode(ids, skip_special_tokens=False)
+            if not ids or ids[-1] != tokens.end_id:
+                if not generated[-1:].isspace():
+                    generated += "\n"
+                generated += tokens.end
+            reasoning_ids, _ = tokens.split(ids, is_open)
+            continuations.append(text + generated)
+            reasonings.append(
+                tokenizer.decode(reasoning_ids or [], skip_special_tokens=True).strip()
+            )
+        return continuations, reasonings
+
+    def _answer_outputs_after(
+        self, images, continuations, interest_tokens, inference_kwargs
+    ) -> list[VLMOutput]:
+        """Score the answer token after each continuation's closed block.
+
+        Chat templates put whitespace between a closed block and the answer
+        (``"\\n\\n"`` for Qwen), so a few greedy steps are generated and each
+        row is read at its first token that is not whitespace.
+        """
+        sampling_params = self._build_sampling_params(
+            False,
+            interest_tokens is not None,
+            **{**inference_kwargs, "max_tokens": MAX_SEPARATOR_TOKENS},
+        )
+        outputs = self.llm.generate(
+            [self._engine_prompt(text, images) for text in continuations],
+            sampling_params,
+        )
+        tokenizer = self._get_tokenizer()
+        results = []
+        for output in outputs:
+            step_tokens = decode_single_token_ids(
+                tokenizer, list(output.outputs[0].token_ids)
+            )
+            step = first_answer_step(step_tokens)
+            results.append(
+                self._to_vlm_output(output, False, interest_tokens, step=step)
+            )
+        return results
 
     def _build_sampling_params(
         self, generate: bool, interest_mode: bool = False, **inference_kwargs
@@ -227,18 +455,21 @@ class VLLMBackend(VLMBackend):
         return SamplingParams(**inference_kwargs)
 
     def _to_vlm_output(
-        self, output, generate: bool, interest_tokens=None
+        self, output, generate: bool, interest_tokens=None, step: int = 0
     ) -> VLMOutput:
-        """Convert one vLLM RequestOutput into a :class:`VLMOutput`."""
+        """Convert one vLLM RequestOutput into a :class:`VLMOutput`.
+
+        Logprobs mode reads the distribution at generated position ``step``.
+        """
         completion = output.outputs[0]
         if generate:
-            return VLMOutput(token_probs=None, text=completion.text)
+            return self._text_output(output)
 
         # Logprobs mode reads the distribution over the next answer token. With
         # the default max_tokens=1 this is the only generated position and
         # reproduces HuggingFaceVLM's single-forward next-token distribution.
         logprobs_seq = completion.logprobs
-        if not logprobs_seq or logprobs_seq[0] is None:
+        if not logprobs_seq or len(logprobs_seq) <= step or logprobs_seq[step] is None:
             # With logprobs forced and max_tokens>=1 this should never happen.
             # Treat it as an internal inconsistency rather than silently
             # returning empty probabilities, because downstream calibration
@@ -250,10 +481,10 @@ class VLLMBackend(VLMBackend):
             )
 
         if interest_tokens is not None:
-            return self._interest_output(logprobs_seq[0], interest_tokens)
+            return self._interest_output(logprobs_seq[step], interest_tokens)
 
         token_probs: dict[str, float] = {}
-        for logprob in logprobs_seq[0].values():
+        for logprob in logprobs_seq[step].values():
             # Sum probabilities of duplicate decoded token strings, matching the
             # dedup HuggingFaceVLM and OpenAIVLM perform. Keeping the same
             # VLMOutput.token_probs shape is important because Platt calibration
@@ -265,6 +496,29 @@ class VLLMBackend(VLMBackend):
             )
 
         return VLMOutput(token_probs=token_probs, text=None)
+
+    def _text_output(self, output) -> VLMOutput:
+        """Text-mode output, with any thinking block moved to ``reasoning``.
+
+        A reply whose block never closed gets ``text=None``.
+        """
+        completion = output.outputs[0]
+        tokens = self._get_thinking_tokens()
+        if tokens is None:
+            return VLMOutput(token_probs=None, text=completion.text)
+        reasoning_ids, answer_ids = tokens.split(
+            completion.token_ids, tokens.opens_block(output.prompt_token_ids or [])
+        )
+        if reasoning_ids is None:
+            return VLMOutput(token_probs=None, text=completion.text)
+        tokenizer = self._get_tokenizer()
+        text = (
+            None
+            if answer_ids is None
+            else tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+        )
+        reasoning = tokenizer.decode(reasoning_ids, skip_special_tokens=True)
+        return VLMOutput(token_probs=None, text=text, reasoning=reasoning.strip())
 
     def _interest_output(self, logprob_entries, interest_tokens) -> VLMOutput:
         """Build a VLMOutput by looking up interest ids in the logprob entries.
@@ -311,7 +565,7 @@ class VLLMBackend(VLMBackend):
     def _get_token_reverse_index(self) -> dict[str, list[int]]:
         """Build (once) the decoded-string -> ids index from the tokenizer."""
         if self._token_reverse_index is None:
-            tokenizer = self.llm.get_tokenizer()
+            tokenizer = self._get_tokenizer()
             self._token_reverse_index = build_token_reverse_index(
                 lambda ids: decode_single_token_ids(tokenizer, ids),
                 len(tokenizer),

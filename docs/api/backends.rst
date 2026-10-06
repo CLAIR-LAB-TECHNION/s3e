@@ -28,3 +28,20 @@ Implementations
 .. autoclass:: OpenAIVLM
 
 .. autoclass:: VLLMBackend
+
+Thinking models
+---------------
+
+Some models reason in a delimited block before they answer (e.g.
+``<think>...</think>``), opened by the chat template (Qwen3.5-4B and larger),
+by a default system prompt (Mistral reasoning models), or on request (Gemma 4
+with ``enable_thinking=True``). :class:`HuggingFaceVLM` and
+:class:`VLLMBackend` detect the block and read the answer after it; their
+``chat_template_kwargs``, ``thinking``, ``max_thinking_tokens``, and
+``thinking_delimiters`` arguments control how, and
+:attr:`VLMOutput.reasoning` holds the block's text. The user guide's
+*Thinking models* section covers the options and the models they do not
+cover.
+
+.. autodata:: s3e.backends.thinking.KNOWN_THINKING_DELIMITERS
+   :no-value:

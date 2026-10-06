@@ -297,6 +297,26 @@ Common methods:
   - HuggingFace: forwarded to `model(...)` in logprobs mode and `model.generate(...)` in generation (`text_match`) mode.
   - vLLM: forwarded to `vllm.SamplingParams` (e.g. `temperature`, `max_tokens`).
 
+### Thinking models
+
+Some VLMs reason in a delimited block (e.g. `<think>...</think>`) before answering, and some open it by default: Qwen3.5-4B and larger through their chat template, Mistral reasoning models through their default system prompt (which any `system_prompt`, including the estimator's automatic one, replaces). `HuggingFaceVLM` and `VLLMBackend` detect the block and read the answer after it:
+
+- `chat_template_kwargs`: extra chat-template variables. `chat_template_kwargs={"enable_thinking": False}` turns reasoning off where the template supports it, which is the fastest option.
+- `thinking="close"` (default): in logprobs mode, a block the prompt opens (or the model is about to open) is closed at once and the answer token is scored after the empty block, with one short extra pass.
+- `thinking="think"`, `max_thinking_tokens=1024`: in logprobs mode, the model reasons first (greedily, up to the budget, after which the block is closed) and the answer token is scored after its reasoning. Expect a full generation per query.
+- In text mode (`scoring="text_match"`), the model always generates freely; the block is cut out of the reply, which is `None` if the block never closed within the generation length.
+- The block's text is in `VLMOutput.reasoning` (via `keep_raw=True`): `""` when the block was closed without reasoning, `None` when there was none.
+- `thinking_delimiters="auto"` (default): uses the first of the known pairs whose delimiters are both single tokens of the model's vocabulary: `<think>`/`</think>` (Qwen3/3.5, DeepSeek-R1, GLM, ...), `<|channel>`/`<channel|>` (Gemma 4), `[THINK]`/`[/THINK]` (Mistral reasoning models), and `<seed:think>`/`</seed:think>` (Seed). Models without any of them are unaffected. Pass one pair to use only that, or `None` to turn the handling off.
+- Not covered: tokenizers that do not expose the delimiters as single tokens, notably vLLM's Mistral-native tokenizer mode (`tokenizer_mode="mistral"`, the only one Magistral-Small-2509 ships; Ministral-3 reasoning models also ship HF tokenizer files, so `tokenizer_mode="hf"` works), and formats that end reasoning with a token sequence instead of one token, such as gpt-oss's harmony channels.
+
+The extra passes that skip a block decode greedily; on HuggingFace they do not take the query's `inference_kwargs`.
+
+How checked models behave (yes/no questions about a toy scene):
+
+- Qwen3.5-4B: its chat template opens the block. With the default `thinking="close"` the answers equal those with `enable_thinking=False`; without the handling, almost no probability fell on the answer tokens.
+- Gemma 4 (E2B): thinking is off by default and needs no handling. With `enable_thinking=True` the model opens the block itself, and both `close` and `think` answer correctly. `reasoning` starts with the model's `thought` label.
+- Ministral-3-3B-Reasoning: opens `[THINK]` by default. `think` answers correctly and confidently; `close` picks the right answer but puts only about a third of the probability on the answer tokens, because after an empty block the model prefers a full sentence. Use `think`, or a prompt that asks for a one-word answer.
+
 ### Answer spaces
 
 - `BinaryAnswers(true_label="yes", false_label="no", *, true_tokens=None, false_tokens=None, null_label="unknown", null_tokens=None)`: two options with boolean semantics.
