@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: CLAIR Lab Technion
 # SPDX-License-Identifier: MIT
 
-"""s3e — Semantic Symbolic State Estimation with vision-language models.
+"""S3E: Semantic Symbolic State Estimation with vision-language models.
 
 Quick start::
 

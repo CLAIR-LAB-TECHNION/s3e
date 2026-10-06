@@ -1,12 +1,12 @@
 # Related software
 
-`s3e` sits between symbolic-planning libraries, which assume the state is
+S3E sits between symbolic-planning libraries, which assume the state is
 given, and tools for running vision-language models, which know nothing about
 planning problems. The closest tools are summarized below.
 
 **Planning libraries.** [Unified Planning](https://github.com/aiplan4eu/unified-planning)
 and [PDDLGym](https://github.com/tomsilver/pddlgym) model, ground, simulate, or
-solve planning problems, but take the symbolic state as given. `s3e` builds on
+solve planning problems, but take the symbolic state as given. S3E builds on
 Unified Planning instead of reimplementing it: PDDL parsing and grounding are
 delegated to it, and estimated states convert back to Unified Planning state
 objects.
@@ -32,7 +32,7 @@ TP-VQA, DKPROMPT, the VLM-as-grounder methods evaluated in ViPlan, and
 predicate-learning approaches, implement the idea inside experiment code tied
 to particular domains and benchmarks, rather than as an installable library.
 
-None of these combines what `s3e` provides behind one interface: PDDL
+None of these combines what S3E provides behind one interface: PDDL
 grounding, pluggable predicate-to-question translation, token-probability
 scoring over configurable answer spaces with an optional "unknown" option,
 interchangeable local and hosted model backends, and offline calibration.

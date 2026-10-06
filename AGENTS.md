@@ -12,10 +12,10 @@
 - If any of those files appear later, treat them as higher-priority instructions and update this file.
 
 ## Layout
-- `s3e/estimator.py`: `SemanticStateEstimator`, the thin PDDL-facade wiring predicates, translation, and a `QueryEngine`
-- `s3e/engine/`: `QueryEngine`, answer spaces (`BinaryAnswers`, `CategoricalAnswers`), and result types (`Prediction`, `PredictionSet`) — the PDDL-free core
+- `s3e/estimator.py`: `SemanticStateEstimator`, the thin state-estimation facade wiring predicates (an explicit list, or grounded from PDDL by `from_pddl`), translation, and a `QueryEngine`
+- `s3e/engine/`: `QueryEngine`, answer spaces (`BinaryAnswers`, `CategoricalAnswers`), and result types (`Prediction`, `PredictionSet`); the PDDL-free core
 - `s3e/backends/`: `VLMBackend` interface, `VLMOutput`, `HuggingFaceVLM`, `OpenAIVLM`, `VLLMBackend`, `resolve_backend()`
-- `s3e/calibration/`: `Calibrator`, `PlattCalibrator`, `CalibrationSet`/`CalibrationExample`/`CalibrationSample` — offline calibration over prediction data
+- `s3e/calibration/`: offline calibration over prediction data (`Calibrator`, `PlattCalibrator`, `CalibrationSet`/`CalibrationExample`/`CalibrationSample`)
 - `s3e/translation/`: predicate-to-query translators, including `cache.py` (JSON cache helpers for `LLMTranslator`)
 - `s3e/pddl/`: Unified Planning / PDDL helpers (parsing, grounding, state conversion)
 - `s3e/_deps.py`: `require(module, extra)` helper for lazy, informative optional-dependency errors
@@ -35,9 +35,9 @@
 
 ## Setup Commands
 - Core editable install: `pip install -e .`
-- Dev install (CPU, standard): `pip install -e '.[dev]'` — everything needed for the test suite except vLLM; vLLM-dependent tests skip.
-- Dev install (CUDA hosts): `pip install -e '.[dev-gpu]'` — adds `vllm`; required for the vLLM unit tests and `pytest -m slow` vLLM coverage.
-- Optional extras: `pddl` (PDDL grounding), `hf` (HuggingFace VLM backend), `openai` (OpenAI VLM backend), `vllm` (local multi-GPU inference), `calibration` (Platt scaling, scikit-learn), `all` (everything except `vllm`), `docs` (Sphinx toolchain) — e.g. `pip install -e '.[pddl,hf]'`
+- Dev install (CPU, standard): `pip install -e '.[dev]'`. Installs everything needed for the test suite except vLLM; vLLM-dependent tests skip.
+- Dev install (CUDA hosts): `pip install -e '.[dev-gpu]'`. Adds `vllm`; required for the vLLM unit tests and `pytest -m slow` vLLM coverage.
+- Optional extras: `pddl` (PDDL grounding), `hf` (HuggingFace VLM backend), `openai` (OpenAI VLM backend), `vllm` (local multi-GPU inference), `calibration` (Platt scaling, scikit-learn), `all` (everything except `vllm`), `docs` (Sphinx toolchain); for example `pip install -e '.[pddl,hf]'`
 
 ## Build Commands
 - Packaging is configured through setuptools in `pyproject.toml`.

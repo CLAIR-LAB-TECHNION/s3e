@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: CLAIR Lab Technion
 # SPDX-License-Identifier: MIT
 
-"""Sphinx configuration for the s3e documentation."""
+"""Sphinx configuration for the S3E documentation."""
 
 from importlib.metadata import PackageNotFoundError, version
 
-project = "s3e"
+project = "S3E"
 author = "Guy Azran and contributors"
 copyright = "2024-2026, CLAIR Lab, Technion"
 
@@ -47,4 +47,4 @@ nb_execution_mode = "off"
 nb_output_stderr = "remove"
 
 html_theme = "furo"
-html_title = f"s3e {release}"
+html_title = f"S3E {release}"

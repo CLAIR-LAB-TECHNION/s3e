@@ -1,6 +1,6 @@
 # Examples
 
-Runnable scripts that exercise `s3e` end to end. Run them from the repository
+Runnable scripts that exercise S3E end to end. Run them from the repository
 root; each script's docstring explains what it shows.
 
 | Script | What it shows | Needs |

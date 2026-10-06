@@ -1,6 +1,6 @@
-# Contributing to s3e
+# Contributing to S3E
 
-Thanks for your interest in `s3e`! This document explains how to get help,
+Thanks for your interest in S3E! This document explains how to get help,
 report problems, and contribute changes. By participating in this project you
 agree to abide by its [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -8,7 +8,7 @@ agree to abide by its [Code of Conduct](CODE_OF_CONDUCT.md).
 
 - **Usage questions**: open a
   [GitHub issue](https://github.com/CLAIR-LAB-TECHNION/s3e/issues/new/choose)
-  using the *Question* template. Please include the `s3e` version
+  using the *Question* template. Please include the S3E version
   (`python -c "import s3e; print(s3e.__version__)"`), the backend you are using
   (HuggingFace, OpenAI, vLLM, or a custom `VLMBackend`), and a minimal code
   snippet.
@@ -21,11 +21,11 @@ agree to abide by its [Code of Conduct](CODE_OF_CONDUCT.md).
 Please [open a bug report](https://github.com/CLAIR-LAB-TECHNION/s3e/issues/new/choose)
 and include:
 
-1. what you did (a minimal, runnable example if possible — the `FakeVLM` in
+1. what you did (a minimal, runnable example if possible; the `FakeVLM` in
    [`tests/fakes.py`](tests/fakes.py) is handy for reproducing engine or
    estimator bugs without downloading a model),
 2. what you expected to happen and what happened instead (full traceback),
-3. your environment: OS, Python version, `s3e` version, and the versions of
+3. your environment: OS, Python version, S3E version, and the versions of
    the relevant optional dependencies (`torch`, `transformers`, `openai`,
    `vllm`, `unified-planning`, `scikit-learn`).
 
@@ -83,7 +83,7 @@ covered and the local total is lower.
 
 1. Fork the repository and create a feature branch from `main`.
 2. Make your change, keeping the diff focused on one concern.
-3. Add or update tests next to the code you changed — the `tests/` tree
+3. Add or update tests next to the code you changed; the `tests/` tree
    mirrors the package layout. Reuse the fixtures in `tests/conftest.py` and
    the `FakeVLM` double in `tests/fakes.py` instead of duplicating setup.
 4. Run `pytest -m "not slow"` and `ruff check .` and make sure both pass.
@@ -100,7 +100,7 @@ formatter, so follow the style of the surrounding code:
   every module, below the two-line SPDX license header that every Python
   file starts with (`tests/test_license_headers.py` checks it).
 - Docstrings (Google style, with `Args:` / `Returns:` sections) on public
-  classes and functions — they are rendered into the API reference. An
+  classes and functions, since they are rendered into the API reference. An
   `Example:` section with doctest (`>>>`) lines is run by the test suite;
   keep examples model-free and round floats in their output.
 - Type hints on public APIs, using built-in generics (`list[str]`) and PEP 604
@@ -131,7 +131,7 @@ answer spaces, and calibrators).
 Maintainers release from `main`:
 
 1. Move the "Unreleased" entries in `CHANGELOG.md` under a new
-   `## X.Y.Z — YYYY-MM-DD` heading.
+   `## X.Y.Z - YYYY-MM-DD` heading.
 2. In a commit of its own titled `bump version to X.Y.Z`, set `version` in
    `pyproject.toml` and `version` and `date-released` in `CITATION.cff`
    (`tests/test_metadata.py` checks that they agree).

@@ -122,7 +122,7 @@ class OpenAIVLM(VLMBackend):
         interest token.
 
         Raises:
-            ValueError: If the response carries no logprobs — some models
+            ValueError: If the response carries no logprobs. Some models
                 (e.g. reasoning models) do not support them.
         """
         logprobs = response.choices[0].logprobs

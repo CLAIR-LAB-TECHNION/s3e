@@ -63,8 +63,8 @@ class VLMBackend(ABC):
     token strings, the backend reports probability mass for exactly those
     strings (summing over every vocabulary id that decodes to the string,
     normalized over the full vocabulary) instead of materializing a full or
-    top-k distribution. This is semantics-free data — backends never learn
-    what the tokens mean — and lets each backend skip decoding the rest of
+    top-k distribution. This is semantics-free data (backends never learn
+    what the tokens mean), and it lets each backend skip decoding the rest of
     the vocabulary.
     """
 

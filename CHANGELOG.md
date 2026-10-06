@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `s3e` are documented here. The format follows
+All notable changes to S3E are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [semantic versioning](https://semver.org/) (pre-1.0: minor versions may
 contain breaking changes). Entries for 0.1.0–0.4.1 were reconstructed from
@@ -50,7 +50,7 @@ the commit history and PyPI release dates when this file was introduced.
 - Calibration data, Platt calibrators, and translation caches are read and
   written as UTF-8 on every platform, not in the locale's encoding.
 
-## 0.5.0 — 2026-10-05
+## 0.5.0 - 2026-10-05
 
 ### Added
 - JOSS submission materials: `paper/paper.md` and `paper/paper.bib`, with a
@@ -96,7 +96,7 @@ the commit history and PyPI release dates when this file was introduced.
 - `PredictionSet.average` averages calibrated probabilities only over members
   that have an answer.
 
-## 0.4.1 — 2026-08-30
+## 0.4.1 - 2026-08-30
 
 Architecture redesign into independently usable layers. (The version was
 bumped to 0.4.0 during development, but 0.4.0 was never published to PyPI;
@@ -150,7 +150,7 @@ its changes ship in 0.4.1.)
 - Only boolean fluents are grounded as predicates; the Platt sigmoid is
   overflow-safe; and configuration is validated before any model is loaded.
 
-## 0.3.2 — 2026-08-04
+## 0.3.2 - 2026-08-04
 
 ### Added
 - `interest_tokens` contract for VLM backends: backends report probability
@@ -169,13 +169,13 @@ its changes ship in 0.4.1.)
 ### Fixed
 - Padding issues in multi-prompt HuggingFace batches.
 
-## 0.3.1 — 2026-07-20
+## 0.3.1 - 2026-07-20
 
 ### Changed
 - Requesting vLLM together with an OpenAI model now warns and is ignored
   instead of raising.
 
-## 0.3.0 — 2026-07-15
+## 0.3.0 - 2026-07-15
 
 ### Added
 - `VLLMBackend` for local, single-node multi-GPU inference (requires
@@ -188,7 +188,7 @@ its changes ship in 0.4.1.)
   runs under `torch.inference_mode`, and keeps only next-token logits to save
   memory.
 
-## 0.2.0 — 2026-05-12
+## 0.2.0 - 2026-05-12
 
 ### Added
 - Batched HuggingFace inference for both log-probability queries and text
@@ -201,7 +201,7 @@ its changes ship in 0.4.1.)
 - The HuggingFace backend returns probabilities over the full vocabulary by
   default.
 
-## 0.1.0 — 2026-05-07
+## 0.1.0 - 2026-05-07
 
 First release on PyPI. Development started in August 2024 as the
 implementation behind the S3E workshop paper (AAAI 2025 Workshop LM4Plan).

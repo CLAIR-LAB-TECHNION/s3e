@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in s3e does not work as documented.
+description: Something in S3E does not work as documented.
 labels: [bug]
 body:
   - type: markdown

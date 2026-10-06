@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: CLAIR Lab Technion
 # SPDX-License-Identifier: MIT
 
-"""Identity translator — passes predicates through unchanged."""
+"""Identity translator: passes predicates through unchanged."""
 
 from .translator import QueryTranslator
 

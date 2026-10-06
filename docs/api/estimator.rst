@@ -1,5 +1,5 @@
-PDDL facade
-===========
+State-estimation facade
+=======================
 
 .. currentmodule:: s3e
 

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are made in the latest release of `s3e` on
+Security fixes are made in the latest release of S3E on
 [PyPI](https://pypi.org/project/s3e/). Older versions are not patched.
 
 ## Reporting a vulnerability
@@ -19,7 +19,7 @@ a new version and noted in the [changelog](CHANGELOG.md).
 
 ## Things to keep in mind
 
-- `s3e` loads models through Hugging Face Transformers and vLLM. Keyword
+- S3E loads models through Hugging Face Transformers and vLLM. Keyword
   arguments such as `trust_remote_code=True` are passed through unchanged and
   run code from the model repository; only enable them for models you trust.
 - Files written by `CalibrationSet.save`, `PlattCalibrator.save`, and the

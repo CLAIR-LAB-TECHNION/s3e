@@ -1,6 +1,6 @@
 # User guide
 
-How to configure `s3e` and read its results: the estimator and engine
+How to configure S3E and read its results: the estimator and engine
 arguments, answer spaces, the decision rule behind each prediction, the
 translators, and environment settings. For a hands-on introduction, start with
 {doc}`getting-started` and the {doc}`tutorial <s3e_walkthrough>`; every class

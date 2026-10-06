@@ -1,5 +1,5 @@
 name: Question / support
-description: Ask how to use s3e.
+description: Ask how to use S3E.
 labels: [question]
 body:
   - type: markdown
@@ -19,4 +19,4 @@ body:
     id: context
     attributes:
       label: Context
-      description: s3e version, backend (HuggingFace / OpenAI / vLLM / custom), and a code snippet if relevant.
+      description: S3E version, backend (HuggingFace / OpenAI / vLLM / custom), and a code snippet if relevant.

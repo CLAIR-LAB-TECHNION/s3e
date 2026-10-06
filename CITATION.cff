@@ -1,9 +1,9 @@
 cff-version: 1.2.0
-message: "If you use s3e in your research, please cite it as below."
+message: "If you use S3E in your research, please cite it as below."
 type: software
-title: "s3e: A Python library for probabilistic symbolic state estimation with vision-language models"
+title: "S3E: A Python library for probabilistic symbolic state estimation with vision-language models"
 abstract: >-
-  s3e estimates the truth values of grounded PDDL predicates from images using
+  S3E estimates the truth values of grounded PDDL predicates from images using
   vision-language models, reading answer-token probabilities instead of parsing
   generated text, with pluggable HuggingFace, vLLM, and OpenAI backends and
   offline Platt-scaling calibration.

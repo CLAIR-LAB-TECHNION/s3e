@@ -13,7 +13,7 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: What would you like s3e to do? A sketch of the API you have in mind is welcome.
+      description: What would you like S3E to do? A sketch of the API you have in mind is welcome.
   - type: textarea
     id: alternatives
     attributes:

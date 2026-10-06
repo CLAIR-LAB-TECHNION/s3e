@@ -2,7 +2,7 @@
 
 ## Installation
 
-`s3e` requires Python 3.10 or newer and is available on
+S3E requires Python 3.10 or newer and is available on
 [PyPI](https://pypi.org/project/s3e/):
 
 ```bash
@@ -81,7 +81,7 @@ accurate estimates: expect poorly calibrated probabilities, which is exactly
 what the calibration layer addresses.
 
 To exercise the library without downloading any model, implement a tiny
-{class}`~s3e.VLMBackend` that returns fixed probabilities — the walkthrough
+{class}`~s3e.VLMBackend` that returns fixed probabilities. The walkthrough
 notebook does this throughout, and the test suite uses the same pattern
 (`pytest -m "not slow"` runs on CPU with no downloads).
 

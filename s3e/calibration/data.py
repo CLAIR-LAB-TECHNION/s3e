@@ -92,7 +92,7 @@ class CalibrationSet:
         samples than labels.
 
         Raises:
-            ValueError: If the estimator does not use ``scoring="logprobs"`` —
+            ValueError: If the estimator does not use ``scoring="logprobs"``;
                 grouped log-odds scores are not defined for text-match masses.
         """
         meta = estimator.calibration_meta()

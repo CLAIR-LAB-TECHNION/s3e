@@ -5,7 +5,7 @@
 
 Leaf modules that need a heavy optional package call :func:`require` once,
 before their normal top-of-module imports. Everything else in the package
-imports freely — no per-import guards.
+imports freely, without per-import guards.
 """
 
 import importlib.util

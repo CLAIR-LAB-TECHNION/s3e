@@ -1,6 +1,6 @@
 # Developer guide
 
-This page explains how `s3e` is put together and how to extend it. For the
+This page explains how S3E is put together and how to extend it. For the
 development setup, test commands, style, and release process, see
 [`CONTRIBUTING.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CONTRIBUTING.md).
 
@@ -13,7 +13,7 @@ development setup, test commands, style, and release process, see
 | `s3e/calibration/` | The {class}`~s3e.Calibrator` interface, {class}`~s3e.PlattCalibrator`, and calibration data ({class}`~s3e.CalibrationSet`) |
 | `s3e/translation/` | The {class}`~s3e.QueryTranslator` interface and its implementations; the JSON cache used by {class}`~s3e.LLMTranslator` |
 | `s3e/pddl/` | Unified Planning helpers: parsing, grounding, state conversion, and the domain fingerprint stored with calibrators |
-| `s3e/estimator.py` | {class}`~s3e.SemanticStateEstimator`, the PDDL facade |
+| `s3e/estimator.py` | {class}`~s3e.SemanticStateEstimator`, the state-estimation facade (predicates in, state out; PDDL via `from_pddl`) |
 | `s3e/_deps.py` | `require(module, extra)`, which turns a missing optional dependency into an `ImportError` naming the extra to install |
 
 Dependencies point downward: the estimator uses translation, the engine,
@@ -44,7 +44,7 @@ subprocesses.
    scoring mode, answer space, and domain fingerprint against its own, then
    returns `calibrator.apply(results)`.
 
-## Extending s3e
+## Extending S3E
 
 ### A new model backend
 

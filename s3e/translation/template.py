@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: CLAIR Lab Technion
 # SPDX-License-Identifier: MIT
 
-"""Template translator — per-predicate-type templates with positional or keyword placeholders."""
+"""Template translator: per-predicate-type templates with positional or keyword placeholders."""
 
 import re
 import string

@@ -1,5 +1,5 @@
 ---
-title: 's3e: A Python library for probabilistic symbolic state estimation with vision-language models'
+title: 'S3E: A Python library for probabilistic symbolic state estimation with vision-language models'
 tags:
   - Python
   - automated planning
@@ -47,13 +47,13 @@ bibliography: paper.bib
 Automated planners reason over *symbolic states*: sets of facts such as
 `on(a,b)` ("block a is on block b"), written in the Planning Domain Definition
 Language (PDDL) [@mcdermott1998pddl; @haslum2019pddl]. A robot, however, sees
-images, not facts. `s3e` (Semantic Symbolic State Estimation) is a Python
+images, not facts. S3E (Semantic Symbolic State Estimation) is a Python
 library that turns images into such facts using vision-language models (VLMs),
 AI models that answer questions about pictures. Given a planning problem and
 one or more images of a scene, it lists every fact that could hold, asks the
 model about each one, and reports how likely each fact is, together with a
 true-or-false verdict that a planner can use. Rather than reading
-the model's written answer, `s3e` reads the probability the model assigns to
+the model's written answer, S3E reads the probability the model assigns to
 answer words such as "yes" and "no" (and optionally "unknown"). These scores
 can be corrected against labeled examples, combined across camera views, or
 passed to planners that handle uncertainty.
@@ -72,7 +72,7 @@ implementations typically parse generated text, which discards the model's
 uncertainty, and tie experiments to one model provider, which makes
 cross-model comparisons and calibration studies laborious.
 
-`s3e` packages this pipeline as a reusable, backend-agnostic library. Its
+S3E packages this pipeline as a reusable, backend-agnostic library. Its
 target audience is researchers in task planning, task-and-motion planning,
 embodied AI, and neuro-symbolic reasoning who need symbolic state estimates
 from images, and, because its query engine works without PDDL, anyone who needs
@@ -105,12 +105,12 @@ DKPROMPT [@zhang2024dkprompt], the VLM-as-grounder methods evaluated in ViPlan
 experiment code tied to particular domains and benchmarks rather than as an
 installable library.
 
-None of these provides the combination `s3e` targets: PDDL grounding,
+None of these provides the combination S3E targets: PDDL grounding,
 pluggable predicate-to-question translation, token-probability scoring over
 configurable answer spaces, interchangeable local and hosted model backends,
 and offline calibration behind one interface. Adding planning-specific
 grounding and calibration to an evaluation harness or a benchmark codebase
-would conflict with their purpose, so `s3e` was built as a separate library
+would conflict with their purpose, so S3E was built as a separate library
 that builds on existing ecosystems instead of reimplementing them: PDDL
 parsing and grounding are delegated to Unified Planning, inference to Hugging
 Face Transformers [@wolf2020transformers], vLLM [@kwon2023vllm], or the
@@ -119,16 +119,17 @@ states can be converted to Unified Planning state objects.
 
 # Software design
 
-`s3e` is organized as four layers, each usable without the layers above it
+S3E is organized as four layers, each usable without the layers above it
 (\autoref{fig:pipeline}): *backends* expose Hugging Face, vLLM, and OpenAI
 models through one `VLMBackend` interface; the *engine* (`QueryEngine`)
 answers free-form queries about images against an answer space, with no PDDL
 involved; *calibration* fits and applies calibrators to prediction data; and a
-thin *PDDL facade* (`SemanticStateEstimator`) grounds a domain and problem,
-translates predicates into queries, and drives the engine. Four design
+thin *state-estimation facade* (`SemanticStateEstimator`) takes grounded
+predicates (from a PDDL domain and problem, or as an explicit list),
+translates them into queries, and drives the engine. Four design
 decisions shape the library.
 
-![The `s3e` pipeline. Colors mark the layer that implements each step; each
+![The S3E pipeline. Colors mark the layer that implements each step; each
 layer can be used without the layers above it, and calibration is
 optional.\label{fig:pipeline}](s3e-pipeline.png)
 
@@ -174,7 +175,7 @@ without downloads.
 
 # Research impact statement
 
-`s3e` is the reference implementation of S3E [@azran2025s3e;
+The library is the reference implementation of the S3E method [@azran2025s3e;
 @azran2025s3eicra], which estimates the full PDDL state by asking a VLM about
 every grounded predicate; the library grew out of that work's research code
 and has been released on PyPI since May 2026. S3E is cited by the
@@ -182,9 +183,9 @@ independently developed ViPlan benchmark for VLM-grounded planning
 [@merler2025viplan]. Our follow-up work [@azran2026bridging] extends
 VLM-as-grounder planning to belief-space planning over the Most Likely Subset
 of States (MLSS), using the next-token probabilities of predicate queries.
-Within our group, earlier releases of `s3e` provide state estimation for two
+Within our group, earlier releases of S3E provide state estimation for two
 research pipelines that still use the pre-0.4 API: the MLSS
-prediction-and-calibration pipeline uses `s3e` 0.2.0, and a ViPlan-based
+prediction-and-calibration pipeline uses S3E 0.2.0, and a ViPlan-based
 evaluation pipeline uses a pre-0.4 release.
 <!-- TODO(authors): give the exact s3e version of the ViPlan-based pipeline;
 if true, state that the experiments reported in azran2026bridging were run
@@ -195,7 +196,7 @@ research use. -->
 
 # AI usage disclosure
 
-Generative AI coding assistants were used in developing `s3e`. Of the 192
+Generative AI coding assistants were used in developing S3E. Of the 192
 non-merge commits made between March and August 2026, 98 were made with
 Anthropic's Claude Code, as were all non-merge commits made from 1 to 5 October 2026,
 including the always-boolean state rework and the work preparing this

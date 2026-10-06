@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: CLAIR Lab Technion
 # SPDX-License-Identifier: MIT
 
-"""LLM-driven translator — uses a language model to generate natural language queries.
+"""LLM-driven translator: uses a language model to generate natural language queries.
 
 Supports both HuggingFace text models (via ``AutoModelForCausalLM``) and
 OpenAI API models (identified by the ``"OpenAI/"`` prefix).

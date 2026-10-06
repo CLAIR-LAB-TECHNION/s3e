@@ -68,7 +68,7 @@ benchmark.
 Results from foundation models are hard to reproduce unless the exact setup is
 reported. The benchmark's JSON output records each item below (raw results as
 per-predicate masses, the calibrator as its fitted parameters); when you write
-your own experiment, this is where `s3e` exposes each of them:
+your own experiment, this is where S3E exposes each of them:
 
 | What to report | Where to find it |
 |---|---|

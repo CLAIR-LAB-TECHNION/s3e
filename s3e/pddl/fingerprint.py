@@ -113,13 +113,13 @@ def _build_canonical_domain_string(problem: Problem) -> str:
 
     Every semantically unordered component is sorted:
 
-    * ``types`` — sorted by name; supertype encoded as ``name<:parent``.
-    * ``fluents`` — sorted by name; signature is positional.
-    * ``actions`` — sorted by name; parameters are positional; preconditions
+    * ``types``: sorted by name; supertype encoded as ``name<:parent``.
+    * ``fluents``: sorted by name; signature is positional.
+    * ``actions``: sorted by name; parameters are positional; preconditions
       and effects are sorted (the precondition list is an implicit AND, and
       nested AND/OR/EQUALS/IFF sub-trees are sorted by ``_canonicalize_fnode``).
 
-    Constants/objects are intentionally **not** included — see
+    Constants/objects are intentionally **not** included; see
     :func:`compute_domain_fingerprint` for the calibration-compatibility scope.
     """
     type_entries = sorted(
@@ -152,10 +152,10 @@ def compute_domain_fingerprint(domain: str | Problem) -> str:
     """Hash a PDDL domain into a stable fingerprint.
 
     Accepts either a PDDL domain string or an already-parsed UP ``Problem``.
-    Domains differing only by harmless serialization artifacts — whitespace,
-    comments, domain name, or ordering of unordered declarations
-    (types, predicates, actions, ``and`` conjuncts, quantifier-bound
-    variables) — produce the same fingerprint.
+    Domains differing only by harmless serialization artifacts (whitespace,
+    comments, domain name, or ordering of unordered declarations such as
+    types, predicates, actions, ``and`` conjuncts, and quantifier-bound
+    variables) produce the same fingerprint.
 
     Scope is **calibration compatibility**, not full PDDL semantic
     equivalence. Constants/objects are excluded because UP cannot reliably

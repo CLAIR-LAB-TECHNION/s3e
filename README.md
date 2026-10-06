@@ -8,20 +8,20 @@
 
 ## Overview
 
-`s3e` estimates grounded PDDL state predicates from images using vision-language models (VLMs). Given a planning domain, a problem, and images of a scene, it asks a VLM one question per grounded predicate (e.g. `on(a,b)` → "Is block a on top of block b?"), reads the probability the model assigns to the answer tokens instead of parsing its text, and returns a probability per predicate (optionally calibrated against labeled examples) plus a symbolic state you can hand back to a planner.
+S3E estimates grounded PDDL state predicates from images using vision-language models (VLMs). Given a planning domain, a problem, and images of a scene, it asks a VLM one question per grounded predicate (e.g. `on(a,b)` → "Is block a on top of block b?"), reads the probability the model assigns to the answer tokens instead of parsing its text, and returns a probability per predicate (optionally calibrated against labeled examples) plus a symbolic state you can hand back to a planner.
 
 ### Statement of need
 
 <!-- docs:statement-of-need:start -->
-Research that grounds symbolic planners in perception — task planning, task-and-motion planning, embodied AI, neuro-symbolic reasoning — keeps re-implementing the same pipeline: enumerate grounded predicates, phrase a question for each, prompt a particular model API with images, and turn the output into truth values. Parsing generated text throws away the model's uncertainty, and hard-wiring one provider makes cross-model comparisons and calibration studies laborious. `s3e` packages this pipeline as a backend-agnostic library with probabilities as a first-class output: answer-token probability scoring, an optional explicit "unknown" answer, multi-view averaging, and offline calibration, over HuggingFace, vLLM, and OpenAI models. Its query engine also works without PDDL, for anyone who needs probabilistic yes/no or multiple-choice answers from a VLM.
+Research that grounds symbolic planners in perception (task planning, task-and-motion planning, embodied AI, neuro-symbolic reasoning) keeps re-implementing the same pipeline: enumerate grounded predicates, phrase a question for each, prompt a particular model API with images, and turn the output into truth values. Parsing generated text throws away the model's uncertainty, and hard-wiring one provider makes cross-model comparisons and calibration studies laborious. S3E packages this pipeline as a backend-agnostic library with probabilities as a first-class output: answer-token probability scoring, an optional explicit "unknown" answer, multi-view averaging, and offline calibration, over HuggingFace, vLLM, and OpenAI models. Its query engine also works without PDDL, for anyone who needs probabilistic yes/no or multiple-choice answers from a VLM.
 <!-- docs:statement-of-need:end -->
 
-`s3e` is built as concentric, independently usable layers:
+S3E is built as concentric, independently usable layers:
 
-1. **Backends** (`s3e.backends`) — a uniform `VLMBackend` interface over HuggingFace, OpenAI, and vLLM models.
-2. **Engine** (`s3e.engine`) — `QueryEngine`: images + free-form queries + an answer space → `Prediction`s. No PDDL involved.
-3. **Calibration** (`s3e.calibration`) — fit a Platt-scaling calibrator on labeled examples, offline and VLM-free after data collection.
-4. **PDDL facade** (`s3e.estimator`) — `SemanticStateEstimator`: grounds a PDDL domain/problem into predicates, translates them into queries, and drives a `QueryEngine`.
+1. **Backends** (`s3e.backends`): a uniform `VLMBackend` interface over HuggingFace, OpenAI, and vLLM models.
+2. **Engine** (`s3e.engine`): `QueryEngine` turns images + free-form queries + an answer space into `Prediction`s. No PDDL involved.
+3. **Calibration** (`s3e.calibration`): fit a Platt-scaling calibrator on labeled examples, offline and VLM-free after data collection.
+4. **State-estimation facade** (`s3e.estimator`): `SemanticStateEstimator` takes grounded predicates (an explicit list, or grounded from a PDDL domain/problem by `from_pddl`), translates them into queries, and drives a `QueryEngine`.
 
 Each layer works standalone: you can use `QueryEngine` to answer arbitrary visual questions without PDDL, or use `SemanticStateEstimator.from_pddl` for the full predicate-grounding workflow.
 
@@ -34,7 +34,7 @@ For a longer tutorial, see the [tutorial notebook](https://github.com/CLAIR-LAB-
 - Translate predicates with pluggable strategies: `IdentityTranslator`, `TemplateTranslator`, `PrewrittenTranslator`, and `LLMTranslator`.
 - Use HuggingFace VLMs, OpenAI VLMs, vLLM-backed local models, or custom `VLMBackend` implementations.
 - Query one scene at a time, or average predictions across several scenes of the same state (`estimate_averaged` / `PredictionSet.average`).
-- Lazy, cached derivations on results: probability, decided answer, has-answer / null-domination, confidence — computed on demand, never re-running inference.
+- Lazy, cached derivations on results (probability, decided answer, has-answer / null-domination, confidence), computed on demand without re-running inference.
 - Offline calibration: collect VLM scores once, then fit/refit/apply a calibrator without querying the model again.
 - Convert estimated states back into Unified Planning-compatible state objects.
 
@@ -85,7 +85,7 @@ FlashAttention installation is platform- and hardware-dependent. If your chosen 
 
 ## Quick Start
 
-The snippets below run as-is, in order, on CPU or GPU, with `pip install "s3e[pddl,hf,calibration]"`. They use a tiny model (`HuggingFaceTB/SmolVLM-256M-Instruct`, ~500 MB, downloaded on first use) and a synthetic scene so nothing else needs to be on disk. A model this small is useful for trying the API, not for accurate estimates — expect poorly calibrated probabilities, which is what the calibration layer is for. On a GPU each snippet takes seconds; on a laptop-class CPU, expect a minute or more per query (SmolVLM splits each image into many tiles).
+The snippets below run as-is, in order, on CPU or GPU, with `pip install "s3e[pddl,hf,calibration]"`. They use a tiny model (`HuggingFaceTB/SmolVLM-256M-Instruct`, ~500 MB, downloaded on first use) and a synthetic scene so nothing else needs to be on disk. A model this small is useful for trying the API, not for accurate estimates: expect poorly calibrated probabilities, which is what the calibration layer is for. On a GPU each snippet takes seconds; on a laptop-class CPU, expect a minute or more per query (SmolVLM splits each image into many tiles).
 
 ```python
 from PIL import Image, ImageDraw
@@ -101,7 +101,7 @@ scene = [image]
 
 ### Engine-only: answer a visual question, no PDDL
 
-`QueryEngine` is the PDDL-free heart of `s3e`: images + queries + an answer space → predictions.
+`QueryEngine` is the PDDL-free heart of S3E: images + queries + an answer space → predictions.
 
 ```python
 from s3e import QueryEngine
@@ -251,7 +251,7 @@ calibrated_state = estimator.estimate(scene, calibrator=calibrator).to_state()
 
 `CalibrationSet.collect` skips predictions with no answer: their probability stays `0.5` whatever the calibrator says, so they are not training points.
 
-`scope` groups samples for fitting: `"global"` (one calibrator for everything), `"lifted"` (one per predicate name, e.g. all `on(...)` instances share a fit), or `"grounded"` (one per fully-grounded predicate). Every group needs both true and false labels, unless you pass `pass_through_single_class=True` to leave single-class groups uncalibrated; since `collect` drops unanswered predictions, check this on small datasets. When examples span multiple problem instances, set `CalibrationExample.problem` on each — `CalibrationSet.collect` re-grounds the estimator against that problem before querying it, and the saved sample carries the problem string alongside its score and label.
+`scope` groups samples for fitting: `"global"` (one calibrator for everything), `"lifted"` (one per predicate name, e.g. all `on(...)` instances share a fit), or `"grounded"` (one per fully-grounded predicate). Every group needs both true and false labels, unless you pass `pass_through_single_class=True` to leave single-class groups uncalibrated; since `collect` drops unanswered predictions, check this on small datasets. When examples span multiple problem instances, set `CalibrationExample.problem` on each; `CalibrationSet.collect` re-grounds the estimator against that problem before querying it, and the saved sample carries the problem string alongside its score and label.
 
 <!-- docs:user-guide:start -->
 ## Configuration reference
@@ -359,7 +359,7 @@ How each part of the library can be verified without special hardware:
 - **Changes between versions:** see [`CHANGELOG.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CHANGELOG.md).
 - **Security issues:** report them privately as described in [`SECURITY.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/SECURITY.md).
 
-`s3e` is maintained by the [CLAIR Lab](https://github.com/CLAIR-LAB-TECHNION) at the Technion – Israel Institute of Technology, which uses it in its own research. Issues and pull requests are triaged by the maintainers on a best-effort basis; [`GOVERNANCE.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/GOVERNANCE.md) describes how decisions and releases are made.
+S3E is maintained by the [CLAIR Lab](https://github.com/CLAIR-LAB-TECHNION) at the Technion – Israel Institute of Technology, which uses it in its own research. Issues and pull requests are triaged by the maintainers on a best-effort basis; [`GOVERNANCE.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/GOVERNANCE.md) describes how decisions and releases are made.
 
 ## License
 
@@ -367,7 +367,7 @@ This project is licensed under the MIT License. See [`LICENSE`](https://github.c
 
 ## Citation
 
-If you use `s3e` in your research, please cite the S3E paper (GitHub's "Cite this repository" button reads the same metadata from [`CITATION.cff`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CITATION.cff)):
+If you use S3E in your research, please cite the S3E paper (GitHub's "Cite this repository" button reads the same metadata from [`CITATION.cff`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CITATION.cff)):
 
 ```bibtex
 @inproceedings{azran2025s3e,
@@ -379,4 +379,4 @@ If you use `s3e` in your research, please cite the S3E paper (GitHub's "Cite thi
 }
 ```
 
-If you use `s3e` in a publication, please let us know by opening an issue, so we can list it in the [documentation](https://s3e.readthedocs.io/en/latest/citing.html).
+If you use S3E in a publication, please let us know by opening an issue, so we can list it in the [documentation](https://s3e.readthedocs.io/en/latest/citing.html).

@@ -5,4 +5,4 @@ contact_links:
     about: API reference and guides.
   - name: Walkthrough notebook
     url: https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb
-    about: An end-to-end tutorial covering every layer of s3e.
+    about: An end-to-end tutorial covering every layer of S3E.

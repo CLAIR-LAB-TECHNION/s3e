@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: CLAIR Lab Technion
 # SPDX-License-Identifier: MIT
 
-"""Prewritten translator — user supplies a complete predicate-to-query mapping."""
+"""Prewritten translator: the user supplies a complete predicate-to-query mapping."""
 
 from .translator import QueryTranslator
 
