@@ -6,7 +6,16 @@ more images of a scene, it returns a probability (optionally calibrated) for eve
 grounded predicate (e.g. `on(a,b)`) and a symbolic state that can be handed
 back to a planner.
 
-It is built as independently usable layers:
+## Statement of need
+
+```{include} ../README.md
+:start-after: <!-- docs:statement-of-need:start -->
+:end-before: <!-- docs:statement-of-need:end -->
+```
+
+## Design
+
+`s3e` is built as independently usable layers:
 
 1. **Backends** ({doc}`s3e.backends <api/backends>`) — a uniform {class}`~s3e.VLMBackend`
    interface over HuggingFace, OpenAI, and vLLM models.
@@ -18,11 +27,27 @@ It is built as independently usable layers:
    {class}`~s3e.SemanticStateEstimator`: grounds a PDDL domain/problem into
    predicates, translates them into queries, and drives a `QueryEngine`.
 
+The {doc}`developer guide <developer-guide>` explains how the layers fit
+together and how to extend each one.
+
 ```{toctree}
 :maxdepth: 2
+:caption: Using s3e
 
 getting-started
+Tutorial <s3e_walkthrough>
+user-guide
+examples
 api/index
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Project
+
+developer-guide
+related-software
+citing
 contributing
 changelog
 ```
@@ -31,5 +56,5 @@ changelog
 
 - Source code and issue tracker: <https://github.com/CLAIR-LAB-TECHNION/s3e>
 - Package: <https://pypi.org/project/s3e/>
-- Walkthrough notebook (covers every layer):
-  [`docs/s3e_walkthrough.ipynb`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb)
+- Run the tutorial notebook in Google Colab:
+  <https://colab.research.google.com/github/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb>

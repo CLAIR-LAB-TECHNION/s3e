@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Answer spaces: what counts as an answer and how model output scores it.
 
 An :class:`AnswerOption` is a label plus the token strings that express it.
@@ -36,7 +39,18 @@ def expand_token_variants(label: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class AnswerOption:
-    """One admissible answer: a label plus its accepted token strings."""
+    """One admissible answer: a label plus its accepted token strings.
+
+    Example:
+        Tokenizers distinguish "yes", " yes", and "Yes", so :meth:`make`
+        expands a label into its case and leading-space variants:
+
+        >>> from s3e import AnswerOption
+        >>> AnswerOption.make("yes").tokens
+        ('yes', ' yes', 'Yes', ' Yes', 'YES', ' YES')
+        >>> AnswerOption.make("yes", tokens=["yes", "Yes"]).tokens
+        ('yes', 'Yes')
+    """
 
     label: str
     tokens: tuple[str, ...]
@@ -206,7 +220,21 @@ def _null_option_from(
 
 
 class BinaryAnswers(AnswerSpace):
-    """Two-option answer space with boolean semantics (true first)."""
+    """Two-option answer space with boolean semantics (true first).
+
+    Example:
+        Score next-token probabilities from a backend: each option's mass sums
+        its token variants, and mass on no option is "unassigned".
+
+        >>> from s3e import BinaryAnswers, VLMOutput
+        >>> answers = BinaryAnswers(null_tokens=["unknown"])
+        >>> answers.labels
+        ['yes', 'no']
+        >>> output = VLMOutput(token_probs={"yes": 0.6, " Yes": 0.2, "no": 0.1, "unknown": 0.05})
+        >>> scored = answers.score(output, "logprobs")
+        >>> scored.masses, scored.null_mass, round(scored.unassigned_mass, 2)
+        ({'yes': 0.8, 'no': 0.1}, 0.05, 0.05)
+    """
 
     def __init__(
         self,
@@ -251,7 +279,17 @@ class BinaryAnswers(AnswerSpace):
 
 
 class CategoricalAnswers(AnswerSpace):
-    """N-option answer space built from labels or explicit options."""
+    """N-option answer space built from labels or explicit options.
+
+    Example:
+        In ``text_match`` scoring, the option whose token starts the
+        generated reply gets all the mass:
+
+        >>> from s3e import CategoricalAnswers, VLMOutput
+        >>> colors = CategoricalAnswers(["red", "green", "blue"])
+        >>> colors.score(VLMOutput(text="Green, definitely."), "text_match").masses
+        {'red': 0.0, 'green': 1.0, 'blue': 0.0}
+    """
 
     def __init__(
         self,

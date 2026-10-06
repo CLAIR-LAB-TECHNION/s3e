@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for low-level Platt calibration helpers."""
 
 import math
@@ -256,6 +259,47 @@ class TestDomainFingerprint:
             "  (:types block) (:predicates (p ?x - block ?y - block)))"
         )
         assert compute_domain_fingerprint(unary) != compute_domain_fingerprint(binary)
+
+    @staticmethod
+    def _numeric_domain(effect: str) -> str:
+        return (
+            "(define (domain d) (:requirements :typing :numeric-fluents)"
+            "  (:types block) (:predicates (clear ?x - block))"
+            "  (:functions (fuel))"
+            "  (:action move :parameters (?x - block)"
+            f"    :precondition (clear ?x) :effect (and (not (clear ?x)) {effect})))"
+        )
+
+    def test_numeric_effects_are_fingerprinted_by_value(self):
+        by_one = compute_domain_fingerprint(self._numeric_domain("(decrease (fuel) 1)"))
+        by_two = compute_domain_fingerprint(self._numeric_domain("(decrease (fuel) 2)"))
+        by_half = compute_domain_fingerprint(self._numeric_domain("(decrease (fuel) 0.5)"))
+        assert len({by_one, by_two, by_half}) == 3
+        assert by_one == compute_domain_fingerprint(self._numeric_domain("(decrease (fuel) 1)"))
+
+    def test_ignores_forall_effect_variable_order(self):
+        reqs = ":strips :typing :conditional-effects"
+        action_xy = (
+            "(:action a :parameters ()"
+            "  :precondition ()"
+            "  :effect (forall (?x - block ?y - block) (not (on ?x ?y))))"
+        )
+        action_yx = (
+            "(:action a :parameters ()"
+            "  :precondition ()"
+            "  :effect (forall (?y - block ?x - block) (not (on ?x ?y))))"
+        )
+        assert compute_domain_fingerprint(
+            _make_blocksworld(actions=action_xy, requirements=reqs)
+        ) == compute_domain_fingerprint(
+            _make_blocksworld(actions=action_yx, requirements=reqs)
+        )
+
+    def test_action_without_precondition_or_effect(self):
+        empty = "(:action noop :parameters (?x - block) :precondition () :effect ())"
+        assert compute_domain_fingerprint(_make_blocksworld(empty)) != (
+            compute_domain_fingerprint(self.DOMAIN_A)
+        )
 
 
 class TestCalibrationExample:

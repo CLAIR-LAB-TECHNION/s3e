@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Query translator abstract base class.
 
 A query translator converts grounded PDDL predicate strings into

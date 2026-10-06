@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Sphinx configuration for the s3e documentation."""
 
 from importlib.metadata import PackageNotFoundError, version
@@ -13,14 +16,13 @@ except PackageNotFoundError:  # building from a source tree without installing
 version = release
 
 extensions = [
-    "myst_parser",
+    "myst_nb",  # MyST Markdown pages and the walkthrough notebook
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
 ]
 
-source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
-exclude_patterns = ["_build", "*.ipynb"]
+exclude_patterns = ["_build", "**/.ipynb_checkpoints"]
 
 # The heavy optional backends need GPUs or large downloads; mock them so the
 # API reference builds with only the lightweight extras installed.
@@ -38,6 +40,11 @@ napoleon_google_docstring = True
 napoleon_numpy_docstring = False
 
 myst_heading_anchors = 3
+
+# Render the walkthrough notebook with its saved outputs; executing it needs
+# model downloads (the slow tests execute it instead). Its stderr is log noise.
+nb_execution_mode = "off"
+nb_output_stderr = "remove"
 
 html_theme = "furo"
 html_title = f"s3e {release}"

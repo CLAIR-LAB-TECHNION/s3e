@@ -8,6 +8,48 @@ the commit history and PyPI release dates when this file was introduced.
 
 ## Unreleased
 
+### Added
+- Runnable examples in `examples/`: `custom_backend.py` implements a
+  `VLMBackend` and runs the whole pipeline offline, including held-out
+  calibration; `blocksworld_benchmark.py` measures a model on rendered
+  Blocksworld scenes (accuracy, Brier score, ECE, unanswered rate, time per
+  query, and peak memory per scoring mode, plus held-out metrics before and
+  after offline Platt scaling) and writes per-predicate results with
+  provenance to JSON.
+- Documentation: the walkthrough notebook rendered as the tutorial, a user
+  guide, and pages for the examples, the architecture and extension points,
+  related software, and citing; doctested examples on the answer-space,
+  result, translator, and calibrator APIs.
+- `SECURITY.md`, `GOVERNANCE.md`, and the release process in
+  `CONTRIBUTING.md`.
+- Continuous integration on macOS and Windows and at the lowest supported
+  dependency versions, a coverage report, `ruff`, packaging and
+  `CITATION.cff` checks, and a weekly workflow that runs the real-model tests,
+  the README Quick Start, and the tutorial notebook on CPU.
+- SPDX license headers in every Python source file.
+
+### Changed
+- Runtime dependencies and extras declare minimum supported versions, which
+  CI tests on Python 3.10 (all but vLLM's, which needs a GPU), e.g.
+  `transformers>=4.56` (for `from_pretrained(dtype=...)`), `openai>=1.66`
+  (for the Responses API used by `LLMTranslator`), and `torch>=2.2`. The
+  `dev` extra adds `ruff` and `pytest-cov`; the `docs` extra uses `myst-nb`.
+- **Breaking:** `TemplateTranslator.translate` raises `ValueError`, naming the
+  template and predicate, instead of `KeyError` or `IndexError` when a
+  placeholder has no matching argument.
+
+### Fixed
+- `HuggingFaceVLM` loads the processor from the same Hub snapshot as the
+  model: `revision`, `cache_dir`, `token`, and the other file-selection
+  kwargs are forwarded to it, so a pinned revision no longer pairs with the
+  processor from `main`.
+- Translation-cache file names are valid on Windows: `<>:"|?*` and control
+  characters become `_`. Cache files whose model id or inference kwargs
+  contain those characters get new names, so their translations are
+  regenerated once.
+- Calibration data, Platt calibrators, and translation caches are read and
+  written as UTF-8 on every platform, not in the locale's encoding.
+
 ## 0.5.0 — 2026-10-05
 
 ### Added

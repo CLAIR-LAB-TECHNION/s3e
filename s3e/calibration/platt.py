@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Platt scaling: fit a sigmoid over grouped log-odds scores, then apply it."""
 
 from __future__ import annotations
@@ -7,8 +10,9 @@ import json
 import math
 from pathlib import Path
 
-from ..engine.results import EPS
+from ..engine.results import EPS, PredictionSet
 from .base import Calibrator
+from .data import CalibrationSet
 
 GLOBAL_CALIBRATION_KEY = "__global__"
 
@@ -123,6 +127,25 @@ class PlattCalibrator(Calibrator):
         meta: Provenance recorded from the :class:`CalibrationSet` (scoring
             mode, answer space, domain fingerprint), checked by
             :meth:`SemanticStateEstimator.estimate` before applying.
+
+    Example:
+        Fit on scores and labels (normally from :meth:`CalibrationSet.collect`),
+        then apply to new predictions without querying a model. This model's
+        raw scores were overconfident, so calibration pulls them toward 0.5:
+
+        >>> from s3e import (BinaryAnswers, CalibrationSample, CalibrationSet,
+        ...                  PlattCalibrator, Prediction, PredictionSet)
+        >>> scored = [(2.0, True), (1.5, True), (1.0, False), (0.5, True),
+        ...           (-0.5, False), (-1.0, True), (-2.0, False), (-1.5, False)]
+        >>> data = CalibrationSet(
+        ...     samples=[CalibrationSample("on(a,b)", s, y) for s, y in scored], meta={})
+        >>> calibrator = PlattCalibrator.fit(data, scope="lifted")
+        >>> calibrator.group_keys()
+        ['on']
+        >>> raw = PredictionSet({"on(c,d)": Prediction(
+        ...     "Is c on d?", {"yes": 0.9, "no": 0.1}, 0.0, 0.0, BinaryAnswers())})
+        >>> round(raw["on(c,d)"].probability, 2), round(calibrator.apply(raw)["on(c,d)"].probability, 2)
+        (0.9, 0.82)
     """
 
     PLATT_FORMAT_VERSION = 1
@@ -222,7 +245,9 @@ class PlattCalibrator(Calibrator):
                 for key, params in self.groups.items()
             },
         }
-        Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        Path(path).write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     @classmethod
     def load(cls, path: str | Path) -> "PlattCalibrator":
@@ -231,7 +256,7 @@ class PlattCalibrator(Calibrator):
         Raises:
             ValueError: If the file has an unsupported ``format_version``.
         """
-        data = json.loads(Path(path).read_text())
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
         version = data.get("format_version")
         if version != cls.PLATT_FORMAT_VERSION:
             raise ValueError(

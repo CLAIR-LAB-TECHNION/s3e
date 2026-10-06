@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for the OpenAI VLM backend (client mocked; no API calls)."""
 
 from unittest.mock import MagicMock, patch
@@ -14,7 +17,6 @@ from s3e.backends.openai import OpenAIVLM
 class TestOpenAIVLM:
     def _make_mock_response(self, token_logprobs):
         """Create a mock OpenAI response with given token->logprob pairs."""
-        import math
 
         mock_top_logprobs = []
         for token, logprob in token_logprobs:
@@ -77,6 +79,22 @@ class TestOpenAIVLM:
         img = Image.new("RGB", (64, 64))
         results = vlm.query_batch([img], ["q1", "q2"])
         assert len(results) == 2
+
+    @patch("s3e.backends.openai.openai")
+    def test_system_prompt_sent_as_developer_message(self, mock_openai_module):
+        import math
+
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._make_mock_response(
+            [("yes", math.log(0.7))]
+        )
+
+        OpenAIVLM("gpt-4o").query([Image.new("RGB", (8, 8))], "q", system_prompt="Be brief.")
+
+        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        assert messages[0] == {"role": "developer", "content": "Be brief."}
+        assert messages[1]["role"] == "user"
 
     @patch("s3e.backends.openai.openai")
     def test_interest_tokens_filter_and_backfill(self, mock_openai_module):

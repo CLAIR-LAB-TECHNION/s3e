@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Shared test fixtures for s3e tests.
 
 The shared fake backend lives in ``tests/fakes.py`` (``FakeVLM``); this

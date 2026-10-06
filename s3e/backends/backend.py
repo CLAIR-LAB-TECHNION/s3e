@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """VLM backend abstract base class and output types.
 
 This module defines the interface that all VLM (Vision-Language Model)

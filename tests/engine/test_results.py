@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for lazy Prediction / PredictionSet objects."""
 
 import json
@@ -249,6 +252,10 @@ class TestSerialization:
 
 
 class TestAverage:
+    def test_average_of_nothing_rejected(self):
+        with pytest.raises(ValueError, match="at least one"):
+            PredictionSet.average([])
+
     def test_average_means_masses(self):
         a = PredictionSet({"q": make_prediction(0.8, 0.1)})
         b = PredictionSet({"q": make_prediction(0.4, 0.5)})

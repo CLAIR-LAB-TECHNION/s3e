@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Public factory turning model-id strings into VLM backends."""
 
 from .backend import VLMBackend

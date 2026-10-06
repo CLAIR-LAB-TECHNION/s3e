@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """NL translation cache for storing predicate-to-query mappings.
 
 This module provides simple JSON file I/O for caching the results of
@@ -7,6 +10,7 @@ model ID, problem name, and inference kwargs.
 
 import json
 import os
+import re
 
 
 def make_cache_key(model_id: str, problem_name: str, **kwargs) -> str:
@@ -14,7 +18,9 @@ def make_cache_key(model_id: str, problem_name: str, **kwargs) -> str:
 
     The filename format is: ``model_id--(problem_name;k1=v1;k2=v2).json``
     where path separators anywhere in the name (model IDs, kwarg values,
-    ...) are replaced with double underscores.
+    ...) are replaced with double underscores, and the other characters
+    Windows forbids in file names (``<>:"|?*`` and control characters) with
+    single underscores, so a cache directory works on every platform.
 
     Args:
         model_id: The model identifier (e.g. ``"meta-llama/Llama-3"``).
@@ -28,7 +34,8 @@ def make_cache_key(model_id: str, problem_name: str, **kwargs) -> str:
     if kwargs:
         params += ";" + ";".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
     name = f"{model_id}--({params}).json"
-    return name.replace("/", "__").replace("\\", "__")
+    name = name.replace("/", "__").replace("\\", "__")
+    return re.sub(r'[<>:"|?*\x00-\x1f]', "_", name)
 
 
 def load_cache(cache_dir: str, cache_key: str) -> dict[str, str]:
@@ -45,7 +52,7 @@ def load_cache(cache_dir: str, cache_key: str) -> dict[str, str]:
         FileNotFoundError: If the cache file does not exist.
     """
     path = os.path.join(cache_dir, cache_key)
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -65,10 +72,10 @@ def save_cache(cache_dir: str, cache_key: str, queries: dict[str, str]) -> None:
 
     existing: dict[str, str] = {}
     if os.path.exists(path):
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             existing = json.load(f)
 
     existing.update(queries)
 
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(existing, f, indent=4)

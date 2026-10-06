@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Reverse token index: decoded string -> all vocabulary ids producing it.
 
 Backends that can address their probability tensors by token id use this to

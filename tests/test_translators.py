@@ -1,8 +1,10 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for query translators."""
 
 import pytest
 
-from s3e.translation.translator import QueryTranslator
 from s3e.translation.identity import IdentityTranslator
 from s3e.translation.prewritten import PrewrittenTranslator
 from s3e.translation.template import TemplateTranslator
@@ -59,6 +61,20 @@ class TestPrewrittenTranslator:
 
 
 class TestTemplateTranslator:
+    @pytest.mark.parametrize(
+        "template",
+        ["Is {x} {extra} clear?", "Is {0} next to {1}?", "Is {0.missing} clear?",
+         "Is {0[k]} clear?"],
+    )
+    def test_unfillable_template_raises_value_error(self, template):
+        translator = TemplateTranslator({"clear": template})
+        with pytest.raises(ValueError, match="arguments of 'clear\\(a\\)'"):
+            translator.translate(["clear(a)"])
+
+    def test_unparsable_predicate_raises_value_error(self):
+        with pytest.raises(ValueError, match="Cannot parse"):
+            TemplateTranslator({"clear": "Is {0} clear?"}).translate(["clear a"])
+
     def test_fills_templates(self):
         templates = {
             "on": "Is {0} on top of {1}?",
@@ -140,7 +156,7 @@ class TestTemplateTranslator:
         assert result["done()"] == "Is the task done?"
 
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from s3e.translation.llm import LLMTranslator
 
 
@@ -231,6 +247,79 @@ class TestLLMTranslatorMocked:
         system = mock_translate.call_args.args[2]
         assert "(define (domain" in system
         assert str(domain_file) not in system
+
+
+class TestLLMTranslatorModelCalls:
+    """The OpenAI and HuggingFace call paths, with the clients mocked."""
+
+    def test_openai_translate_sends_predicate_and_instructions(self):
+        pytest.importorskip("openai")
+        from s3e.translation.llm import _openai_translate
+
+        with patch("openai.OpenAI") as mock_client_cls:
+            create = mock_client_cls.return_value.responses.create
+            create.return_value.output_text = "Is a on b?"
+            result = _openai_translate("gpt-4o", "on(a,b)", "SYSTEM", temperature=0)
+
+        assert result == "Is a on b?"
+        create.assert_called_once_with(
+            input="on(a,b)", model="gpt-4o", instructions="SYSTEM", temperature=0
+        )
+
+    @staticmethod
+    def _fake_hf(chat_template_error=None):
+        """A tokenizer/model pair whose generate() appends tokens [7, 8]."""
+        torch = pytest.importorskip("torch")
+        from unittest.mock import MagicMock
+
+        tokenizer = MagicMock()
+        if chat_template_error is not None:
+            tokenizer.apply_chat_template.side_effect = chat_template_error
+        else:
+            tokenizer.apply_chat_template.return_value = "<chat>"
+        encoded = {"input_ids": torch.tensor([[1, 2, 3]])}
+        tokenizer.return_value.to.return_value = encoded
+        tokenizer.decode.side_effect = lambda ids, **kw: f" decoded {ids.tolist()} "
+        model = MagicMock()
+        model.generate.return_value = torch.tensor([[1, 2, 3, 7, 8]])
+        return tokenizer, model
+
+    def test_huggingface_translate_decodes_only_new_tokens(self):
+        from s3e.translation.llm import _huggingface_translate
+
+        tokenizer, model = self._fake_hf()
+        result = _huggingface_translate(model, tokenizer, ["on(a,b)"], "SYSTEM")
+
+        assert result == ["decoded [7, 8]"]
+        tokenizer.assert_called_once_with("<chat>", return_tensors="pt")
+        assert model.generate.call_args.kwargs["max_new_tokens"] == 128
+
+    def test_huggingface_translate_without_chat_template(self):
+        from s3e.translation.llm import _huggingface_translate
+
+        tokenizer, model = self._fake_hf(chat_template_error=ValueError("none"))
+        _huggingface_translate(model, tokenizer, ["on(a,b)"], "SYSTEM")
+
+        tokenizer.assert_called_once_with("SYSTEM\n\non(a,b)", return_tensors="pt")
+
+    def test_huggingface_model_is_loaded_and_used(self):
+        pytest.importorskip("transformers")
+
+        with patch("transformers.AutoTokenizer.from_pretrained") as tok_load, patch(
+            "transformers.AutoModelForCausalLM.from_pretrained"
+        ) as model_load, patch(
+            "s3e.translation.llm._huggingface_translate",
+            side_effect=lambda model, tok, preds, system, **kw: [f"Q{p}" for p in preds],
+        ) as translate:
+            translator = LLMTranslator("org/tiny-llm", temperature=0.1)
+            result = translator.translate(
+                ["on(a,b)", "clear(a)"], SAMPLE_DOMAIN, SAMPLE_PROBLEM
+            )
+
+        tok_load.assert_called_once_with("org/tiny-llm")
+        model_load.assert_called_once_with("org/tiny-llm", device_map="auto")
+        assert translate.call_args.kwargs == {"temperature": 0.1}
+        assert result == {"on(a,b)": "Qon(a,b)", "clear(a)": "Qclear(a)"}
 
 
 @pytest.mark.slow

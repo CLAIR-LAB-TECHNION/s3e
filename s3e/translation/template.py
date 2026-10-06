@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Template translator — per-predicate-type templates with positional or keyword placeholders."""
 
 import re
@@ -94,6 +97,15 @@ class TemplateTranslator(QueryTranslator):
     (e.g., ``{x}``, ``{name}``). Keyword placeholders can match either the
     predicate argument names from the PDDL signature or custom names mapped
     left-to-right onto predicate arguments.
+
+    Example:
+        >>> from s3e import TemplateTranslator
+        >>> translator = TemplateTranslator({
+        ...     "on": "Is the {0} block on top of the {1} block?",
+        ...     "clear": "Is the top of the {block} block clear?",
+        ... })
+        >>> translator.translate(["on(red,blue)", "clear(blue)"])
+        {'on(red,blue)': 'Is the red block on top of the blue block?', 'clear(blue)': 'Is the top of the blue block clear?'}
     """
 
     def __init__(self, templates: dict[str, str]):
@@ -103,8 +115,9 @@ class TemplateTranslator(QueryTranslator):
         """Format each predicate's template with its arguments.
 
         Raises:
-            ValueError: If a predicate string cannot be parsed or its name
-                has no template.
+            ValueError: If a predicate string cannot be parsed, its name has
+                no template, or its template cannot be filled with the
+                predicate's arguments (e.g. a placeholder no argument fills).
         """
         result: dict[str, str] = {}
         predicate_arg_names = (
@@ -127,6 +140,12 @@ class TemplateTranslator(QueryTranslator):
                 args,
                 predicate_arg_names.get(name, []),
             )
-            result[pred] = template.format(*args, **kwargs)
+            try:
+                result[pred] = template.format(*args, **kwargs)
+            except (AttributeError, IndexError, KeyError, TypeError) as err:
+                raise ValueError(
+                    f"Template {template!r} cannot be filled with the arguments "
+                    f"of {pred!r}: {type(err).__name__}: {err}"
+                ) from err
 
         return result

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for the public PDDL grounding surface."""
 
 from s3e.pddl import compute_domain_fingerprint, ground_predicates, parse_domain_problem

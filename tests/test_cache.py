@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for the NL translation cache module."""
 
 import json
@@ -30,6 +33,16 @@ class TestMakeCacheKey:
         assert "/" not in key.replace(".json", "")
         assert "\\" not in key
 
+    def test_key_is_a_valid_windows_file_name(self):
+        """Dict-valued kwargs put ':' and '"' into str(); Windows rejects
+        those (and ':' would open an NTFS alternate data stream)."""
+        key = make_cache_key(
+            "OpenAI/gpt-4o", "p1", response_format={"type": "json_object"}, stop="<|?*|>\n"
+        )
+        assert not set('<>:"|?*') & set(key)
+        assert all(ord(char) >= 32 for char in key)
+        assert "response_format={'type'_ 'json_object'}" in key
+
     def test_same_inputs_same_key(self):
         key1 = make_cache_key("model", "prob", x=1)
         key2 = make_cache_key("model", "prob", x=1)
@@ -42,6 +55,23 @@ class TestSaveAndLoadCache:
         save_cache(str(tmp_path), "test_cache.json", queries)
         loaded = load_cache(str(tmp_path), "test_cache.json")
         assert loaded == queries
+
+    def test_reads_and_merges_utf8_files(self, tmp_path):
+        """A hand-edited cache with non-ASCII text loads on any platform
+        (open() would otherwise use the locale encoding, e.g. cp1252)."""
+        path = tmp_path / "edited.json"
+        path.write_text(
+            json.dumps({"on(a,b)": "¿Está a sobre b?"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        assert load_cache(str(tmp_path), "edited.json") == {
+            "on(a,b)": "¿Está a sobre b?"
+        }
+        save_cache(str(tmp_path), "edited.json", {"clear(a)": "¿Está a libre?"})
+        assert load_cache(str(tmp_path), "edited.json") == {
+            "on(a,b)": "¿Está a sobre b?",
+            "clear(a)": "¿Está a libre?",
+        }
 
     def test_load_nonexistent_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):

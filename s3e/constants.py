@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Default system prompts for s3e.
 
 Answer token groups live with the answer spaces (:mod:`s3e.engine.answers`)

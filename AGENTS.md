@@ -22,10 +22,11 @@
 - `tests/`: mirrors the package layout (`tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, `tests/workflows/`, `tests/test_estimator.py`, `tests/test_imports.py`, ...)
 - `tests/conftest.py`: shared fixtures and Blocksworld sample data
 - `tests/fakes.py`: shared `FakeVLM` double implementing the full `VLMBackend` contract
+- `examples/`: runnable scripts (`custom_backend.py`, `blocksworld_benchmark.py`), run by `tests/test_examples.py` with fake backends
 - `docs/`: Sphinx API reference (`conf.py`, MyST Markdown pages, `api/*.rst` autodoc pages) plus the walkthrough notebook `docs/s3e_walkthrough.ipynb`; built on Read the Docs via `.readthedocs.yaml`
 - `paper/`: JOSS paper (`paper.md`, `paper.bib`, `s3e-pipeline.png`); keep it the only `paper.md` in the repo
-- `.github/workflows/`: `tests.yml` (fast suite on Python 3.10–3.14 + strict docs build) and `draft-pdf.yml` (JOSS draft PDF)
-- Project metadata: `CHANGELOG.md`, `CITATION.cff`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `.mailmap`
+- `.github/workflows/`: `tests.yml` (fast suite on Linux 3.10–3.14 plus macOS/Windows, lowest-dependency job, coverage with vLLM, ruff, packaging, `CITATION.cff`, strict docs build), `slow-tests.yml` (weekly real-model tests incl. README/getting-started/notebook execution), and `draft-pdf.yml` (JOSS draft PDF)
+- Project metadata: `CHANGELOG.md`, `CITATION.cff`, `CONTRIBUTING.md` (incl. the release process), `CODE_OF_CONDUCT.md`, `GOVERNANCE.md`, `SECURITY.md`, `.mailmap`
 
 ## Environment
 - Python requirement: `>=3.10`
@@ -40,21 +41,16 @@
 
 ## Build Commands
 - Packaging is configured through setuptools in `pyproject.toml`.
-- If the `build` package is installed, create wheel/sdist with: `python -m build`
-- In the analyzed environment, `python -m build` currently fails because `build` is not installed.
+- Create wheel/sdist with `python -m build` (requires `pip install build`; it is not part of any extra).
 - Do not document or automate a different build flow unless you add the necessary config in the same change.
 - Docs: `pip install -e '.[docs]'` then `sphinx-build -W -b html docs docs/_build/html`. The build mocks torch/transformers/vllm, so new public modules must import cleanly under those mocks; add new public APIs to the matching `docs/api/*.rst` page.
 - JOSS paper: the `Draft PDF` workflow builds `paper/paper.pdf` on changes under `paper/`. Keep the paper between 750 and 1750 words (the JOSS bot counts the whole file).
 
 ## Lint And Static Checks
-- There is no configured linter or formatter in this repository.
-- No repo config exists for `ruff`, `black`, `isort`, `flake8`, `mypy`, or `pyright`.
-- Do not invent repo-standard lint commands.
-- If you want lightweight validation, use:
-  - `python -m compileall s3e tests`
-  - `pytest -m "not slow"`
-- If you introduce a lint or type-check tool, update `pyproject.toml`, CI, and this file together.
-- CI (`.github/workflows/tests.yml`) installs CPU-only torch, then `pip install -e '.[dev]'`, and runs `pytest -m "not slow"` on Python 3.10–3.14, plus the strict docs build.
+- Linter: `ruff check .` (installed by the `dev` extra). The rule set in `pyproject.toml` (`[tool.ruff.lint]`) is correctness-focused (`E4`, `E7`, `E9`, `F`, `W`, `B`); `E402` is ignored because optional backends import their dependency after `require()`.
+- There is no formatter and no type checker; do not run `ruff format` or reformat files.
+- If you introduce or change a lint or type-check tool, update `pyproject.toml`, CI, and this file together.
+- CI (`.github/workflows/tests.yml`) runs `pytest -m "not slow"` on Linux (Python 3.10–3.14, CPU-only torch) and on macOS/Windows (3.10, 3.14); a job at the dependency floors (`uv pip install --resolution lowest-direct`, Python 3.10); a coverage job with vLLM installed that fails below 97%; `ruff check .`; a build/`twine check` packaging job; `cffconvert --validate`; and the strict docs build. Dependency floors in `pyproject.toml` must stay the lowest versions that pass.
 
 ## Test Commands
 - Full suite: `pytest`
@@ -72,6 +68,7 @@
 
 ## Test Suite Notes
 - `pytest.ini` defines a `slow` marker for tests that download and run real HuggingFace models.
+- Docstring examples are doctests: bare `pytest` collects `tests/` and `s3e/` with `--doctest-modules` (except `s3e/backends/`, which imports heavy dependencies). Keep examples to model-free APIs and round floats in their output.
 - `pytest -m "not slow"` is the default verification command for normal development.
 - Running the suite assumes a dev install (`dev` or `dev-gpu`). Without `vllm`, the vLLM unit tests skip with a reason; the slow vLLM integration tests additionally require CUDA. Other partial installs (missing torch/openai/unified-planning) are supported for the *library* (see `tests/test_imports.py`) but not for running the test suite itself.
 - Reuse fixtures from `tests/conftest.py` and the shared `FakeVLM` double from `tests/fakes.py` instead of duplicating common setup.
@@ -83,7 +80,7 @@
 - Follow the existing repository style; do not impose a new style system.
 - Use 4-space indentation.
 - Keep modules focused on one responsibility.
-- Start modules with a concise top-level docstring.
+- Start every Python file with the two-line SPDX header (`# SPDX-FileCopyrightText: CLAIR Lab Technion` / `# SPDX-License-Identifier: MIT`; `tests/test_license_headers.py` enforces it), then a concise module docstring.
 - Add docstrings for public classes and important functions.
 - Prefer clear names and small helpers over extra comments.
 
@@ -145,6 +142,7 @@
 - Mark real-model or download-heavy tests with `@pytest.mark.slow`.
 - When behavior changes, update the nearest relevant test module.
 - Record user-facing changes under "Unreleased" in `CHANGELOG.md`.
+- Tests marked `slow` include `tests/test_documentation.py`, which runs the README Quick Start, the getting-started example, and the walkthrough notebook against a real model; keep those runnable when editing them.
 
 ## Agent Workflow
 - Inspect the target module and its nearest tests before editing.
@@ -156,7 +154,7 @@
 
 ## Quick Reference
 - Dev install: `pip install -e '.[dev]'` (CPU) or `pip install -e '.[dev-gpu]'` (CUDA hosts, adds vLLM)
-- Fast verification: `pytest -m "not slow"`
+- Fast verification: `pytest -m "not slow"` and `ruff check .`
 - Single test: `pytest tests/test_cache.py::TestMakeCacheKey::test_basic_key`
 - Test discovery: `pytest --collect-only -q`
 - Optional package build: `python -m build`

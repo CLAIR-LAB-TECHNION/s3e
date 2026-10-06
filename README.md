@@ -12,7 +12,9 @@
 
 ### Statement of need
 
+<!-- docs:statement-of-need:start -->
 Research that grounds symbolic planners in perception — task planning, task-and-motion planning, embodied AI, neuro-symbolic reasoning — keeps re-implementing the same pipeline: enumerate grounded predicates, phrase a question for each, prompt a particular model API with images, and turn the output into truth values. Parsing generated text throws away the model's uncertainty, and hard-wiring one provider makes cross-model comparisons and calibration studies laborious. `s3e` packages this pipeline as a backend-agnostic library with probabilities as a first-class output: answer-token probability scoring, an optional explicit "unknown" answer, multi-view averaging, and offline calibration, over HuggingFace, vLLM, and OpenAI models. Its query engine also works without PDDL, for anyone who needs probabilistic yes/no or multiple-choice answers from a VLM.
+<!-- docs:statement-of-need:end -->
 
 `s3e` is built as concentric, independently usable layers:
 
@@ -23,7 +25,7 @@ Research that grounds symbolic planners in perception — task planning, task-an
 
 Each layer works standalone: you can use `QueryEngine` to answer arbitrary visual questions without PDDL, or use `SemanticStateEstimator.from_pddl` for the full predicate-grounding workflow.
 
-For a longer tutorial, see the [tutorial notebook](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb); the full API reference is at [s3e.readthedocs.io](https://s3e.readthedocs.io).
+For a longer tutorial, see the [tutorial notebook](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb) ([run it in Colab](https://colab.research.google.com/github/CLAIR-LAB-TECHNION/s3e/blob/main/docs/s3e_walkthrough.ipynb)); for runnable scripts, including a custom backend and a benchmark on synthetic Blocksworld scenes, see [`examples/`](https://github.com/CLAIR-LAB-TECHNION/s3e/tree/main/examples). The documentation at [s3e.readthedocs.io](https://s3e.readthedocs.io) has a user guide, a developer guide, and the full API reference.
 
 ## Features
 
@@ -251,7 +253,8 @@ calibrated_state = estimator.estimate(scene, calibrator=calibrator).to_state()
 
 `scope` groups samples for fitting: `"global"` (one calibrator for everything), `"lifted"` (one per predicate name, e.g. all `on(...)` instances share a fit), or `"grounded"` (one per fully-grounded predicate). Every group needs both true and false labels, unless you pass `pass_through_single_class=True` to leave single-class groups uncalibrated; since `collect` drops unanswered predictions, check this on small datasets. When examples span multiple problem instances, set `CalibrationExample.problem` on each — `CalibrationSet.collect` re-grounds the estimator against that problem before querying it, and the saved sample carries the problem string alongside its score and label.
 
-## API Reference / Configuration
+<!-- docs:user-guide:start -->
+## Configuration reference
 
 ### `SemanticStateEstimator`
 
@@ -325,6 +328,7 @@ Because the stored data is untouched, other rules can be derived from it. For ex
 - `OPENAI_API_KEY`: required for `OpenAIVLM` and OpenAI-backed `LLMTranslator` usage.
 - `cache_dir` on `LLMTranslator`: enables on-disk caching of generated predicate translations.
 
+<!-- docs:user-guide:end -->
 ## Testing
 
 Install the development dependencies and run the test suite:
@@ -338,7 +342,7 @@ pytest -m slow                # downloads and runs real models
 pytest                        # everything
 ```
 
-Continuous integration runs the fast suite on Python 3.10–3.14 for every pull request and every push to `main`. On a machine without a CUDA GPU, install CPU-only PyTorch first to avoid the much larger CUDA build: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`.
+Continuous integration runs the fast suite on Linux with Python 3.10–3.14, on macOS and Windows, and with the core and optional dependencies (except vLLM) at their declared minimum versions, for every pull request and every push to `main`; it also reports test coverage. A weekly workflow runs the slow tests on CPU, including the Quick Start above and the tutorial notebook. On a machine without a CUDA GPU, install CPU-only PyTorch first to avoid the much larger CUDA build: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`.
 
 How each part of the library can be verified without special hardware:
 
@@ -353,8 +357,9 @@ How each part of the library can be verified without special hardware:
 - **Contributing:** see [`CONTRIBUTING.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CONTRIBUTING.md) for the development setup, test commands, and conventions. Pull requests are welcome.
 - **Code of conduct:** this project follows the [Contributor Covenant](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CODE_OF_CONDUCT.md).
 - **Changes between versions:** see [`CHANGELOG.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/CHANGELOG.md).
+- **Security issues:** report them privately as described in [`SECURITY.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/SECURITY.md).
 
-`s3e` is maintained by the [CLAIR Lab](https://github.com/CLAIR-LAB-TECHNION) at the Technion – Israel Institute of Technology, which uses it in its own research. Issues and pull requests are triaged by the maintainers on a best-effort basis.
+`s3e` is maintained by the [CLAIR Lab](https://github.com/CLAIR-LAB-TECHNION) at the Technion – Israel Institute of Technology, which uses it in its own research. Issues and pull requests are triaged by the maintainers on a best-effort basis; [`GOVERNANCE.md`](https://github.com/CLAIR-LAB-TECHNION/s3e/blob/main/GOVERNANCE.md) describes how decisions and releases are made.
 
 ## License
 
@@ -373,3 +378,5 @@ If you use `s3e` in your research, please cite the S3E paper (GitHub's "Cite thi
   url       = {https://openreview.net/forum?id=gw4hYNFUIC}
 }
 ```
+
+If you use `s3e` in a publication, please let us know by opening an issue, so we can list it in the [documentation](https://s3e.readthedocs.io/en/latest/citing.html).

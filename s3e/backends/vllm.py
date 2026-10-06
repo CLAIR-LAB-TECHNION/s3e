@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """vLLM VLM backend.
 
 A :class:`VLMBackend` implementation that runs a local HuggingFace

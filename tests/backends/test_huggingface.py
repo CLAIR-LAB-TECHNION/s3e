@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for the HuggingFace VLM backend: mocked units, slow
 integration against tiny real models, and the shared backend contract.
 """
@@ -126,6 +129,34 @@ class TestHuggingFaceVLMMocked:
         vlm = HuggingFaceVLM("test/model")
 
         assert not hasattr(vlm, "max_new_tokens")
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_processor_loads_from_the_same_hub_snapshot(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """A pinned revision must pin the processor too, without handing it
+        model-only kwargs."""
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        mock_model_cls.from_pretrained.return_value = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = MagicMock()
+        quantization = object()
+
+        HuggingFaceVLM(
+            "test/model",
+            revision="abc123",
+            cache_dir="/models",
+            trust_remote_code=True,
+            quantization_config=quantization,
+        )
+
+        mock_proc_cls.from_pretrained.assert_called_once_with(
+            "test/model", revision="abc123", cache_dir="/models", trust_remote_code=True
+        )
+        model_kwargs = mock_model_cls.from_pretrained.call_args.kwargs
+        assert model_kwargs["revision"] == "abc123"
+        assert model_kwargs["quantization_config"] is quantization
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")

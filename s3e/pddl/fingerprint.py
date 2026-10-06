@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Canonical PDDL domain fingerprinting for calibration compatibility."""
 
 import hashlib

@@ -197,16 +197,18 @@ research use. -->
 
 Generative AI coding assistants were used in developing `s3e`. Of the 192
 non-merge commits made between March and August 2026, 98 were made with
-Anthropic's Claude Code, as were all non-merge commits made in October 2026,
+Anthropic's Claude Code, as were all non-merge commits made from 1 to 5 October 2026,
 including the always-boolean state rework and the work preparing this
 submission; each records the assisting model in a `Co-Authored-By` trailer.
 This assistance covered implementing the 0.4 architecture redesign and later
-behavior changes, tests, documentation, the walkthrough notebook, docstrings,
-packaging, continuous integration, community guidelines, and the first draft
-of this paper. An initial implementation of the vLLM backend was drafted with
-OpenAI Codex. The authors reviewed all AI-assisted code, tests, and text. The
-CPU-only test suite (390 tests) runs in continuous integration on every
-change, and real-model tests are run manually.
+behavior changes, tests, documentation, the walkthrough notebook and example
+scripts, docstrings, packaging, continuous integration, community guidelines,
+and the first draft of this paper. An initial implementation of the vLLM
+backend was drafted with OpenAI Codex. The authors reviewed all AI-assisted
+code, tests, and text. The CPU-only test suite runs in continuous integration
+on Linux, macOS, and Windows on every change; the real-model tests that run on
+a CPU, including the documented examples, are scheduled weekly, and the vLLM
+tests, which need a GPU, are run manually.
 <!-- TODO(authors): (1) list the exact model versions from the Co-Authored-By
 trailers (`git log`) and the Codex version; (2) state whether any AI tools
 were used before March 2026 and whether any other tools were used; (3) confirm

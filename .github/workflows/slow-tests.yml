@@ -1,0 +1,50 @@
+name: Slow tests
+
+# Real-model tests: the backend integration tests, the examples, and the code
+# in the README, getting-started guide, and walkthrough notebook, run against
+# small Hugging Face models on CPU. Too slow for every push; run weekly, on
+# demand, and on pull requests that change this workflow or the documentation
+# and examples it executes. (GitHub disables scheduled workflows after 60 days
+# without activity in the repository.) The vLLM integration tests need a CUDA
+# GPU and skip here.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays, 04:17 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/slow-tests.yml
+      - tests/test_documentation.py
+      - tests/test_examples.py
+      - examples/**
+      - docs/getting-started.md
+      - docs/s3e_walkthrough.ipynb
+
+permissions:
+  contents: read
+
+jobs:
+  slow:
+    name: pytest -m slow (CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install CPU-only PyTorch
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Install s3e with dev extras and a notebook runner
+        run: pip install -e ".[dev]" nbclient ipykernel
+      - name: Cache Hugging Face models
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('tests/**/*.py', 'README.md', 'docs/getting-started.md', 'docs/s3e_walkthrough.ipynb') }}
+          restore-keys: hf-${{ runner.os }}-
+      - name: Run slow tests
+        run: pytest -m slow -v --durations=10

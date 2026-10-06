@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Tests for the vLLM backend: mocked-engine units, import behavior,
 slow GPU integration, and the shared backend contract.
 
@@ -578,7 +581,7 @@ class TestVLLMBackendMocked:
                 sys.modules[module_name] = original_module
             if parent_module is not None:
                 if had_parent_attr:
-                    setattr(parent_module, "vllm", original_parent_attr)
+                    parent_module.vllm = original_parent_attr
                 elif hasattr(parent_module, "vllm"):
                     delattr(parent_module, "vllm")
 

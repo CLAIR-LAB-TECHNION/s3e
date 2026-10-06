@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """SemanticStateEstimator: a thin facade wiring predicates, translation,
 and a QueryEngine into symbolic state estimation.
 

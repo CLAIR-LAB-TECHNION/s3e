@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """VLM backends: the abstract contract plus concrete implementations.
 
 ``VLMBackend``/``VLMOutput`` and :func:`resolve_backend` import without any

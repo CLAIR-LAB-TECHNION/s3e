@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: CLAIR Lab Technion
+# SPDX-License-Identifier: MIT
+
 """Optional-dependency checks with install guidance.
 
 Leaf modules that need a heavy optional package call :func:`require` once,
