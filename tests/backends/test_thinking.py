@@ -5,8 +5,11 @@
 
 import pytest
 
+import warnings
+
 from s3e.backends.thinking import (
     KNOWN_THINKING_DELIMITERS,
+    MAX_SEPARATOR_TOKENS,
     ThinkingTokens,
     leading_whitespace_tokens,
     resolve_thinking_tokens,
@@ -58,7 +61,16 @@ class TestValidateThinkingOptions:
 
     @pytest.mark.parametrize(
         "delimiters",
-        ["<think>", "Auto", ("<think>",), ("<think>", "</think>", "x"), ("a", "a"), ("", "b")],
+        [
+            "<think>",
+            "Auto",
+            ("<think>",),
+            ("<think>", "</think>", "x"),
+            ("a", "a"),
+            ("", "b"),
+            {"<a>": 1, "<b>": 2},
+            {"<a>", "<b>"},
+        ],
     )
     def test_invalid_delimiters_rejected(self, delimiters):
         with pytest.raises(ValueError, match="thinking_delimiters"):
@@ -72,17 +84,28 @@ class TestResolveThinkingTokens:
 
     def test_multi_token_delimiter_turns_handling_off(self):
         tokenizer = FakeTokenizer({"<think>": START})
-        assert resolve_thinking_tokens(THINK_PAIR, tokenizer) is None
+        with pytest.warns(UserWarning, match="not single tokens"):
+            assert resolve_thinking_tokens(THINK_PAIR, tokenizer) is None
 
     def test_delimiter_that_does_not_round_trip_turns_handling_off(self):
         tokenizer = FakeTokenizer({"<think>": START, "</think>": END})
         tokenizer.ids[END] = "<unk>"
-        assert resolve_thinking_tokens(THINK_PAIR, tokenizer) is None
+        with pytest.warns(UserWarning, match="not single tokens"):
+            assert resolve_thinking_tokens(THINK_PAIR, tokenizer) is None
 
     def test_none_delimiters_or_tokenizer(self):
         tokenizer = FakeTokenizer({"<think>": START, "</think>": END})
         assert resolve_thinking_tokens(None, tokenizer) is None
-        assert resolve_thinking_tokens(THINK_PAIR, None) is None
+        with pytest.warns(UserWarning, match="not single tokens"):
+            assert resolve_thinking_tokens(THINK_PAIR, None) is None
+
+    def test_auto_without_a_usable_pair_is_silent(self):
+        """Most models have no thinking delimiters; "auto" says nothing."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert resolve_thinking_tokens(
+                KNOWN_THINKING_DELIMITERS, FakeTokenizer({"<think>": START})
+            ) is None
 
     @pytest.mark.parametrize("start, end", KNOWN_THINKING_DELIMITERS)
     def test_auto_finds_each_known_family(self, start, end):
@@ -112,6 +135,11 @@ class TestResolveThinkingTokens:
 
 
 class TestOpensBlock:
+    VOCAB = {1: "q", 2: "x", 3: "\n", 9: "<|im_end|>", START: "<think>", END: "</think>"}
+
+    def _decode(self, ids):
+        return "".join(self.VOCAB[token_id] for token_id in ids)
+
     @pytest.mark.parametrize(
         "ids, expected",
         [
@@ -123,10 +151,15 @@ class TestOpensBlock:
             ([START, END, START], True),
             ([END], False),
             ([], False),
+            # A delimiter the user's text mentions, followed by more text or
+            # by the template's turn markers, opens nothing.
+            ([1, START, 2, 3], False),
+            ([1, START, 9], False),
+            ([1, START] + [3] * (MAX_SEPARATOR_TOKENS + 1), False),
         ],
     )
     def test_open_block_detection(self, ids, expected):
-        assert TOKENS.opens_block(ids) is expected
+        assert TOKENS.opens_block(ids, self._decode) is expected
 
 
 class TestClosingText:

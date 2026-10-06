@@ -11,20 +11,21 @@ or one the caller names, and switch this logic on only when both delimiters
 are single tokens of the model's vocabulary. A model without them (SmolVLM,
 LLaVA, ...) behaves exactly as if this module did not exist.
 
-A query is *thinking* when its prompt ends inside an open block (the chat
-template opened it, as Qwen3.5-4B's does by default) or when the model's
-most likely next token opens one. Backends then read the answer after the
-block: in text mode the block is cut out of the reply, and in logprobs mode
-the block is either closed at once (``"close"``) or generated first
-(``"think"``) before the answer token is scored. The answer is always read
-from a forward pass over the prompt, the closed block, and the whitespace
-the model puts after it, like the pass that scores every other query:
-reading it after a decode step instead can differ numerically, since some
-engines (e.g. vLLM with Qwen3.5's linear-attention layers) use different
-kernels for prefill and decode.
+A query is *thinking* when its prompt ends with an opening delimiter (the
+chat template opened the block, as Qwen3.5-4B's does by default) or when the
+model's most likely next token opens one. Backends then read the answer
+after the block: in text mode the block is cut out of the reply, and in
+logprobs mode the block is either closed at once (``"close"``) or generated
+first (``"think"``) before the answer token is scored. The answer is always
+read from a forward pass over the prompt, the closed block, and the
+whitespace the model puts after it, like the pass that scores every other
+query: reading it after a decode step instead can differ numerically, since
+some engines (e.g. vLLM with Qwen3.5's linear-attention layers) use
+different kernels for prefill and decode.
 """
 
-from collections.abc import Sequence
+import warnings
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 #: Delimiter pairs of known model families, tried in order by
@@ -38,8 +39,10 @@ KNOWN_THINKING_DELIMITERS = (
 )
 THINKING_MODES = ("close", "think")
 DEFAULT_MAX_THINKING_TOKENS = 1024
-# Greedy steps that may find the whitespace chat templates put between a
-# closed block and the answer (e.g. "\n\n" after Qwen's "</think>").
+# Most whitespace tokens a chat template puts next to a delimiter: after the
+# opening one that ends a prompt ("<think>\n"), or between a closed block and
+# the answer ("\n\n" after Qwen's "</think>"), which this many greedy steps
+# look for.
 MAX_SEPARATOR_TOKENS = 8
 
 
@@ -71,7 +74,7 @@ def validate_thinking_options(
     if thinking_delimiters == "auto":
         return KNOWN_THINKING_DELIMITERS
     if (
-        isinstance(thinking_delimiters, str)
+        not isinstance(thinking_delimiters, (tuple, list))
         or len(thinking_delimiters) != 2
         or not all(isinstance(d, str) and d for d in thinking_delimiters)
         or thinking_delimiters[0] == thinking_delimiters[1]
@@ -92,16 +95,27 @@ class ThinkingTokens:
     start_id: int
     end_id: int
 
-    def opens_block(self, token_ids: Sequence[int]) -> bool:
-        """Whether ``token_ids`` end inside an unclosed thinking block."""
-        # list.index on the reversed ids finds each delimiter's last
-        # occurrence in C, which matters for long multimodal prompts.
-        reversed_ids = list(token_ids)[::-1]
+    def opens_block(
+        self, token_ids: Sequence[int], decode: Callable[[list[int]], str]
+    ) -> bool:
+        """Whether ``token_ids`` end with an opening delimiter.
+
+        This is how a chat template opens the block for the model (e.g.
+        Qwen3.5's ``"<think>\\n"``): only whitespace, checked with
+        ``decode`` (token ids to text, special tokens kept), may follow the
+        last opening delimiter. A delimiter earlier in the prompt, such as
+        one the user's text mentions, does not open a block.
+        """
+        ids = list(token_ids)
+        # list.index on the reversed ids finds the last opening delimiter in
+        # C, which matters for long multimodal prompts.
+        reversed_ids = ids[::-1]
         if self.start_id not in reversed_ids:
             return False
-        if self.end_id not in reversed_ids:
+        after = reversed_ids.index(self.start_id)
+        if after == 0:
             return True
-        return reversed_ids.index(self.start_id) < reversed_ids.index(self.end_id)
+        return after <= MAX_SEPARATOR_TOKENS and not decode(ids[-after:]).strip()
 
     def closing_text(self, prompt_text: str, prompt_open: bool) -> str:
         """Text that closes the block at once, leaving it empty.
@@ -143,14 +157,22 @@ def resolve_thinking_tokens(
 
     A pair is usable when both delimiters encode to a single token that
     decodes back to the delimiter. Returns None (thinking support off) when
-    no pair is.
+    no pair is, with a warning unless the candidates are the known pairs
+    tried by ``"auto"``.
     """
-    if candidates is None or tokenizer is None:
+    if candidates is None:
         return None
-    for delimiters in candidates:
-        tokens = _resolve_pair(delimiters, tokenizer)
-        if tokens is not None:
-            return tokens
+    if tokenizer is not None:
+        for delimiters in candidates:
+            tokens = _resolve_pair(delimiters, tokenizer)
+            if tokens is not None:
+                return tokens
+    if tuple(candidates) != KNOWN_THINKING_DELIMITERS:
+        warnings.warn(
+            f"Thinking delimiters {list(candidates)} are not single tokens of "
+            "the model's vocabulary, so thinking handling is off.",
+            stacklevel=2,
+        )
     return None
 
 

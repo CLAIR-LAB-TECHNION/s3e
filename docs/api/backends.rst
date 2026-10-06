@@ -45,3 +45,12 @@ cover.
 
 .. autodata:: s3e.backends.thinking.KNOWN_THINKING_DELIMITERS
    :no-value:
+
+Helpers for backends that skip thinking blocks (see the developer guide):
+
+.. autofunction:: s3e.backends.thinking.resolve_thinking_tokens
+
+.. autoclass:: s3e.backends.thinking.ThinkingTokens
+   :members: opens_block, closing_text, split
+
+.. autofunction:: s3e.backends.thinking.leading_whitespace_tokens

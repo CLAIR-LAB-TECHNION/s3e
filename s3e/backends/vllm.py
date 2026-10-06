@@ -34,7 +34,12 @@ design with full context):
   multimodal input. Re-rendering with the tokenizer's chat template is only
   a fallback for outputs without that text: vLLM's chat renderer differs
   from it (e.g. it puts a newline after Qwen's image placeholder), and the
-  answer then shifts. Only thinking rows pay for the extra calls; other
+  answer then shifts. Since the engine tokenizes the text again, the
+  continuation's token ids are checked against those ``LLM.chat`` scored,
+  and a mismatch raises instead of reading the answer from another prompt:
+  older vLLM versions return no prompt text, or text holding the expanded
+  placeholders, and a text-only engine's tokenizer may add a second BOS
+  token to a text prompt. Only thinking rows pay for the extra calls; other
   models never leave the ``LLM.chat`` path.
 """
 
@@ -97,7 +102,8 @@ class VLLMBackend(VLMBackend):
             the block to :attr:`VLMOutput.reasoning`.
         max_thinking_tokens: Reasoning budget for ``thinking="think"``; a
             block still open after this many tokens is closed and the answer
-            scored. Defaults to 1024.
+            scored. The prompt plus this budget must fit in the engine's
+            ``max_model_len``. Defaults to 1024.
         thinking_delimiters: The tokens that open and close a thinking
             block, active only when both are single tokens of the model's
             vocabulary. ``"auto"`` (default) uses the first such pair among
@@ -276,8 +282,8 @@ class VLLMBackend(VLMBackend):
     ):
         """Re-score the rows whose answer would come after a thinking block.
 
-        A row thinks when its prompt ends inside an open block or its most
-        likely next token opens one. Those rows are re-run through
+        A row thinks when its prompt ends with an opening delimiter or its
+        most likely next token opens one. Those rows are re-run through
         ``LLM.generate`` on the rendered prompt plus the closed block (empty,
         or the generated reasoning), and read at the answer after it.
         """
@@ -287,7 +293,9 @@ class VLLMBackend(VLMBackend):
 
         rows, prompt_open = [], []
         for row, output in enumerate(outputs):
-            is_open = tokens.opens_block(output.prompt_token_ids or [])
+            is_open = tokens.opens_block(
+                output.prompt_token_ids or [], self._decode_with_special_tokens
+            )
             start_entry = output.outputs[0].logprobs[0].get(tokens.start_id)
             if is_open or (start_entry is not None and start_entry.rank == 1):
                 rows.append(row)
@@ -302,8 +310,15 @@ class VLLMBackend(VLMBackend):
             for row in rows
         ]
         if self.thinking == "think":
+            # Open the block where the model was about to, so the reasoning
+            # is generated inside it even if generate() starts differently.
             continuations, reasonings = self._think(
-                images, prompt_texts, prompt_open, tokens
+                images,
+                [
+                    text if is_open else text + tokens.start
+                    for text, is_open in zip(prompt_texts, prompt_open)
+                ],
+                tokens,
             )
         else:
             continuations = [
@@ -313,7 +328,11 @@ class VLLMBackend(VLMBackend):
             reasonings = [""] * len(rows)
 
         answers = self._answer_outputs_after(
-            images, continuations, interest_tokens, inference_kwargs
+            images,
+            continuations,
+            [outputs[row].prompt_token_ids or [] for row in rows],
+            interest_tokens,
+            inference_kwargs,
         )
         results = list(results)
         for row, answer, reasoning in zip(rows, answers, reasonings):
@@ -332,9 +351,9 @@ class VLLMBackend(VLMBackend):
         """
         messages = []
         if system_prompt is not None:
-            messages.append(
-                {"role": "system", "content": [{"type": "text", "text": system_prompt}]}
-            )
+            # A plain string, as query_batch sends it: some templates render
+            # the list form differently (Gemma 4 adds a space).
+            messages.append({"role": "system", "content": system_prompt})
         content = [{"type": "image"} for _ in images]
         content.append({"type": "text", "text": prompt})
         messages.append({"role": "user", "content": content})
@@ -352,12 +371,13 @@ class VLLMBackend(VLMBackend):
             return {"prompt": text}
         return {"prompt": text, "multi_modal_data": {"image": list(images)}}
 
-    def _think(self, images, prompt_texts, prompt_open, tokens):
+    def _think(self, images, prompt_texts, tokens):
         """Generate each prompt's reasoning, up to ``max_thinking_tokens``.
 
-        Returns one continuation per prompt (the prompt plus its reasoning,
-        ending with the closing delimiter, which is appended when the budget
-        ran out or the model stopped first) and the reasoning texts.
+        Every prompt ends inside an open block. Returns one continuation per
+        prompt (the prompt plus its reasoning, ending with the closing
+        delimiter, which is appended when the budget ran out or the model
+        stopped first) and the reasoning texts.
         """
         tokenizer = self._get_tokenizer()
         sampling_params = SamplingParams(
@@ -372,7 +392,7 @@ class VLLMBackend(VLMBackend):
         special_ids = set(getattr(tokenizer, "all_special_ids", []) or [])
 
         continuations, reasonings = [], []
-        for text, is_open, output in zip(prompt_texts, prompt_open, outputs):
+        for text, output in zip(prompt_texts, outputs):
             completion = output.outputs[0]
             ids = [int(token_id) for token_id in completion.token_ids]
             if tokens.end_id in ids:
@@ -387,7 +407,7 @@ class VLLMBackend(VLMBackend):
                 if not generated[-1:].isspace():
                     generated += "\n"
                 generated += tokens.end
-            reasoning_ids, _ = tokens.split(ids, is_open)
+            reasoning_ids, _ = tokens.split(ids, prompt_open=True)
             continuations.append(text + generated)
             reasonings.append(
                 tokenizer.decode(reasoning_ids or [], skip_special_tokens=True).strip()
@@ -395,7 +415,8 @@ class VLLMBackend(VLMBackend):
         return continuations, reasonings
 
     def _answer_outputs_after(
-        self, images, continuations, interest_tokens, inference_kwargs
+        self, images, continuations, chat_prompt_ids, interest_tokens,
+        inference_kwargs,
     ) -> list[VLMOutput]:
         """Score the answer token after each continuation's closed block.
 
@@ -405,12 +426,16 @@ class VLLMBackend(VLMBackend):
         the continuation plus that whitespace. Reading it after a decode step
         instead would differ: vLLM's prefill and decode kernels disagree
         slightly for some architectures (e.g. Qwen3.5's linear attention).
+        ``chat_prompt_ids`` are the prompt ids ``LLM.chat`` scored for each
+        continuation, which it must extend.
         """
         tokenizer = self._get_tokenizer()
         separator_outputs = self.llm.generate(
             [self._engine_prompt(text, images) for text in continuations],
             SamplingParams(max_tokens=MAX_SEPARATOR_TOKENS, temperature=0.0),
         )
+        for prompt_ids, output in zip(chat_prompt_ids, separator_outputs):
+            self._check_continuation(prompt_ids, output.prompt_token_ids or [])
         texts = []
         for text, output in zip(continuations, separator_outputs):
             ids = [int(token_id) for token_id in output.outputs[0].token_ids]
@@ -426,6 +451,32 @@ class VLLMBackend(VLMBackend):
         return [
             self._to_vlm_output(output, False, interest_tokens) for output in outputs
         ]
+
+    def _check_continuation(self, chat_prompt_ids, continuation_ids) -> None:
+        """Raise unless a continuation's ids extend those ``LLM.chat`` scored.
+
+        All but the prompt's last token must match: text appended to it may
+        merge with that token (Qwen's trailing ``"\\n"`` becomes ``"\\n\\n"``).
+        """
+        kept = max(len(chat_prompt_ids) - 1, 0)
+        if list(continuation_ids[:kept]) == list(chat_prompt_ids[:kept]):
+            return
+        raise RuntimeError(
+            f"vLLM tokenized the prompt continued past {self.model_id}'s "
+            "thinking block differently from the one LLM.chat scored, so the "
+            "answer would be read from another prompt. This happens with vLLM "
+            "versions whose RequestOutput.prompt is missing or holds expanded "
+            "image placeholders, and with text-only engines whose tokenizer "
+            "adds a BOS token. Turn thinking off through chat_template_kwargs "
+            "(e.g. {'enable_thinking': False}) where the template supports "
+            "it, or use HuggingFaceVLM."
+        )
+
+    def _decode_with_special_tokens(self, token_ids) -> str:
+        """Decode token ids into text, special tokens included."""
+        return self._get_tokenizer().decode(
+            list(token_ids), skip_special_tokens=False
+        )
 
     def _build_sampling_params(
         self, generate: bool, interest_mode: bool = False, **inference_kwargs
@@ -515,7 +566,10 @@ class VLLMBackend(VLMBackend):
         if tokens is None:
             return VLMOutput(token_probs=None, text=completion.text)
         reasoning_ids, answer_ids = tokens.split(
-            completion.token_ids, tokens.opens_block(output.prompt_token_ids or [])
+            completion.token_ids,
+            tokens.opens_block(
+                output.prompt_token_ids or [], self._decode_with_special_tokens
+            ),
         )
         if reasoning_ids is None:
             return VLMOutput(token_probs=None, text=completion.text)

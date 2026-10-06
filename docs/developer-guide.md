@@ -62,13 +62,16 @@ behavior. Subclass it in your backend's test module and provide a
 
 A backend for local models that may think before answering can reuse
 `s3e/backends/thinking.py`, as {class}`~s3e.HuggingFaceVLM` and
-{class}`~s3e.VLLMBackend` do: `resolve_thinking_tokens` finds the model's
-delimiter pair, `ThinkingTokens.opens_block` and the most likely next token
-tell whether a query is about to think, `closing_text` or a generated
+{class}`~s3e.VLLMBackend` do:
+{func}`~s3e.backends.thinking.resolve_thinking_tokens` finds the model's
+delimiter pair, {meth}`~s3e.backends.thinking.ThinkingTokens.opens_block`
+and the most likely next token tell whether a query is about to think,
+{meth}`~s3e.backends.thinking.ThinkingTokens.closing_text` or a generated
 reasoning ends the block, and the answer token is read at the first
-non-whitespace position after it (`first_answer_step`). Text replies are
-split with `ThinkingTokens.split`, and the block's text goes in
-`VLMOutput.reasoning`.
+non-whitespace position after it
+({func}`~s3e.backends.thinking.leading_whitespace_tokens`). Text replies are
+split with {meth}`~s3e.backends.thinking.ThinkingTokens.split`, and the
+block's text goes in {attr}`VLMOutput.reasoning <s3e.VLMOutput.reasoning>`.
 
 ### A new translator
 

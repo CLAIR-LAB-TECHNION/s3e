@@ -690,9 +690,13 @@ def _request_output(prompt="chat:q", prompt_ids=(), token_ids=(), steps=(), text
     return output
 
 
-def _separator_output():
-    """Separator pass: greedy "\\n\\n", then the answer token."""
-    return _request_output(token_ids=[3, 4])
+def _separator_output(prompt_ids=(1, THINK_START, THINK_END)):
+    """Separator pass: greedy "\\n\\n", then the answer token.
+
+    Its default prompt ids extend the ``[1, ...]`` prompts ``LLM.chat``
+    returns in these tests, as the backend checks.
+    """
+    return _request_output(prompt_ids=prompt_ids, token_ids=[3, 4])
 
 
 def _readout_output(answer_probs):
@@ -836,11 +840,95 @@ class TestVLLMBackendThinking:
             assert prompt["multi_modal_data"] == {"image": [image]}
 
     @pytest.mark.parametrize(
+        "continuation_ids",
+        [
+            [1, 1, THINK_START, THINK_END],  # a second BOS
+            [2, THINK_START, THINK_END],  # another rendering
+            [],
+        ],
+    )
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_continuation_tokenized_differently_raises(
+        self, mock_llm_cls, mock_sp_cls, continuation_ids
+    ):
+        """The answer is never read from a prompt LLM.chat did not score."""
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, 2, THINK_START], steps=[{6: 1.0}])
+        ]
+        mock_llm.generate.side_effect = [
+            [_separator_output(prompt_ids=continuation_ids)],
+        ]
+
+        with pytest.raises(RuntimeError, match="LLM.chat scored"):
+            backend.query([], "q", interest_tokens=["Yes", "No"])
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_continuation_may_merge_the_last_prompt_token(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        """Appended text can merge with the prompt's last token ("\\n")."""
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, THINK_START, 3], steps=[{6: 1.0}])
+        ]
+        mock_llm.generate.side_effect = [
+            [_separator_output(prompt_ids=[1, THINK_START, 2, THINK_END])],
+            [_readout_output({4: 0.5, 5: 0.5})],
+        ]
+
+        result = backend.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert result.reasoning == ""
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_delimiter_in_the_users_text_opens_nothing(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        """A ``<think>`` the prompt mentions, followed by more text, is ignored."""
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[THINK_START, 1, 2], steps=[{4: 0.6, 5: 0.4}])
+        ]
+
+        result = backend.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert result.reasoning is None
+        assert result.token_probs == pytest.approx({"Yes": 0.6, "No": 0.4})
+        mock_llm.generate.assert_not_called()
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_fallback_renders_the_system_prompt_as_llm_chat_does(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _request_output(prompt=None, prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
+        ]
+        mock_llm.generate.side_effect = [
+            [_separator_output()],
+            [_readout_output({4: 0.5, 5: 0.5})],
+        ]
+
+        backend.query([], "q", system_prompt="sys", interest_tokens=["Yes", "No"])
+
+        chat_messages = mock_llm.chat.call_args.args[0][0]
+        rendered = mock_llm.get_tokenizer.return_value.apply_chat_template.call_args
+        assert rendered.args[0][0] == chat_messages[0] == {
+            "role": "system", "content": "sys"
+        }
+
+    @pytest.mark.parametrize(
         "token_ids, stop_reason, continuation, reasoning",
         [
             ([6, 6, THINK_END], THINK_END, "chat:qrr</think>", "rr"),
             ([6, 6], THINK_END, "chat:qrr</think>", "rr"),  # stop token left out
             ([6, 6, 6], None, "chat:qrrr\n</think>", "rrr"),  # budget ran out
+            ([6, 6, 0], None, "chat:qrr\n</think>", "rr"),  # stopped on EOS
         ],
     )
     @patch("s3e.backends.vllm.SamplingParams")
@@ -876,6 +964,31 @@ class TestVLLMBackendThinking:
         ]
         assert result.reasoning == reasoning
         assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1})
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_think_mode_opens_the_block_the_model_was_about_to_open(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        """Reasoning is generated inside the block, whatever generate()'s
+        first token would have been."""
+        backend, mock_llm = self._make_backend(mock_llm_cls, thinking="think")
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, 2], steps=[{THINK_START: 0.6, 4: 0.4}])
+        ]
+        mock_llm.generate.side_effect = [
+            [_request_output(token_ids=[6, THINK_END], stop_reason=THINK_END)],
+            [_separator_output()],
+            [_readout_output({4: 0.9, 5: 0.1})],
+        ]
+
+        result = backend.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert self._generated_prompts(mock_llm)[:2] == [
+            ["chat:q<think>"],
+            ["chat:q<think>r</think>"],
+        ]
+        assert result.reasoning == "r"
 
     @pytest.mark.parametrize(
         "prompt_ids, token_ids, text, reasoning",
