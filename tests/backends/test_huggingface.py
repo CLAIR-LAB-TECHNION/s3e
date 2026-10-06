@@ -954,13 +954,14 @@ def _logits_for(probs_by_id):
 class TestHuggingFaceVLMThinking:
     """Thinking blocks: detection, closing, thinking first, and text mode."""
 
-    def _make_vlm(self, mock_model_cls, mock_proc_cls, prompt_ids, first_step,
+    def _make_vlm(self, mock_model_cls, mock_proc_cls, prompt_ids, forward_steps,
                   generate=None, **vlm_kwargs):
         """A mocked HuggingFaceVLM over ``THINK_VOCAB``.
 
         ``prompt_ids`` is what the processor returns for every text;
-        ``first_step`` is the forward pass's next-token distribution;
-        ``generate`` is the side effect of ``model.generate``.
+        ``forward_steps`` are the next-token distributions of successive
+        forward passes (the last one repeats); ``generate`` is the side
+        effect of ``model.generate``.
         """
         from s3e.backends.huggingface import HuggingFaceVLM
 
@@ -970,8 +971,12 @@ class TestHuggingFaceVLMThinking:
         model.config.is_encoder_decoder = False
         model.generation_config.eos_token_id = 0
         model.generation_config.pad_token_id = 0
-        logits = _logits_for(first_step).expand(1, len(prompt_ids), -1)
-        model.side_effect = lambda *a, **k: MagicMock(logits=logits)
+        steps = [
+            _logits_for(probs).expand(1, len(prompt_ids), -1) for probs in forward_steps
+        ]
+        model.side_effect = lambda *a, **k: MagicMock(
+            logits=steps.pop(0) if len(steps) > 1 else steps[0]
+        )
         if generate is not None:
             model.generate.side_effect = generate
 
@@ -999,13 +1004,9 @@ class TestHuggingFaceVLMThinking:
         return vlm, model, processor
 
     @staticmethod
-    def _answer_generation(prompt_len, answer_probs):
-        """generate() output for the answer pass: "\\n\\n", then the answer."""
-        return MagicMock(
-            sequences=torch.tensor([[1] * prompt_len + [3, 4]]),
-            logits=(_logits_for({3: 0.9, 4: 0.1}).unsqueeze(0),
-                    _logits_for(answer_probs).unsqueeze(0)),
-        )
+    def _separator_then_answer(prompt_ids):
+        """generate() output of the separator pass: "\\n\\n", then "Yes"."""
+        return torch.tensor([prompt_ids + [3, 4]])
 
     def _texts_sent_to_processor(self, processor):
         return [c.kwargs["text"] for c in processor.call_args_list]
@@ -1015,11 +1016,14 @@ class TestHuggingFaceVLMThinking:
     def test_open_prompt_is_closed_and_answer_read_after_block(
         self, mock_model_cls, mock_proc_cls
     ):
+        from s3e.backends.thinking import MAX_SEPARATOR_TOKENS
+
+        prompt_ids = [1, THINK_START]
         vlm, model, processor = self._make_vlm(
             mock_model_cls, mock_proc_cls,
-            prompt_ids=[1, THINK_START],
-            first_step={6: 0.9, 4: 0.05, 5: 0.05},
-            generate=lambda **kwargs: self._answer_generation(2, {4: 0.8, 5: 0.2}),
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 0.9, 4: 0.05, 5: 0.05}, {4: 0.8, 5: 0.2}],
+            generate=lambda **kwargs: self._separator_then_answer(prompt_ids),
         )
 
         result = vlm.query([], "q", interest_tokens=["Yes", "No"])
@@ -1027,28 +1031,52 @@ class TestHuggingFaceVLMThinking:
         assert result.token_probs == pytest.approx({"Yes": 0.8, "No": 0.2}, abs=1e-6)
         assert result.argmax_in_interest is True
         assert result.reasoning == ""
-        assert self._texts_sent_to_processor(processor)[-1] == "chat:q</think>"
-        assert model.generate.call_args.kwargs["output_logits"] is True
+        # The separator pass sees the closed block; the answer is read from a
+        # forward pass over the block plus the separator it found.
+        assert self._texts_sent_to_processor(processor)[-2:] == [
+            "chat:q</think>",
+            "chat:q</think>\n\n",
+        ]
+        assert model.generate.call_args.kwargs["max_new_tokens"] == MAX_SEPARATOR_TOKENS
         assert model.generate.call_args.kwargs["do_sample"] is False
+        assert model.call_args.kwargs["logits_to_keep"] == 1
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_model_opening_a_block_gets_a_whole_empty_block(
         self, mock_model_cls, mock_proc_cls
     ):
+        prompt_ids = [1, 2]
         vlm, _, processor = self._make_vlm(
             mock_model_cls, mock_proc_cls,
-            prompt_ids=[1, 2],
-            first_step={THINK_START: 0.9, 4: 0.1},
-            generate=lambda **kwargs: self._answer_generation(2, {4: 0.3, 5: 0.7}),
+            prompt_ids=prompt_ids,
+            forward_steps=[{THINK_START: 0.9, 4: 0.1}, {4: 0.3, 5: 0.7}],
+            generate=lambda **kwargs: self._separator_then_answer(prompt_ids),
         )
 
         result = vlm.query([], "q", interest_tokens=["Yes", "No"])
 
         assert result.token_probs == pytest.approx({"Yes": 0.3, "No": 0.7}, abs=1e-6)
         assert self._texts_sent_to_processor(processor)[-1] == (
-            "chat:q<think>\n\n</think>"
+            "chat:q<think>\n\n</think>\n\n"
         )
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_answer_right_after_block_needs_no_separator(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        prompt_ids = [1, THINK_START]
+        vlm, _, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
+            generate=lambda **kwargs: torch.tensor([prompt_ids + [5]]),
+        )
+
+        vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert self._texts_sent_to_processor(processor)[-1] == "chat:q</think>"
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
@@ -1056,7 +1084,7 @@ class TestHuggingFaceVLMThinking:
         vlm, model, _ = self._make_vlm(
             mock_model_cls, mock_proc_cls,
             prompt_ids=[1, 2],
-            first_step={4: 0.6, 5: 0.4},
+            forward_steps=[{4: 0.6, 5: 0.4}],
         )
 
         result = vlm.query([], "q", interest_tokens=["Yes", "No"])
@@ -1064,6 +1092,7 @@ class TestHuggingFaceVLMThinking:
         assert result.token_probs == pytest.approx({"Yes": 0.6, "No": 0.4}, abs=1e-6)
         assert result.reasoning is None
         model.generate.assert_not_called()
+        assert model.call_count == 1
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
@@ -1071,7 +1100,7 @@ class TestHuggingFaceVLMThinking:
         vlm, model, _ = self._make_vlm(
             mock_model_cls, mock_proc_cls,
             prompt_ids=[1, THINK_START],
-            first_step={6: 0.9, 4: 0.1},
+            forward_steps=[{6: 0.9, 4: 0.1}],
             thinking_delimiters=None,
         )
 
@@ -1081,48 +1110,31 @@ class TestHuggingFaceVLMThinking:
         assert result.argmax_in_interest is False
         model.generate.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "generated, continuation, reasoning",
+        [
+            ([6, 6, THINK_END], "chat:qrr</think>", "rr"),
+            ([6, 6, 6], "chat:qrrr\n</think>", "rrr"),  # budget ran out
+        ],
+    )
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_think_mode_generates_reasoning_then_scores(
-        self, mock_model_cls, mock_proc_cls
+        self, mock_model_cls, mock_proc_cls, generated, continuation, reasoning
     ):
+        from s3e.backends.thinking import MAX_SEPARATOR_TOKENS
+
+        prompt_ids = [1, THINK_START]
+
         def generate(**kwargs):
-            if kwargs.get("output_logits"):
-                return self._answer_generation(2, {4: 0.9, 5: 0.1})
-            return torch.tensor([[1, THINK_START, 6, 6, THINK_END]])
+            if kwargs["max_new_tokens"] == MAX_SEPARATOR_TOKENS:
+                return self._separator_then_answer(prompt_ids)
+            return torch.tensor([prompt_ids + generated])
 
         vlm, model, processor = self._make_vlm(
             mock_model_cls, mock_proc_cls,
-            prompt_ids=[1, THINK_START],
-            first_step={6: 1.0},
-            generate=generate,
-            thinking="think",
-            max_thinking_tokens=5,
-        )
-
-        result = vlm.query([], "q", interest_tokens=["Yes", "No"])
-
-        think_call = model.generate.call_args_list[0].kwargs
-        assert think_call["max_new_tokens"] == 5
-        assert think_call["eos_token_id"] == [THINK_END, 0]
-        assert self._texts_sent_to_processor(processor)[-1] == "chat:qrr</think>"
-        assert result.reasoning == "rr"
-        assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1}, abs=1e-6)
-
-    @patch("s3e.backends.huggingface.AutoProcessor")
-    @patch("s3e.backends.huggingface._AutoModelClass")
-    def test_think_mode_closes_block_when_budget_runs_out(
-        self, mock_model_cls, mock_proc_cls
-    ):
-        def generate(**kwargs):
-            if kwargs.get("output_logits"):
-                return self._answer_generation(2, {4: 0.5, 5: 0.5})
-            return torch.tensor([[1, THINK_START, 6, 6, 6]])
-
-        vlm, _, processor = self._make_vlm(
-            mock_model_cls, mock_proc_cls,
-            prompt_ids=[1, THINK_START],
-            first_step={6: 1.0},
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.9, 5: 0.1}],
             generate=generate,
             thinking="think",
             max_thinking_tokens=3,
@@ -1130,8 +1142,15 @@ class TestHuggingFaceVLMThinking:
 
         result = vlm.query([], "q", interest_tokens=["Yes", "No"])
 
-        assert self._texts_sent_to_processor(processor)[-1] == "chat:qrrr\n</think>"
-        assert result.reasoning == "rrr"
+        think_call = model.generate.call_args_list[0].kwargs
+        assert think_call["max_new_tokens"] == 3
+        assert think_call["eos_token_id"] == [THINK_END, 0]
+        assert self._texts_sent_to_processor(processor)[-2:] == [
+            continuation,
+            continuation + "\n\n",
+        ]
+        assert result.reasoning == reasoning
+        assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1}, abs=1e-6)
 
     @pytest.mark.parametrize(
         "prompt_ids, generated, text, reasoning",
@@ -1150,7 +1169,7 @@ class TestHuggingFaceVLMThinking:
         vlm, _, _ = self._make_vlm(
             mock_model_cls, mock_proc_cls,
             prompt_ids=prompt_ids,
-            first_step={4: 1.0},
+            forward_steps=[{4: 1.0}],
             generate=lambda **kwargs: torch.tensor([prompt_ids + generated]),
         )
 
@@ -1167,7 +1186,7 @@ class TestHuggingFaceVLMThinking:
         vlm, _, processor = self._make_vlm(
             mock_model_cls, mock_proc_cls,
             prompt_ids=[1, 2],
-            first_step={4: 1.0},
+            forward_steps=[{4: 1.0}],
             chat_template_kwargs={"enable_thinking": False},
         )
 

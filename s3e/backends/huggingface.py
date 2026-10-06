@@ -21,7 +21,7 @@ from .backend import VLMBackend, VLMOutput, _validate_num_logprobs
 from .thinking import (
     DEFAULT_MAX_THINKING_TOKENS,
     MAX_SEPARATOR_TOKENS,
-    first_answer_step,
+    leading_whitespace_tokens,
     resolve_thinking_tokens,
     validate_thinking_options,
 )
@@ -366,24 +366,27 @@ class HuggingFaceVLM(VLMBackend):
         """Next-token probabilities at each continuation's answer position.
 
         Chat templates put whitespace between a closed block and the answer
-        (``"\\n\\n"`` for Qwen), so a few greedy steps are generated and each
-        row is read at its first token that is not whitespace.
+        (``"\\n\\n"`` for Qwen). A few greedy steps find it, and the answer
+        is then read from a forward pass over the continuation plus that
+        whitespace, the same kind of pass that scores every other query.
         """
         inputs = self._prepare_rows(continuations, images)
-        output = self.model.generate(
-            **inputs,
-            max_new_tokens=MAX_SEPARATOR_TOKENS,
-            do_sample=False,
-            output_logits=True,
-            return_dict_in_generate=True,
+        output_ids = self.model.generate(
+            **inputs, max_new_tokens=MAX_SEPARATOR_TOKENS, do_sample=False
         )
-        new_ids = self._trim_generated_sequences(output.sequences, inputs)
-        rows = []
-        for row, ids in enumerate(new_ids):
-            ids = [int(token_id) for token_id in ids][: len(output.logits)]
-            step = first_answer_step(self._decode_token_ids(ids))
-            rows.append(output.logits[step][row])
-        return torch.softmax(torch.stack(rows).float(), dim=-1)
+        texts = []
+        for continuation, sequence in zip(
+            continuations, self._trim_generated_sequences(output_ids, inputs)
+        ):
+            ids = [int(token_id) for token_id in sequence]
+            count = leading_whitespace_tokens(self._decode_token_ids(ids))
+            texts.append(
+                continuation
+                + self._decode_sequence(ids[:count], skip_special_tokens=False)
+            )
+        return self._forward_next_token_probs(
+            self._prepare_rows(texts, images), logits_to_keep=1
+        )
 
     def _prepare_rows(self, texts, images):
         """Processor inputs for prompts that all show the same images."""

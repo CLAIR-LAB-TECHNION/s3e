@@ -27,12 +27,15 @@ design with full context):
   come after a thinking block are re-run through ``LLM.generate`` on a text
   prompt. ``LLM.chat`` cannot continue a conversation from text we append, and
   re-sending the token ids it returns does not work either: they hold the
-  *expanded* image placeholders, which vLLM would expand a second time. So
-  the prompt is re-rendered with the tokenizer's chat template (images as
-  ``{"type": "image"}`` parts, as ``HuggingFaceVLM`` does), the closed block
-  is appended, and the images travel as ``multi_modal_data``, vLLM's
-  documented offline multimodal input. Only those rows pay for the extra
-  calls; other models never leave the ``LLM.chat`` path.
+  *expanded* image placeholders, which vLLM would expand a second time. The
+  text prompt is ``RequestOutput.prompt``, the conversation exactly as
+  ``LLM.chat`` rendered it (placeholders unexpanded), plus the closed block,
+  with the images as ``multi_modal_data``, vLLM's documented offline
+  multimodal input. Re-rendering with the tokenizer's chat template is only
+  a fallback for outputs without that text: vLLM's chat renderer differs
+  from it (e.g. it puts a newline after Qwen's image placeholder), and the
+  answer then shifts. Only thinking rows pay for the extra calls; other
+  models never leave the ``LLM.chat`` path.
 """
 
 import math
@@ -48,7 +51,7 @@ from .backend import VLMBackend, VLMOutput, _validate_num_logprobs
 from .thinking import (
     DEFAULT_MAX_THINKING_TOKENS,
     MAX_SEPARATOR_TOKENS,
-    first_answer_step,
+    leading_whitespace_tokens,
     resolve_thinking_tokens,
     validate_thinking_options,
 )
@@ -293,7 +296,10 @@ class VLLMBackend(VLMBackend):
             return results
 
         prompt_texts = [
-            self._render_prompt(images, prompts[row], system_prompt) for row in rows
+            outputs[row].prompt
+            if isinstance(outputs[row].prompt, str)
+            else self._render_prompt(images, prompts[row], system_prompt)
+            for row in rows
         ]
         if self.thinking == "think":
             continuations, reasonings = self._think(
@@ -318,9 +324,11 @@ class VLLMBackend(VLMBackend):
     def _render_prompt(self, images, prompt, system_prompt=None) -> str:
         """Render one conversation to text with the tokenizer's chat template.
 
-        Images become ``{"type": "image"}`` parts, which multimodal chat
-        templates turn into the model's placeholder text; ``LLM.generate``
-        expands the placeholders when the images come with the prompt.
+        A fallback for outputs that lack ``LLM.chat``'s own rendering, which
+        it may not match exactly (see the module notes). Images become
+        ``{"type": "image"}`` parts, which multimodal chat templates turn
+        into the model's placeholder text; ``LLM.generate`` expands the
+        placeholders when the images come with the prompt.
         """
         messages = []
         if system_prompt is not None:
@@ -392,29 +400,32 @@ class VLLMBackend(VLMBackend):
         """Score the answer token after each continuation's closed block.
 
         Chat templates put whitespace between a closed block and the answer
-        (``"\\n\\n"`` for Qwen), so a few greedy steps are generated and each
-        row is read at its first token that is not whitespace.
+        (``"\\n\\n"`` for Qwen). A few greedy steps find it, and the answer
+        is then scored with the same one-token pass as every other query, on
+        the continuation plus that whitespace. Reading it after a decode step
+        instead would differ: vLLM's prefill and decode kernels disagree
+        slightly for some architectures (e.g. Qwen3.5's linear attention).
         """
+        tokenizer = self._get_tokenizer()
+        separator_outputs = self.llm.generate(
+            [self._engine_prompt(text, images) for text in continuations],
+            SamplingParams(max_tokens=MAX_SEPARATOR_TOKENS, temperature=0.0),
+        )
+        texts = []
+        for text, output in zip(continuations, separator_outputs):
+            ids = [int(token_id) for token_id in output.outputs[0].token_ids]
+            count = leading_whitespace_tokens(decode_single_token_ids(tokenizer, ids))
+            texts.append(text + tokenizer.decode(ids[:count], skip_special_tokens=False))
+
         sampling_params = self._build_sampling_params(
-            False,
-            interest_tokens is not None,
-            **{**inference_kwargs, "max_tokens": MAX_SEPARATOR_TOKENS},
+            False, interest_tokens is not None, **inference_kwargs
         )
         outputs = self.llm.generate(
-            [self._engine_prompt(text, images) for text in continuations],
-            sampling_params,
+            [self._engine_prompt(text, images) for text in texts], sampling_params
         )
-        tokenizer = self._get_tokenizer()
-        results = []
-        for output in outputs:
-            step_tokens = decode_single_token_ids(
-                tokenizer, list(output.outputs[0].token_ids)
-            )
-            step = first_answer_step(step_tokens)
-            results.append(
-                self._to_vlm_output(output, False, interest_tokens, step=step)
-            )
-        return results
+        return [
+            self._to_vlm_output(output, False, interest_tokens) for output in outputs
+        ]
 
     def _build_sampling_params(
         self, generate: bool, interest_mode: bool = False, **inference_kwargs
@@ -455,12 +466,9 @@ class VLLMBackend(VLMBackend):
         return SamplingParams(**inference_kwargs)
 
     def _to_vlm_output(
-        self, output, generate: bool, interest_tokens=None, step: int = 0
+        self, output, generate: bool, interest_tokens=None
     ) -> VLMOutput:
-        """Convert one vLLM RequestOutput into a :class:`VLMOutput`.
-
-        Logprobs mode reads the distribution at generated position ``step``.
-        """
+        """Convert one vLLM RequestOutput into a :class:`VLMOutput`."""
         completion = output.outputs[0]
         if generate:
             return self._text_output(output)
@@ -469,7 +477,7 @@ class VLLMBackend(VLMBackend):
         # the default max_tokens=1 this is the only generated position and
         # reproduces HuggingFaceVLM's single-forward next-token distribution.
         logprobs_seq = completion.logprobs
-        if not logprobs_seq or len(logprobs_seq) <= step or logprobs_seq[step] is None:
+        if not logprobs_seq or logprobs_seq[0] is None:
             # With logprobs forced and max_tokens>=1 this should never happen.
             # Treat it as an internal inconsistency rather than silently
             # returning empty probabilities, because downstream calibration
@@ -481,10 +489,10 @@ class VLLMBackend(VLMBackend):
             )
 
         if interest_tokens is not None:
-            return self._interest_output(logprobs_seq[step], interest_tokens)
+            return self._interest_output(logprobs_seq[0], interest_tokens)
 
         token_probs: dict[str, float] = {}
-        for logprob in logprobs_seq[step].values():
+        for logprob in logprobs_seq[0].values():
             # Sum probabilities of duplicate decoded token strings, matching the
             # dedup HuggingFaceVLM and OpenAIVLM perform. Keeping the same
             # VLMOutput.token_probs shape is important because Platt calibration

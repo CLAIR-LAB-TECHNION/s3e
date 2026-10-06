@@ -307,11 +307,11 @@ Some VLMs reason in a delimited block (e.g. `<think>...</think>`) before answeri
 - In text mode (`scoring="text_match"`), the model always generates freely; the block is cut out of the reply, which is `None` if the block never closed within the generation length.
 - The block's text is in `VLMOutput.reasoning` (via `keep_raw=True`): `""` when the block was closed without reasoning, `None` when there was none.
 - `thinking_delimiters="auto"` (default): uses the first of the known pairs whose delimiters are both single tokens of the model's vocabulary: `<think>`/`</think>` (Qwen3/3.5, DeepSeek-R1, GLM, ...), `<|channel>`/`<channel|>` (Gemma 4), `[THINK]`/`[/THINK]` (Mistral reasoning models), and `<seed:think>`/`</seed:think>` (Seed). Models without any of them are unaffected. Pass one pair to use only that, or `None` to turn the handling off.
-- Not covered: tokenizers that do not expose the delimiters as single tokens, notably vLLM's Mistral-native tokenizer mode (`tokenizer_mode="mistral"`, the only one Magistral-Small-2509 ships; Ministral-3 reasoning models also ship HF tokenizer files, so `tokenizer_mode="hf"` works), and formats that end reasoning with a token sequence instead of one token, such as gpt-oss's harmony channels.
+- Not covered: tokenizers that do not expose the delimiters as single tokens, notably vLLM's Mistral-native tokenizer mode (`tokenizer_mode="mistral"`); and formats that end reasoning with a token sequence instead of one token, such as gpt-oss's harmony channels. So Mistral reasoning models are supported through `HuggingFaceVLM` only: with vLLM, Magistral-Small-2509 ships only Mistral-native tokenizer files, and Ministral-3 models fail inside vLLM's own image processing in HF tokenizer mode (vLLM 0.21).
 
 The extra passes that skip a block decode greedily; on HuggingFace they do not take the query's `inference_kwargs`.
 
-How checked models behave (yes/no questions about a toy scene):
+How checked models behave (yes/no questions about a toy scene; `HuggingFaceVLM` on CPU and GPU, `VLLMBackend` on GPU except for Ministral):
 
 - Qwen3.5-4B: its chat template opens the block. With the default `thinking="close"` the answers equal those with `enable_thinking=False`; without the handling, almost no probability fell on the answer tokens.
 - Gemma 4 (E2B): thinking is off by default and needs no handling. With `enable_thinking=True` the model opens the block itself, and both `close` and `think` answer correctly. `reasoning` starts with the model's `thought` label.

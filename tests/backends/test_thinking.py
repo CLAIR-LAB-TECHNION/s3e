@@ -8,7 +8,7 @@ import pytest
 from s3e.backends.thinking import (
     KNOWN_THINKING_DELIMITERS,
     ThinkingTokens,
-    first_answer_step,
+    leading_whitespace_tokens,
     resolve_thinking_tokens,
     validate_thinking_options,
 )
@@ -161,16 +161,16 @@ class TestSplit:
         assert TOKENS.split([6, END, 4], prompt_open=False) == (None, [6, END, 4])
 
 
-class TestFirstAnswerStep:
+class TestLeadingWhitespaceTokens:
     @pytest.mark.parametrize(
         "steps, expected",
         [
             (["Yes"], 0),
             (["\n\n", "Yes"], 1),
             (["\n", " ", "No"], 2),
-            (["\n\n", "\n"], 1),
+            (["\n\n", "\n"], 2),
             ([], 0),
         ],
     )
-    def test_skips_whitespace(self, steps, expected):
-        assert first_answer_step(steps) == expected
+    def test_counts_the_separator(self, steps, expected):
+        assert leading_whitespace_tokens(steps) == expected

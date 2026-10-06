@@ -16,7 +16,12 @@ template opened it, as Qwen3.5-4B's does by default) or when the model's
 most likely next token opens one. Backends then read the answer after the
 block: in text mode the block is cut out of the reply, and in logprobs mode
 the block is either closed at once (``"close"``) or generated first
-(``"think"``) before the answer token is scored.
+(``"think"``) before the answer token is scored. The answer is always read
+from a forward pass over the prompt, the closed block, and the whitespace
+the model puts after it, like the pass that scores every other query:
+reading it after a decode step instead can differ numerically, since some
+engines (e.g. vLLM with Qwen3.5's linear-attention layers) use different
+kernels for prefill and decode.
 """
 
 from collections.abc import Sequence
@@ -33,8 +38,8 @@ KNOWN_THINKING_DELIMITERS = (
 )
 THINKING_MODES = ("close", "think")
 DEFAULT_MAX_THINKING_TOKENS = 1024
-# Greedy steps allowed between a closed block and the answer token, for the
-# whitespace chat templates put there (e.g. "\n\n" after Qwen's "</think>").
+# Greedy steps that may find the whitespace chat templates put between a
+# closed block and the answer (e.g. "\n\n" after Qwen's "</think>").
 MAX_SEPARATOR_TOKENS = 8
 
 
@@ -166,12 +171,13 @@ def _resolve_pair(delimiters: "tuple[str, str]", tokenizer) -> "ThinkingTokens |
     return ThinkingTokens(delimiters[0], delimiters[1], token_ids[0], token_ids[1])
 
 
-def first_answer_step(step_tokens: Sequence[str]) -> int:
-    """Index of the first generated token that is not pure whitespace.
+def leading_whitespace_tokens(step_tokens: Sequence[str]) -> int:
+    """How many generated tokens come before the first non-whitespace one.
 
-    Falls back to the last step when every token is whitespace.
+    Backends append these tokens (the separator a chat template puts after a
+    closed block) to the continuation before scoring the answer token.
     """
     for step, token in enumerate(step_tokens):
         if token.strip():
             return step
-    return max(len(step_tokens) - 1, 0)
+    return len(step_tokens)

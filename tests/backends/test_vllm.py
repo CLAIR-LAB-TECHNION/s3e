@@ -661,7 +661,7 @@ def _think_tokenizer():
         THINK_VOCAB[seq[0]] for seq in seqs
     ]
     tokenizer.apply_chat_template.side_effect = (
-        lambda messages, **kwargs: f"chat:{messages[-1]['content'][-1]['text']}"
+        lambda messages, **kwargs: f"render:{messages[-1]['content'][-1]['text']}"
     )
     return tokenizer
 
@@ -675,21 +675,29 @@ def _step(probs_by_id):
     }
 
 
-def _request_output(prompt_ids=(), token_ids=(), steps=(), text="", stop_reason=None):
+def _request_output(prompt="chat:q", prompt_ids=(), token_ids=(), steps=(), text="",
+                    stop_reason=None):
+    """A mock RequestOutput; ``prompt`` is the text LLM.chat rendered."""
     completion = MagicMock()
     completion.token_ids = list(token_ids)
     completion.logprobs = [_step(probs) for probs in steps]
     completion.text = text
     completion.stop_reason = stop_reason
     output = MagicMock()
+    output.prompt = prompt
     output.prompt_token_ids = list(prompt_ids)
     output.outputs = [completion]
     return output
 
 
-def _answer_output(answer_probs):
-    """Answer pass: "\\n\\n" first, then the answer token."""
-    return _request_output(token_ids=[3, 4], steps=[{3: 0.9, 4: 0.1}, answer_probs])
+def _separator_output():
+    """Separator pass: greedy "\\n\\n", then the answer token."""
+    return _request_output(token_ids=[3, 4])
+
+
+def _readout_output(answer_probs):
+    """Readout pass: the one-token logprobs of the answer position."""
+    return _request_output(steps=[answer_probs])
 
 
 class TestVLLMBackendThinking:
@@ -710,8 +718,12 @@ class TestVLLMBackendThinking:
         return backend, mock_llm
 
     @staticmethod
-    def _generated_prompts(mock_llm, call=-1):
-        return mock_llm.generate.call_args_list[call].args[0]
+    def _generated_prompts(mock_llm):
+        """The prompt texts of every ``LLM.generate`` call, in order."""
+        return [
+            [prompt["prompt"] for prompt in call.args[0]]
+            for call in mock_llm.generate.call_args_list
+        ]
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
@@ -724,17 +736,30 @@ class TestVLLMBackendThinking:
         mock_llm.chat.return_value = [
             _request_output(prompt_ids=[1, THINK_START], steps=[{6: 0.9, 4: 0.1}])
         ]
-        mock_llm.generate.return_value = [_answer_output({4: 0.8, 5: 0.2})]
+        mock_llm.generate.side_effect = [
+            [_separator_output()],
+            [_readout_output({4: 0.8, 5: 0.2})],
+        ]
 
         result = backend.query([], "q", interest_tokens=["Yes", "No"])
 
         assert result.token_probs == pytest.approx({"Yes": 0.8, "No": 0.2})
         assert result.argmax_in_interest is True
         assert result.reasoning == ""
-        assert self._generated_prompts(mock_llm) == [{"prompt": "chat:q</think>"}]
-        answer_params = mock_sp_cls.call_args.kwargs
-        assert answer_params["max_tokens"] == MAX_SEPARATOR_TOKENS
-        assert answer_params["logprobs"] == -1
+        # Continues LLM.chat's own rendering; the tokenizer template is unused.
+        assert self._generated_prompts(mock_llm) == [
+            ["chat:q</think>"],
+            ["chat:q</think>\n\n"],
+        ]
+        mock_llm.get_tokenizer.return_value.apply_chat_template.assert_not_called()
+        separator_params, readout_params = (
+            c.kwargs for c in mock_sp_cls.call_args_list[-2:]
+        )
+        assert separator_params == {
+            "max_tokens": MAX_SEPARATOR_TOKENS, "temperature": 0.0
+        }
+        assert readout_params["max_tokens"] == 1
+        assert readout_params["logprobs"] == -1
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
@@ -745,13 +770,16 @@ class TestVLLMBackendThinking:
         mock_llm.chat.return_value = [
             _request_output(prompt_ids=[1, 2], steps=[{THINK_START: 0.9, 4: 0.1}])
         ]
-        mock_llm.generate.return_value = [_answer_output({4: 0.3, 5: 0.7})]
+        mock_llm.generate.side_effect = [
+            [_separator_output()],
+            [_readout_output({4: 0.3, 5: 0.7})],
+        ]
 
         result = backend.query([], "q", interest_tokens=["Yes", "No"])
 
         assert result.token_probs == pytest.approx({"Yes": 0.3, "No": 0.7})
-        assert self._generated_prompts(mock_llm) == [
-            {"prompt": "chat:q<think>\n\n</think>"}
+        assert self._generated_prompts(mock_llm)[-1] == [
+            "chat:q<think>\n\n</think>\n\n"
         ]
 
     @patch("s3e.backends.vllm.SamplingParams")
@@ -770,20 +798,42 @@ class TestVLLMBackendThinking:
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
-    def test_images_travel_with_the_continuation(self, mock_llm_cls, mock_sp_cls):
+    def test_falls_back_to_the_tokenizer_template(self, mock_llm_cls, mock_sp_cls):
+        """Outputs without LLM.chat's rendering are re-rendered, with images."""
         backend, mock_llm = self._make_backend(mock_llm_cls)
         mock_llm.chat.return_value = [
-            _request_output(prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
+            _request_output(prompt=None, prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
         ]
-        mock_llm.generate.return_value = [_answer_output({4: 0.5, 5: 0.5})]
+        mock_llm.generate.side_effect = [
+            [_separator_output()],
+            [_readout_output({4: 0.5, 5: 0.5})],
+        ]
         image = Image.new("RGB", (8, 8))
 
         backend.query([image], "q", interest_tokens=["Yes", "No"])
 
-        (prompt,) = self._generated_prompts(mock_llm)
-        assert prompt["multi_modal_data"] == {"image": [image]}
+        assert self._generated_prompts(mock_llm)[0] == ["render:q</think>"]
         rendered = mock_llm.get_tokenizer.return_value.apply_chat_template.call_args
         assert rendered.args[0][-1]["content"][0] == {"type": "image"}
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_images_travel_with_every_continuation(self, mock_llm_cls, mock_sp_cls):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
+        ]
+        mock_llm.generate.side_effect = [
+            [_separator_output()],
+            [_readout_output({4: 0.5, 5: 0.5})],
+        ]
+        image = Image.new("RGB", (8, 8))
+
+        backend.query([image], "q", interest_tokens=["Yes", "No"])
+
+        for call in mock_llm.generate.call_args_list:
+            (prompt,) = call.args[0]
+            assert prompt["multi_modal_data"] == {"image": [image]}
 
     @pytest.mark.parametrize(
         "token_ids, stop_reason, continuation, reasoning",
@@ -807,13 +857,17 @@ class TestVLLMBackendThinking:
         ]
         mock_llm.generate.side_effect = [
             [_request_output(token_ids=token_ids, stop_reason=stop_reason)],
-            [_answer_output({4: 0.9, 5: 0.1})],
+            [_separator_output()],
+            [_readout_output({4: 0.9, 5: 0.1})],
         ]
 
         result = backend.query([], "q", interest_tokens=["Yes", "No"])
 
-        assert self._generated_prompts(mock_llm, 0) == [{"prompt": "chat:q"}]
-        assert self._generated_prompts(mock_llm, 1) == [{"prompt": continuation}]
+        assert self._generated_prompts(mock_llm) == [
+            ["chat:q"],
+            [continuation],
+            [continuation + "\n\n"],
+        ]
         think_params = [
             c.kwargs for c in mock_sp_cls.call_args_list if "stop_token_ids" in c.kwargs
         ]
@@ -857,9 +911,12 @@ class TestVLLMBackendThinking:
             mock_llm_cls, chat_template_kwargs={"enable_thinking": False}
         )
         mock_llm.chat.return_value = [
-            _request_output(prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
+            _request_output(prompt=None, prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
         ]
-        mock_llm.generate.return_value = [_answer_output({4: 0.5, 5: 0.5})]
+        mock_llm.generate.side_effect = [
+            [_separator_output()],
+            [_readout_output({4: 0.5, 5: 0.5})],
+        ]
 
         backend.query([], "q", interest_tokens=["Yes", "No"])
 
@@ -1030,7 +1087,11 @@ class TestVLLMBackendThinkingIntegration:
         return Image.new("RGB", (64, 64), color=(200, 30, 30))
 
     def test_closing_the_block_matches_thinking_off(self, backend, image):
-        """The closed block is the template's own thinking-off prompt."""
+        """The closed block plus separator is the thinking-off prompt.
+
+        Both are read from a prefill over the same token ids, so the
+        probabilities agree to float precision, not just approximately.
+        """
         closed = backend.query([image], self.PROMPT, interest_tokens=["Yes", "No"])
         backend.chat_template_kwargs = {"enable_thinking": False}
         try:
@@ -1042,7 +1103,7 @@ class TestVLLMBackendThinkingIntegration:
         assert off.reasoning is None
         for token in ("Yes", "No"):
             assert closed.token_probs[token] == pytest.approx(
-                off.token_probs[token], abs=0.02
+                off.token_probs[token], abs=1e-3
             )
 
     def test_think_mode_generates_reasoning(self, backend, image):
