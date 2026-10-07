@@ -36,6 +36,9 @@ the commit history and PyPI release dates when this file was introduced.
   generated first (`thinking="think"`, up to `max_thinking_tokens`) before the
   answer token is scored; in text mode the block is cut out of the reply.
   The block's text is in the new `VLMOutput.reasoning`.
+- A thinking-models section in the walkthrough notebook: Qwen3.5-0.8B with
+  its thinking block ignored, closed, and thought through, and the tradeoff
+  between the accuracy reasoning can add and the time it costs.
 
 ### Changed
 - Runtime dependencies and extras declare minimum supported versions, which
