@@ -105,12 +105,18 @@ class TestVLLMBackendMocked:
     def _requires_vllm(self):
         pytest.importorskip("vllm", reason="vllm not installed (s3e[dev-gpu])")
 
-    def _make_backend(self, mock_llm_cls, num_logprobs=None):
-        """Construct a VLLMBackend whose engine is the mocked LLM instance."""
+    def _make_backend(self, mock_llm_cls, num_logprobs=None, tokenizer=None):
+        """Construct a VLLMBackend whose engine is the mocked LLM instance.
+
+        ``tokenizer`` is the engine's tokenizer, which the backend fetches
+        when it is constructed.
+        """
         from s3e.backends.vllm import VLLMBackend
 
         mock_llm = MagicMock()
         mock_llm_cls.return_value = mock_llm
+        if tokenizer is not None:
+            mock_llm.get_tokenizer.return_value = tokenizer
         with patch("torch.cuda.device_count", return_value=1):
             backend = VLLMBackend("test/model", num_logprobs=num_logprobs)
         return backend, mock_llm
@@ -373,8 +379,9 @@ class TestVLLMBackendMocked:
     def test_interest_mode_requests_detokenize_false(
         self, mock_llm_cls, mock_sp_cls
     ):
-        backend, mock_llm = self._make_backend(mock_llm_cls)
-        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(["yes", "no"])
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, tokenizer=_make_id_tokenizer(["yes", "no"])
+        )
         mock_llm.chat.return_value = [
             _make_id_logprobs_output({0: _math.log(0.8), 1: _math.log(0.2)})
         ]
@@ -403,9 +410,8 @@ class TestVLLMBackendMocked:
     def test_interest_matches_by_token_id_and_backfills(
         self, mock_llm_cls, mock_sp_cls
     ):
-        backend, mock_llm = self._make_backend(mock_llm_cls)
-        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(
-            ["yes", "no", "maybe"]
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, tokenizer=_make_id_tokenizer(["yes", "no", "maybe"])
         )
         mock_llm.chat.return_value = [
             _make_id_logprobs_output(
@@ -427,8 +433,9 @@ class TestVLLMBackendMocked:
     def test_interest_sums_duplicate_ids_decoding_to_same_string(
         self, mock_llm_cls, mock_sp_cls
     ):
-        backend, mock_llm = self._make_backend(mock_llm_cls)
-        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(["yes", "yes"])
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, tokenizer=_make_id_tokenizer(["yes", "yes"])
+        )
         mock_llm.chat.return_value = [
             _make_id_logprobs_output({0: _math.log(0.4), 1: _math.log(0.2)})
         ]
@@ -442,8 +449,9 @@ class TestVLLMBackendMocked:
     def test_interest_argmax_false_when_top_id_outside_interest(
         self, mock_llm_cls, mock_sp_cls
     ):
-        backend, mock_llm = self._make_backend(mock_llm_cls)
-        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(["maybe", "yes"])
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, tokenizer=_make_id_tokenizer(["maybe", "yes"])
+        )
         mock_llm.chat.return_value = [
             _make_id_logprobs_output({0: _math.log(0.5), 1: _math.log(0.4)})
         ]
@@ -458,9 +466,8 @@ class TestVLLMBackendMocked:
     def test_interest_reverse_index_is_built_once(
         self, mock_llm_cls, mock_sp_cls
     ):
-        backend, mock_llm = self._make_backend(mock_llm_cls)
         tokenizer = _make_id_tokenizer(["yes", "no"])
-        mock_llm.get_tokenizer.return_value = tokenizer
+        backend, mock_llm = self._make_backend(mock_llm_cls, tokenizer=tokenizer)
         mock_llm.chat.return_value = [
             _make_id_logprobs_output({0: _math.log(0.8), 1: _math.log(0.2)})
         ]
@@ -476,9 +483,8 @@ class TestVLLMBackendMocked:
     def test_unsupported_interest_tokens_reports_multi_token_strings(
         self, mock_llm_cls, mock_sp_cls
     ):
-        backend, mock_llm = self._make_backend(mock_llm_cls)
-        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(
-            ["yes", "no", "dark", "blue"]
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, tokenizer=_make_id_tokenizer(["yes", "no", "dark", "blue"])
         )
 
         unsupported = backend.unsupported_interest_tokens(["yes", "dark blue"])
@@ -491,8 +497,9 @@ class TestVLLMBackendMocked:
         self, mock_llm_cls, mock_sp_cls
     ):
         """detokenize=False forbids stop strings, so stop wins."""
-        backend, mock_llm = self._make_backend(mock_llm_cls)
-        mock_llm.get_tokenizer.return_value = _make_id_tokenizer(["yes"])
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, tokenizer=_make_id_tokenizer(["yes"])
+        )
         mock_llm.chat.return_value = [
             _make_id_logprobs_output({0: _math.log(0.8)})
         ]
@@ -646,8 +653,12 @@ THINK_VOCAB = ["<pad>", "q", "x", "\n\n", "Yes", "No", "r", "<think>", "</think>
 THINK_START, THINK_END = 7, 8
 
 
-def _think_tokenizer():
-    """A mock tokenizer over ``THINK_VOCAB`` with a chat template."""
+def _think_tokenizer(reads_enable_thinking=False, opens=False):
+    """A mock tokenizer over ``THINK_VOCAB`` with a chat template.
+
+    With ``reads_enable_thinking``, the template renders an open block when
+    ``enable_thinking`` is set; with ``opens``, it always opens one.
+    """
     tokenizer = MagicMock()
     tokenizer.__len__.return_value = len(THINK_VOCAB)
     tokenizer.all_special_ids = [0]
@@ -660,9 +671,15 @@ def _think_tokenizer():
     tokenizer.batch_decode.side_effect = lambda seqs, **kwargs: [
         THINK_VOCAB[seq[0]] for seq in seqs
     ]
-    tokenizer.apply_chat_template.side_effect = (
-        lambda messages, **kwargs: f"render:{messages[-1]['content'][-1]['text']}"
-    )
+    def render(messages, **kwargs):
+        text = f"render:{messages[-1]['content'][-1]['text']}"
+        if reads_enable_thinking:
+            text += "<think>\n" if kwargs.get("enable_thinking") else "<think>\n\n</think>\n\n"
+        elif opens:
+            text += "<think>\n"
+        return text
+
+    tokenizer.apply_chat_template.side_effect = render
     return tokenizer
 
 
@@ -711,14 +728,17 @@ class TestVLLMBackendThinking:
     def _requires_vllm(self):
         pytest.importorskip("vllm", reason="vllm not installed (s3e[dev-gpu])")
 
-    def _make_backend(self, mock_llm_cls, **kwargs):
+    def _make_backend(self, mock_llm_cls, tokenizer=None, **kwargs):
         from s3e.backends.vllm import VLLMBackend
 
         mock_llm = MagicMock()
         mock_llm_cls.return_value = mock_llm
-        mock_llm.get_tokenizer.return_value = _think_tokenizer()
+        tokenizer = tokenizer or _think_tokenizer()
+        mock_llm.get_tokenizer.return_value = tokenizer
         with patch("torch.cuda.device_count", return_value=1):
             backend = VLLMBackend("test/model", **kwargs)
+        # Forget the renderings that looked for a thinking switch.
+        tokenizer.apply_chat_template.reset_mock()
         return backend, mock_llm
 
     @staticmethod
@@ -922,6 +942,7 @@ class TestVLLMBackendThinking:
             "role": "system", "content": "sys"
         }
 
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
         "token_ids, stop_reason, continuation, reasoning",
         [
@@ -938,7 +959,7 @@ class TestVLLMBackendThinking:
         reasoning,
     ):
         backend, mock_llm = self._make_backend(
-            mock_llm_cls, thinking="think", max_thinking_tokens=3
+            mock_llm_cls, thinking=True, max_thinking_tokens=3
         )
         mock_llm.chat.return_value = [
             _request_output(prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
@@ -965,6 +986,7 @@ class TestVLLMBackendThinking:
         assert result.reasoning == reasoning
         assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1})
 
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
     def test_think_mode_opens_the_block_the_model_was_about_to_open(
@@ -972,7 +994,7 @@ class TestVLLMBackendThinking:
     ):
         """Reasoning is generated inside the block, whatever generate()'s
         first token would have been."""
-        backend, mock_llm = self._make_backend(mock_llm_cls, thinking="think")
+        backend, mock_llm = self._make_backend(mock_llm_cls, thinking=True)
         mock_llm.chat.return_value = [
             _request_output(prompt_ids=[1, 2], steps=[{THINK_START: 0.6, 4: 0.4}])
         ]
@@ -990,6 +1012,7 @@ class TestVLLMBackendThinking:
         ]
         assert result.reasoning == "r"
 
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
         "prompt_ids, token_ids, text, reasoning",
         [
@@ -1004,7 +1027,7 @@ class TestVLLMBackendThinking:
     def test_text_mode_moves_block_to_reasoning(
         self, mock_llm_cls, mock_sp_cls, prompt_ids, token_ids, text, reasoning
     ):
-        backend, mock_llm = self._make_backend(mock_llm_cls)
+        backend, mock_llm = self._make_backend(mock_llm_cls, thinking=True)
         mock_llm.chat.return_value = [
             _request_output(prompt_ids=prompt_ids, token_ids=token_ids, text="raw")
         ]
@@ -1014,6 +1037,105 @@ class TestVLLMBackendThinking:
         assert result.text == text
         assert result.reasoning == reasoning
         mock_llm.generate.assert_not_called()
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_text_mode_continues_after_a_block_the_template_opens(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        """LLM.chat only renders; the reply is generated after the closed block."""
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, tokenizer=_think_tokenizer(opens=True)
+        )
+        mock_llm.chat.return_value = [
+            _request_output(prompt="chat:q<think>\n", prompt_ids=[1, THINK_START])
+        ]
+        mock_llm.generate.return_value = [
+            _request_output(prompt_ids=[1, THINK_START, THINK_END], text="\n\nYes")
+        ]
+
+        result = backend.query([], "q", generate=True, max_tokens=5)
+
+        assert (result.text, result.reasoning) == ("Yes", "")
+        assert self._generated_prompts(mock_llm) == [["chat:q<think>\n\n</think>"]]
+        sampling = [c.kwargs for c in mock_sp_cls.call_args_list]
+        assert {"max_tokens": 1, "temperature": 0.0} in sampling  # the render-only chat
+        assert {"max_tokens": 5, "temperature": 0.0} in sampling  # the reply
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_text_mode_regenerates_a_reply_that_opens_a_block(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, 2], token_ids=[THINK_START]),
+            _request_output(prompt_ids=[1, 2], token_ids=[4], text="Yes"),
+        ]
+        mock_llm.generate.return_value = [
+            _request_output(prompt_ids=[1, 2, THINK_START, 3, THINK_END], text="\n\nNo")
+        ]
+
+        results = backend.query_batch([], ["q", "q"], generate=True)
+
+        assert [(r.text, r.reasoning) for r in results] == [("No", ""), ("Yes", None)]
+        assert self._generated_prompts(mock_llm) == [["chat:q<think>\n\n</think>"]]
+        assert any(
+            c.kwargs.get("stop_token_ids") == [THINK_START]
+            for c in mock_sp_cls.call_args_list
+        )
+
+    @pytest.mark.parametrize(
+        "kwargs, enable_thinking",
+        [({}, False), ({"thinking": True}, True)],
+    )
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_thinking_sets_the_templates_switch(
+        self, mock_llm_cls, mock_sp_cls, kwargs, enable_thinking
+    ):
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, tokenizer=_think_tokenizer(reads_enable_thinking=True), **kwargs
+        )
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, 2], steps=[{4: 1.0}])
+        ]
+
+        backend.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert mock_llm.chat.call_args.kwargs == {
+            "chat_template_kwargs": {"enable_thinking": enable_thinking}
+        }
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_text_only_template_switch_is_found(self, mock_llm_cls, mock_sp_cls):
+        """A template that takes string content (Seed-OSS) is probed with it."""
+        tokenizer = _think_tokenizer()
+
+        def render(messages, **kwargs):
+            if not isinstance(messages[-1]["content"], str):
+                raise TypeError("can only concatenate str")
+            budget = kwargs.get("thinking_budget", -1)
+            return "assistant\n" + ("<think>\n\n</think>" if budget == 0 else "")
+
+        tokenizer.apply_chat_template.side_effect = render
+        backend, mock_llm = self._make_backend(mock_llm_cls, tokenizer=tokenizer)
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, 2], steps=[{4: 1.0}])
+        ]
+
+        backend.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert mock_llm.chat.call_args.kwargs == {
+            "chat_template_kwargs": {"thinking_budget": 0}
+        }
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_thinking_on_warns_without_a_way_to_think(self, mock_llm_cls, mock_sp_cls):
+        with pytest.warns(UserWarning, match="no way to turn thinking on"):
+            self._make_backend(mock_llm_cls, thinking=True)
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
@@ -1056,7 +1178,8 @@ class TestVLLMBackendThinking:
     @pytest.mark.parametrize(
         "kwargs",
         [
-            {"thinking": "skip"},
+            {"thinking": "think"},
+            {"thinking": True, "thinking_delimiters": None},
             {"max_thinking_tokens": 0},
             {"thinking_delimiters": ("<think>",)},
         ],
@@ -1170,9 +1293,10 @@ class TestVLLMBackendIntegration:
 class TestVLLMBackendThinkingIntegration:
     """Thinking handling with a real thinking model via vLLM.
 
-    Qwen3.5-0.8B's template leaves thinking off by default; the backend turns
-    it on through ``chat_template_kwargs``, so every prompt ends inside an
-    open ``<think>`` block. Same GPU requirements as
+    Qwen3.5-0.8B's template reads ``enable_thinking``, which the backend sets
+    from ``thinking``; turning it on through ``chat_template_kwargs`` instead
+    makes every prompt end inside an open ``<think>`` block, which
+    ``thinking=False`` closes. Same GPU requirements as
     :class:`TestVLLMBackendIntegration`.
     """
 
@@ -1188,7 +1312,6 @@ class TestVLLMBackendThinkingIntegration:
         return VLLMBackend(
             self.THINKING_VLM_ID,
             tensor_parallel_size=1,
-            chat_template_kwargs={"enable_thinking": True},
             gpu_memory_utilization=0.3,
             max_model_len=4096,
             enforce_eager=True,
@@ -1205,12 +1328,12 @@ class TestVLLMBackendThinkingIntegration:
         Both are read from a prefill over the same token ids, so the
         probabilities agree to float precision, not just approximately.
         """
-        closed = backend.query([image], self.PROMPT, interest_tokens=["Yes", "No"])
-        backend.chat_template_kwargs = {"enable_thinking": False}
+        off = backend.query([image], self.PROMPT, interest_tokens=["Yes", "No"])
+        backend.chat_template_kwargs = {"enable_thinking": True}
         try:
-            off = backend.query([image], self.PROMPT, interest_tokens=["Yes", "No"])
+            closed = backend.query([image], self.PROMPT, interest_tokens=["Yes", "No"])
         finally:
-            backend.chat_template_kwargs = {"enable_thinking": True}
+            backend.chat_template_kwargs = {}
 
         assert closed.reasoning == ""
         assert off.reasoning is None
@@ -1219,20 +1342,34 @@ class TestVLLMBackendThinkingIntegration:
                 off.token_probs[token], abs=1e-3
             )
 
-    def test_think_mode_generates_reasoning(self, backend, image):
-        backend.thinking, backend.max_thinking_tokens = "think", 64
+    def test_thinking_generates_reasoning(self, backend, image):
+        backend.thinking, backend.max_thinking_tokens = True, 64
         try:
             result = backend.query([image], self.PROMPT, interest_tokens=["Yes", "No"])
         finally:
-            backend.thinking, backend.max_thinking_tokens = "close", 1024
+            backend.thinking, backend.max_thinking_tokens = False, 1024
 
         assert result.reasoning
         assert sum(result.token_probs.values()) > 0.5
 
     def test_text_mode_moves_block_to_reasoning(self, backend, image):
-        result = backend.query([image], self.PROMPT, generate=True, max_tokens=64)
+        backend.thinking = True
+        try:
+            result = backend.query([image], self.PROMPT, generate=True, max_tokens=64)
+        finally:
+            backend.thinking = False
 
         assert result.reasoning
+
+    def test_text_mode_answers_after_a_closed_block(self, backend, image):
+        backend.chat_template_kwargs = {"enable_thinking": True}
+        try:
+            result = backend.query([image], self.PROMPT, generate=True, max_tokens=8)
+        finally:
+            backend.chat_template_kwargs = {}
+
+        assert result.reasoning == ""
+        assert result.text
 
 
 @pytest.mark.slow

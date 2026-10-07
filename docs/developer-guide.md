@@ -63,9 +63,15 @@ behavior. Subclass it in your backend's test module and provide a
 
 A backend for local models that may think before answering can reuse
 `s3e/backends/utils/thinking.py`, as {class}`~s3e.HuggingFaceVLM` and
-{class}`~s3e.VLLMBackend` do:
+{class}`~s3e.VLLMBackend` do. At construction,
 {func}`~s3e.backends.utils.thinking.resolve_thinking_tokens` finds the
 model's delimiter pair,
+{func}`~s3e.backends.utils.thinking.find_thinking_switch` finds its chat
+template's thinking switch by rendering a probe conversation, and
+{func}`~s3e.backends.utils.thinking.warn_if_thinking_unavailable` tells the
+user when `thinking=True` cannot work; every query is then rendered with
+{func}`~s3e.backends.utils.thinking.thinking_template_kwargs`. Where a block
+still appears,
 {meth}`~s3e.backends.utils.thinking.ThinkingTokens.opens_block` and the most
 likely next token tell whether a query is about to think,
 {meth}`~s3e.backends.utils.thinking.ThinkingTokens.closing_text` or a

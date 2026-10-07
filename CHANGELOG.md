@@ -28,14 +28,17 @@ the commit history and PyPI release dates when this file was introduced.
   the README Quick Start, and the tutorial notebook on CPU.
 - SPDX license headers in every Python source file.
 - Thinking-model support in `HuggingFaceVLM` and `VLLMBackend`: a
-  `chat_template_kwargs` argument (e.g. `{"enable_thinking": False}`), and
-  detection of thinking blocks, whose delimiters are found among those of
-  known model families (`<think>`, Gemma 4's `<|channel>`, Mistral's
-  `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). In logprobs mode a
-  detected block is closed at once (`thinking="close"`, the default) or
-  generated first (`thinking="think"`, up to `max_thinking_tokens`) before the
-  answer token is scored; in text mode the block is cut out of the reply.
-  The block's text is in the new `VLMOutput.reasoning`.
+  `thinking` flag. `thinking=False` (the default) turns thinking off through
+  the chat template's switch, found by rendering (`enable_thinking`,
+  `thinking`, or Seed's `thinking_budget`), and otherwise closes any
+  thinking block at once, so the answer follows an empty block, in logprobs
+  and text mode alike. `thinking=True` turns the switch on and lets the
+  model reason first (up to `max_thinking_tokens` in logprobs mode), with a
+  warning when it cannot. Blocks are found by their delimiters, among those
+  of known model families (`<think>`, Gemma 4's `<|channel>`, Mistral's
+  `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). The
+  block's text is in the new `VLMOutput.reasoning`, and a
+  `chat_template_kwargs` argument passes other template variables.
 - A thinking-models section in the walkthrough notebook: Qwen3.5-0.8B with
   its thinking block ignored, closed, and thought through, and the tradeoff
   between the accuracy reasoning can add and the time it costs.

@@ -36,17 +36,28 @@ Some models reason in a delimited block before they answer (e.g.
 ``<think>...</think>``), opened by the chat template (Qwen3.5-4B and larger),
 by a default system prompt (Mistral reasoning models), or on request (Gemma 4
 with ``enable_thinking=True``). :class:`HuggingFaceVLM` and
-:class:`VLLMBackend` detect the block and read the answer after it; their
-``chat_template_kwargs``, ``thinking``, ``max_thinking_tokens``, and
-``thinking_delimiters`` arguments control how, and
+:class:`VLLMBackend` take a ``thinking`` flag: ``False`` (the default) turns
+thinking off through the chat template's switch, or closes any block that
+still appears; ``True`` turns the switch on and lets the model reason first.
+Their ``max_thinking_tokens``, ``thinking_delimiters``, and
+``chat_template_kwargs`` arguments refine this, and
 :attr:`VLMOutput.reasoning` holds the block's text. The user guide's
 *Thinking models* section covers the options and the models they do not
 cover.
 
+.. autodata:: s3e.backends.utils.thinking.KNOWN_THINKING_SWITCHES
+   :no-value:
+
 .. autodata:: s3e.backends.utils.thinking.KNOWN_THINKING_DELIMITERS
    :no-value:
 
-Helpers for backends that skip thinking blocks (see the developer guide):
+Helpers for backends that handle thinking models (see the developer guide):
+
+.. autofunction:: s3e.backends.utils.thinking.find_thinking_switch
+
+.. autofunction:: s3e.backends.utils.thinking.thinking_template_kwargs
+
+.. autofunction:: s3e.backends.utils.thinking.warn_if_thinking_unavailable
 
 .. autofunction:: s3e.backends.utils.thinking.resolve_thinking_tokens
 

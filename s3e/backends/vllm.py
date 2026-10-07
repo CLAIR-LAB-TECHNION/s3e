@@ -23,24 +23,26 @@ design with full context):
 * Requires vLLM >= 0.11.0: full-vocab logprobs via ``SamplingParams(logprobs=-1)``
   and ``LLM(max_logprobs=-1)`` landed in 0.11.0 (vllm-project/vllm#25031); older
   engines reject ``-1`` at construction. The pin lives in ``pyproject.toml``.
-* Thinking models (see :mod:`s3e.backends.utils.thinking`): rows whose answer would
-  come after a thinking block are re-run through ``LLM.generate`` on a text
-  prompt. ``LLM.chat`` cannot continue a conversation from text we append, and
-  re-sending the token ids it returns does not work either: they hold the
-  *expanded* image placeholders, which vLLM would expand a second time. The
-  text prompt is ``RequestOutput.prompt``, the conversation exactly as
-  ``LLM.chat`` rendered it (placeholders unexpanded), plus the closed block,
-  with the images as ``multi_modal_data``, vLLM's documented offline
-  multimodal input. Re-rendering with the tokenizer's chat template is only
-  a fallback for outputs without that text: vLLM's chat renderer differs
-  from it (e.g. it puts a newline after Qwen's image placeholder), and the
-  answer then shifts. Since the engine tokenizes the text again, the
-  continuation's token ids are checked against those ``LLM.chat`` scored,
-  and a mismatch raises instead of reading the answer from another prompt:
-  older vLLM versions return no prompt text, or text holding the expanded
-  placeholders, and a text-only engine's tokenizer may add a second BOS
-  token to a text prompt. Only thinking rows pay for the extra calls; other
-  models never leave the ``LLM.chat`` path.
+* Thinking models (see :mod:`s3e.backends.utils.thinking`): the chat
+  template's thinking switch, found once by rendering a probe conversation
+  with the engine's tokenizer, travels with every ``LLM.chat`` call. Rows
+  whose answer would still come after a thinking block are re-run through
+  ``LLM.generate`` on a text prompt. ``LLM.chat`` cannot continue a
+  conversation from text we append, and re-sending the token ids it returns
+  does not work either: they hold the *expanded* image placeholders, which
+  vLLM would expand a second time. The text prompt is
+  ``RequestOutput.prompt``, the conversation exactly as ``LLM.chat`` rendered
+  it (placeholders unexpanded), plus the closed block, with the images as
+  ``multi_modal_data``, vLLM's documented offline multimodal input.
+  Re-rendering with the tokenizer's chat template is only a fallback for
+  outputs without that text: vLLM's chat renderer differs from it (e.g. it
+  puts a newline after Qwen's image placeholder), and the answer then shifts.
+  Since the engine tokenizes the text again, the continuation's token ids are
+  checked against those ``LLM.chat`` scored, and a mismatch raises instead of
+  reading the answer from another prompt: older vLLM versions return no prompt
+  text, or text holding the expanded placeholders, and a text-only engine's
+  tokenizer may add a second BOS token to a text prompt. Only thinking rows
+  pay for the extra calls; other models never leave the ``LLM.chat`` path.
 """
 
 import math
@@ -56,11 +58,17 @@ from .backend import VLMBackend, VLMOutput, _validate_num_logprobs
 from .utils.thinking import (
     DEFAULT_MAX_THINKING_TOKENS,
     MAX_SEPARATOR_TOKENS,
+    find_thinking_switch,
     leading_whitespace_tokens,
     resolve_thinking_tokens,
+    thinking_template_kwargs,
     validate_thinking_options,
+    warn_if_thinking_unavailable,
 )
 from .utils.token_index import build_token_reverse_index, decode_single_token_ids
+
+# The conversation rendered to find a chat template's thinking switch.
+_PROBE_PROMPT = "Is the switch on?"
 
 
 class VLLMBackend(VLMBackend):
@@ -91,19 +99,22 @@ class VLLMBackend(VLMBackend):
             ``detokenize=False``; whether the installed vLLM honors it for
             logprobs can be smoke-tested by checking that returned
             ``Logprob.decoded_token`` values are ``None``.
-        chat_template_kwargs: Extra variables for the chat template, e.g.
-            ``{"enable_thinking": False}`` to turn a thinking model's
-            reasoning off. Defaults to None.
-        thinking: What logprobs-mode queries do when the model starts a
-            thinking block: ``"close"`` (default) closes it at once and
-            scores the answer after the empty block; ``"think"`` generates
-            the reasoning first (up to ``max_thinking_tokens``) and scores
-            the answer after it. Text mode always generates freely and moves
-            the block to :attr:`VLMOutput.reasoning`.
-        max_thinking_tokens: Reasoning budget for ``thinking="think"``; a
-            block still open after this many tokens is closed and the answer
-            scored. The prompt plus this budget must fit in the engine's
-            ``max_model_len``. Defaults to 1024.
+        chat_template_kwargs: Extra variables for the chat template. They
+            override the thinking switch ``thinking`` sets. Defaults to None.
+        thinking: Whether a thinking model reasons before it answers.
+            ``False`` (default) turns thinking off through the chat
+            template's switch where it has one (``enable_thinking``, ...;
+            see :data:`~s3e.backends.utils.thinking.KNOWN_THINKING_SWITCHES`),
+            and otherwise closes any thinking block at once, so the answer
+            follows an empty block. ``True`` turns the switch on and lets the
+            model reason first (up to ``max_thinking_tokens`` in logprobs
+            mode); text replies then move the block to
+            :attr:`VLMOutput.reasoning`. A warning says when ``True`` cannot
+            make the model think.
+        max_thinking_tokens: Reasoning budget per logprobs-mode query with
+            ``thinking=True``; a block still open after this many tokens is
+            closed and the answer scored. The prompt plus this budget must
+            fit in the engine's ``max_model_len``. Defaults to 1024.
         thinking_delimiters: The tokens that open and close a thinking
             block, active only when both are single tokens of the model's
             vocabulary. ``"auto"`` (default) uses the first such pair among
@@ -132,7 +143,7 @@ class VLLMBackend(VLMBackend):
         tensor_parallel_size: int | None = None,
         num_logprobs: int | None = None,
         chat_template_kwargs: dict | None = None,
-        thinking: str = "close",
+        thinking: bool = False,
         max_thinking_tokens: int = DEFAULT_MAX_THINKING_TOKENS,
         thinking_delimiters: tuple[str, str] | str | None = "auto",
         **engine_kwargs,
@@ -146,8 +157,6 @@ class VLLMBackend(VLMBackend):
         self.max_thinking_tokens = max_thinking_tokens
         self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self._token_reverse_index: dict[str, list[int]] | None = None
-        self._thinking_tokens = None
-        self._thinking_tokens_resolved = False
         self._tokenizer = None
 
         # Default to every locally visible GPU so the user does not have to
@@ -176,6 +185,28 @@ class VLLMBackend(VLMBackend):
             tensor_parallel_size=tensor_parallel_size,
             max_logprobs=(-1 if num_logprobs is None else num_logprobs),
             **engine_kwargs,
+        )
+
+        self._thinking_tokens = resolve_thinking_tokens(
+            self.thinking_delimiters, self._get_tokenizer()
+        )
+        self._thinking_switch = (
+            None
+            if self.thinking_delimiters is None
+            else find_thinking_switch(self._render_probe)
+        )
+        template_kwargs = self._template_kwargs()
+        try:
+            rendered_probe = self._render_probe(template_kwargs)
+        except Exception:
+            rendered_probe = None
+        warn_if_thinking_unavailable(
+            model_id,
+            thinking,
+            self._thinking_tokens,
+            self._thinking_switch,
+            template_kwargs,
+            rendered_probe,
         )
 
     def query(
@@ -244,11 +275,16 @@ class VLLMBackend(VLMBackend):
         # chat() accepts a batched list of conversations and returns outputs in
         # input order. Template kwargs are passed only when set, so engines
         # and templates that predate them see the same call as before.
+        template_kwargs = self._template_kwargs()
         chat_kwargs = (
-            {"chat_template_kwargs": self.chat_template_kwargs}
-            if self.chat_template_kwargs
-            else {}
+            {"chat_template_kwargs": template_kwargs} if template_kwargs else {}
         )
+        tokens = self._thinking_tokens
+        if generate and tokens is not None and not self.thinking:
+            return self._generate_after_closed_blocks(
+                images, prompts, system_prompt, conversations, chat_kwargs,
+                tokens, inference_kwargs,
+            )
         outputs = self.llm.chat(conversations, sampling_params, **chat_kwargs)
         results = [
             self._to_vlm_output(output, generate, interest_tokens)
@@ -267,14 +303,31 @@ class VLLMBackend(VLMBackend):
             self._tokenizer = self.llm.get_tokenizer()
         return self._tokenizer
 
-    def _get_thinking_tokens(self):
-        """The resolved thinking delimiters, or None when inactive (cached)."""
-        if not self._thinking_tokens_resolved:
-            self._thinking_tokens = resolve_thinking_tokens(
-                self.thinking_delimiters, self._get_tokenizer()
+    def _template_kwargs(self) -> dict:
+        """Chat-template variables: the thinking switch, then the caller's."""
+        return thinking_template_kwargs(
+            self.thinking,
+            self._thinking_tokens,
+            self._thinking_switch,
+            self.chat_template_kwargs,
+        )
+
+    def _render_probe(self, template_kwargs: dict) -> str:
+        """Render a fixed conversation with ``template_kwargs``.
+
+        Multimodal templates take content as a list of parts, text-only ones
+        (e.g. Seed-OSS) as a plain string; ``LLM.chat`` converts to the form
+        a template expects, so both are tried.
+        """
+        try:
+            return self._render_prompt([], _PROBE_PROMPT, template_kwargs=template_kwargs)
+        except Exception:
+            return self._get_tokenizer().apply_chat_template(
+                [{"role": "user", "content": _PROBE_PROMPT}],
+                add_generation_prompt=True,
+                tokenize=False,
+                **template_kwargs,
             )
-            self._thinking_tokens_resolved = True
-        return self._thinking_tokens
 
     def _skip_thinking(
         self, images, prompts, system_prompt, outputs, results,
@@ -287,7 +340,7 @@ class VLLMBackend(VLMBackend):
         ``LLM.generate`` on the rendered prompt plus the closed block (empty,
         or the generated reasoning), and read at the answer after it.
         """
-        tokens = self._get_thinking_tokens()
+        tokens = self._thinking_tokens
         if tokens is None:
             return results
 
@@ -304,12 +357,10 @@ class VLLMBackend(VLMBackend):
             return results
 
         prompt_texts = [
-            outputs[row].prompt
-            if isinstance(outputs[row].prompt, str)
-            else self._render_prompt(images, prompts[row], system_prompt)
+            self._prompt_text(outputs[row], images, prompts[row], system_prompt)
             for row in rows
         ]
-        if self.thinking == "think":
+        if self.thinking:
             # Open the block where the model was about to, so the reasoning
             # is generated inside it even if generate() starts differently.
             continuations, reasonings = self._think(
@@ -340,7 +391,18 @@ class VLLMBackend(VLMBackend):
             results[row] = answer
         return results
 
-    def _render_prompt(self, images, prompt, system_prompt=None) -> str:
+    def _prompt_text(self, output, images, prompt, system_prompt) -> str:
+        """The prompt text ``LLM.chat`` rendered for ``output``.
+
+        Falls back to the tokenizer's chat template for outputs without it.
+        """
+        if isinstance(output.prompt, str):
+            return output.prompt
+        return self._render_prompt(images, prompt, system_prompt)
+
+    def _render_prompt(
+        self, images, prompt, system_prompt=None, template_kwargs=None
+    ) -> str:
         """Render one conversation to text with the tokenizer's chat template.
 
         A fallback for outputs that lack ``LLM.chat``'s own rendering, which
@@ -348,6 +410,7 @@ class VLLMBackend(VLMBackend):
         ``{"type": "image"}`` parts, which multimodal chat templates turn
         into the model's placeholder text; ``LLM.generate`` expands the
         placeholders when the images come with the prompt.
+        ``template_kwargs`` default to the queries' chat-template variables.
         """
         messages = []
         if system_prompt is not None:
@@ -357,11 +420,13 @@ class VLLMBackend(VLMBackend):
         content = [{"type": "image"} for _ in images]
         content.append({"type": "text", "text": prompt})
         messages.append({"role": "user", "content": content})
+        if template_kwargs is None:
+            template_kwargs = self._template_kwargs()
         return self._get_tokenizer().apply_chat_template(
             messages,
             add_generation_prompt=True,
             tokenize=False,
-            **self.chat_template_kwargs,
+            **template_kwargs,
         )
 
     @staticmethod
@@ -413,6 +478,87 @@ class VLLMBackend(VLMBackend):
                 tokenizer.decode(reasoning_ids or [], skip_special_tokens=True).strip()
             )
         return continuations, reasonings
+
+    def _generate_after_closed_blocks(
+        self, images, prompts, system_prompt, conversations, chat_kwargs,
+        tokens, inference_kwargs,
+    ) -> list[VLMOutput]:
+        """Text replies with thinking off: no reply contains a thinking block.
+
+        When the chat template opens the block, ``LLM.chat`` only renders the
+        prompts (one greedy token) and every row is continued after the
+        closed block. Otherwise replies stop at a token that opens a block,
+        and those rows are generated again after a whole empty block. The
+        continued rows get ``reasoning=""``.
+        """
+        if self._template_opens_block(tokens):
+            # Only render the prompts; every reply is generated below.
+            outputs = self.llm.chat(
+                conversations,
+                SamplingParams(max_tokens=1, temperature=0.0),
+                **chat_kwargs,
+            )
+            results = [None] * len(outputs)
+            rows = list(range(len(outputs)))
+            # A prompt the template left closed after all is continued as is.
+            closes = [
+                tokens.opens_block(
+                    output.prompt_token_ids or [], self._decode_with_special_tokens
+                )
+                for output in outputs
+            ]
+        else:
+            stop_kwargs = dict(inference_kwargs)
+            stop_kwargs["stop_token_ids"] = [
+                *(stop_kwargs.get("stop_token_ids") or []), tokens.start_id
+            ]
+            outputs = self.llm.chat(
+                conversations,
+                self._build_sampling_params(True, **stop_kwargs),
+                **chat_kwargs,
+            )
+            results = [self._text_output(output) for output in outputs]
+            rows = [
+                row
+                for row, output in enumerate(outputs)
+                if list(output.outputs[0].token_ids[:1]) == [tokens.start_id]
+            ]
+            closes = [True] * len(rows)
+        if not rows:
+            return results
+
+        continuations = []
+        for row, close in zip(rows, closes):
+            text = self._prompt_text(outputs[row], images, prompts[row], system_prompt)
+            # Rows only rendered end by opening the block; the others opened
+            # it as their reply's first token.
+            prompt_open = results[row] is None
+            continuations.append(
+                text + tokens.closing_text(text, prompt_open) if close else text
+            )
+        replies = self.llm.generate(
+            [self._engine_prompt(text, images) for text in continuations],
+            self._build_sampling_params(True, **inference_kwargs),
+        )
+        for row, close, reply in zip(rows, closes, replies):
+            self._check_continuation(
+                outputs[row].prompt_token_ids or [], reply.prompt_token_ids or []
+            )
+            text = reply.outputs[0].text
+            results[row] = VLMOutput(
+                token_probs=None,
+                text=text.strip() if close else text,
+                reasoning="" if close else None,
+            )
+        return results
+
+    def _template_opens_block(self, tokens) -> bool:
+        """Whether the chat template ends prompts by opening a thinking block."""
+        try:
+            rendered = self._render_probe(self._template_kwargs())
+        except Exception:
+            return False
+        return rendered.rstrip().endswith(tokens.start)
 
     def _answer_outputs_after(
         self, images, continuations, chat_prompt_ids, interest_tokens,
@@ -562,7 +708,7 @@ class VLLMBackend(VLMBackend):
         A reply whose block never closed gets ``text=None``.
         """
         completion = output.outputs[0]
-        tokens = self._get_thinking_tokens()
+        tokens = self._thinking_tokens
         if tokens is None:
             return VLMOutput(token_probs=None, text=completion.text)
         reasoning_ids, answer_ids = tokens.split(

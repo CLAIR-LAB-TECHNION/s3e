@@ -10,10 +10,14 @@ import warnings
 from s3e.backends.utils.thinking import (
     KNOWN_THINKING_DELIMITERS,
     MAX_SEPARATOR_TOKENS,
+    ThinkingSwitch,
     ThinkingTokens,
+    find_thinking_switch,
     leading_whitespace_tokens,
     resolve_thinking_tokens,
+    thinking_template_kwargs,
     validate_thinking_options,
+    warn_if_thinking_unavailable,
 )
 
 START, END = 7, 8
@@ -38,26 +42,30 @@ class FakeTokenizer:
 class TestValidateThinkingOptions:
     def test_auto_tries_the_known_pairs(self):
         assert (
-            validate_thinking_options("close", 1024, "auto") == KNOWN_THINKING_DELIMITERS
+            validate_thinking_options(False, 1024, "auto") == KNOWN_THINKING_DELIMITERS
         )
 
     def test_a_given_pair_is_the_only_candidate(self):
-        assert validate_thinking_options("close", 1024, ["<t>", "</t>"]) == (
+        assert validate_thinking_options(True, 1024, ["<t>", "</t>"]) == (
             ("<t>", "</t>"),
         )
 
     def test_none_delimiters_turn_handling_off(self):
-        assert validate_thinking_options("think", 1, None) is None
+        assert validate_thinking_options(False, 1, None) is None
 
-    @pytest.mark.parametrize("mode", ["skip", "", None, "Close"])
-    def test_unknown_mode_rejected(self, mode):
-        with pytest.raises(ValueError, match="thinking must be one of"):
-            validate_thinking_options(mode, 1024, "auto")
+    def test_thinking_needs_delimiters(self):
+        with pytest.raises(ValueError, match="thinking=True needs thinking_delimiters"):
+            validate_thinking_options(True, 1024, None)
+
+    @pytest.mark.parametrize("thinking", ["close", "think", "", None, 1, 0])
+    def test_non_boolean_thinking_rejected(self, thinking):
+        with pytest.raises(ValueError, match="thinking must be True or False"):
+            validate_thinking_options(thinking, 1024, "auto")
 
     @pytest.mark.parametrize("budget", [0, -1, 1.5, True, None])
     def test_invalid_budget_rejected(self, budget):
         with pytest.raises(ValueError, match="max_thinking_tokens"):
-            validate_thinking_options("close", budget, "auto")
+            validate_thinking_options(False, budget, "auto")
 
     @pytest.mark.parametrize(
         "delimiters",
@@ -74,7 +82,7 @@ class TestValidateThinkingOptions:
     )
     def test_invalid_delimiters_rejected(self, delimiters):
         with pytest.raises(ValueError, match="thinking_delimiters"):
-            validate_thinking_options("close", 1024, delimiters)
+            validate_thinking_options(False, 1024, delimiters)
 
 
 class TestResolveThinkingTokens:
@@ -200,6 +208,96 @@ class TestSplit:
 
     def test_close_without_open_is_not_a_block(self):
         assert TOKENS.split([6, END, 4], prompt_open=False) == (None, [6, END, 4])
+
+
+def template_reading(variable, rendered_on="<think>\n", rendered_off="<think>\n\n</think>\n\n"):
+    """A probe renderer for a template that reads one thinking variable."""
+
+    def render(template_kwargs):
+        on = template_kwargs.get(variable) not in (None, False, 0)
+        return "assistant\n" + (rendered_on if on else rendered_off)
+
+    return render
+
+
+class TestFindThinkingSwitch:
+    def test_enable_thinking(self):
+        assert find_thinking_switch(template_reading("enable_thinking")) == (
+            ThinkingSwitch("enable_thinking", True, False)
+        )
+
+    def test_seed_thinking_budget(self):
+        assert find_thinking_switch(template_reading("thinking_budget")) == (
+            ThinkingSwitch("thinking_budget", -1, 0)
+        )
+
+    def test_template_without_a_switch(self):
+        assert find_thinking_switch(lambda template_kwargs: "assistant\n") is None
+
+    def test_a_candidate_that_raises_is_skipped(self):
+        render = template_reading("thinking")
+
+        def strict(template_kwargs):
+            if "enable_thinking" in template_kwargs:
+                raise TypeError("unexpected variable")
+            return render(template_kwargs)
+
+        assert find_thinking_switch(strict) == ThinkingSwitch("thinking", True, False)
+
+
+SWITCH = ThinkingSwitch("enable_thinking", True, False)
+
+
+class TestThinkingTemplateKwargs:
+    @pytest.mark.parametrize("thinking", [True, False])
+    def test_switch_follows_thinking(self, thinking):
+        assert thinking_template_kwargs(thinking, TOKENS, SWITCH, {}) == {
+            "enable_thinking": thinking
+        }
+
+    def test_switch_stays_off_when_the_block_cannot_be_skipped(self):
+        assert thinking_template_kwargs(True, None, SWITCH, {}) == {
+            "enable_thinking": False
+        }
+
+    def test_callers_kwargs_win(self):
+        assert thinking_template_kwargs(
+            False, TOKENS, SWITCH, {"enable_thinking": True, "x": 1}
+        ) == {"enable_thinking": True, "x": 1}
+
+    def test_no_switch(self):
+        assert thinking_template_kwargs(True, TOKENS, None, {"x": 1}) == {"x": 1}
+
+
+class TestWarnIfThinkingUnavailable:
+    @pytest.mark.parametrize(
+        "thinking, tokens, switch, template_kwargs, probe",
+        [
+            (False, None, None, {}, None),  # thinking off: nothing to warn about
+            (True, TOKENS, SWITCH, {"enable_thinking": True}, "assistant\n"),
+            (True, TOKENS, None, {}, "assistant\n<think>\n"),  # template opens
+        ],
+    )
+    def test_silent_when_thinking_is_reachable(
+        self, thinking, tokens, switch, template_kwargs, probe
+    ):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warn_if_thinking_unavailable("m", thinking, tokens, switch, template_kwargs, probe)
+
+    def test_block_that_cannot_be_skipped(self):
+        with pytest.warns(UserWarning, match="cannot be found"):
+            warn_if_thinking_unavailable("m", True, None, SWITCH, {}, "assistant\n")
+
+    @pytest.mark.parametrize(
+        "switch, template_kwargs",
+        [(None, {}), (SWITCH, {"enable_thinking": False})],  # no switch; caller set it off
+    )
+    def test_nothing_turns_thinking_on(self, switch, template_kwargs):
+        with pytest.warns(UserWarning, match="no way to turn thinking on"):
+            warn_if_thinking_unavailable(
+                "m", True, TOKENS, switch, template_kwargs, "assistant\n"
+            )
 
 
 class TestLeadingWhitespaceTokens:

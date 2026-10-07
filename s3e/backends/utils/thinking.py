@@ -11,17 +11,21 @@ or one the caller names, and switch this logic on only when both delimiters
 are single tokens of the model's vocabulary. A model without them (SmolVLM,
 LLaVA, ...) behaves exactly as if this module did not exist.
 
-A query is *thinking* when its prompt ends with an opening delimiter (the
-chat template opened the block, as Qwen3.5-4B's does by default) or when the
-model's most likely next token opens one. Backends then read the answer
-after the block: in text mode the block is cut out of the reply, and in
-logprobs mode the block is either closed at once (``"close"``) or generated
-first (``"think"``) before the answer token is scored. The answer is always
-read from a forward pass over the prompt, the closed block, and the
-whitespace the model puts after it, like the pass that scores every other
-query: reading it after a decode step instead can differ numerically, since
-some engines (e.g. vLLM with Qwen3.5's linear-attention layers) use
-different kernels for prefill and decode.
+Backends take a binary ``thinking`` choice. Many chat templates have a
+variable that turns thinking on or off (``enable_thinking`` for Qwen3.5 and
+Gemma 4); backends find it among :data:`KNOWN_THINKING_SWITCHES` by
+rendering a probe conversation (:func:`find_thinking_switch`) and set it.
+Where no switch exists, a block can still appear: the chat template opens it
+(Qwen3-VL-*-Thinking, DeepSeek-R1 distills), or the model does. A query is
+*thinking* when its prompt ends with an opening delimiter or the model's
+most likely next token opens one. With thinking off, backends then close
+the block at once and read the answer after the empty block; with thinking
+on, the model reasons first and the answer is read after its reasoning. The
+answer is always read from a forward pass over the prompt, the closed
+block, and the whitespace the model puts after it, like the pass that
+scores every other query: reading it after a decode step instead can differ
+numerically, since some engines (e.g. vLLM with Qwen3.5's linear-attention
+layers) use different kernels for prefill and decode.
 """
 
 import warnings
@@ -37,7 +41,15 @@ KNOWN_THINKING_DELIMITERS = (
     ("[THINK]", "[/THINK]"),  # Mistral reasoning models (HF tokenizer files)
     ("<seed:think>", "</seed:think>"),  # Seed
 )
-THINKING_MODES = ("close", "think")
+#: Chat-template variables known to switch thinking, tried in order as
+#: ``(name, value turning thinking on, value turning it off)``. Templates
+#: ignore variables they do not read, so a backend uses the first one whose
+#: two values render a probe conversation differently.
+KNOWN_THINKING_SWITCHES = (
+    ("enable_thinking", True, False),  # Qwen3/3.5, Gemma 4, GLM, ...
+    ("thinking", True, False),  # DeepSeek-V3.1, Granite 3
+    ("thinking_budget", -1, 0),  # Seed-OSS (-1: no limit)
+)
 DEFAULT_MAX_THINKING_TOKENS = 1024
 # Most whitespace tokens a chat template puts next to a delimiter: after the
 # opening one that ends a prompt ("<think>\n"), or between a closed block and
@@ -47,7 +59,7 @@ MAX_SEPARATOR_TOKENS = 8
 
 
 def validate_thinking_options(
-    thinking: str,
+    thinking: bool,
     max_thinking_tokens: int,
     thinking_delimiters: "tuple[str, str] | str | None",
 ) -> "tuple[tuple[str, str], ...] | None":
@@ -56,10 +68,8 @@ def validate_thinking_options(
     Returns the delimiter pairs to try, in order: the known pairs for
     ``"auto"``, the one given pair, or None when handling is off.
     """
-    if thinking not in THINKING_MODES:
-        raise ValueError(
-            f"thinking must be one of {THINKING_MODES}; got {thinking!r}"
-        )
+    if not isinstance(thinking, bool):
+        raise ValueError(f"thinking must be True or False; got {thinking!r}")
     if (
         isinstance(max_thinking_tokens, bool)
         or not isinstance(max_thinking_tokens, int)
@@ -70,6 +80,11 @@ def validate_thinking_options(
             f"got {max_thinking_tokens!r}"
         )
     if thinking_delimiters is None:
+        if thinking:
+            raise ValueError(
+                "thinking=True needs thinking_delimiters to find the answer "
+                "after the model's reasoning; got None"
+            )
         return None
     if thinking_delimiters == "auto":
         return KNOWN_THINKING_DELIMITERS
@@ -196,6 +211,92 @@ def _resolve_pair(delimiters: "tuple[str, str]", tokenizer) -> "ThinkingTokens |
             return None
         token_ids.append(token_id)
     return ThinkingTokens(delimiters[0], delimiters[1], token_ids[0], token_ids[1])
+
+
+@dataclass(frozen=True)
+class ThinkingSwitch:
+    """A chat-template variable that turns thinking on or off."""
+
+    name: str
+    on: object
+    off: object
+
+    def template_kwargs(self, thinking: bool) -> dict:
+        """The template variable set to turn thinking on or off."""
+        return {self.name: self.on if thinking else self.off}
+
+
+def find_thinking_switch(render: Callable[[dict], str]) -> "ThinkingSwitch | None":
+    """The first of :data:`KNOWN_THINKING_SWITCHES` this chat template reads.
+
+    ``render`` renders a probe conversation with the given template
+    variables. A switch counts when its two values render differently; one
+    whose rendering raises is skipped. Returns None when none counts.
+    """
+    for name, on, off in KNOWN_THINKING_SWITCHES:
+        try:
+            if render({name: on}) != render({name: off}):
+                return ThinkingSwitch(name, on, off)
+        except Exception:
+            continue
+    return None
+
+
+def thinking_template_kwargs(
+    thinking: bool,
+    tokens: "ThinkingTokens | None",
+    switch: "ThinkingSwitch | None",
+    chat_template_kwargs: dict,
+) -> dict:
+    """The chat-template variables a backend renders queries with.
+
+    The switch (if any) turns thinking on only when the block can be
+    skipped (``tokens`` resolved), and off otherwise; the caller's own
+    ``chat_template_kwargs`` override it.
+    """
+    switched = {} if switch is None else switch.template_kwargs(
+        thinking and tokens is not None
+    )
+    return {**switched, **chat_template_kwargs}
+
+
+def warn_if_thinking_unavailable(
+    model_id: str,
+    thinking: bool,
+    tokens: "ThinkingTokens | None",
+    switch: "ThinkingSwitch | None",
+    template_kwargs: dict,
+    rendered_probe: "str | None",
+) -> None:
+    """Warn when ``thinking=True`` cannot make this model think.
+
+    Either the block cannot be skipped (no delimiters resolved), or nothing
+    turns thinking on: no switch set to on, and the probe rendered with
+    ``template_kwargs`` does not end by opening a block.
+    """
+    if not thinking:
+        return
+    if tokens is None:
+        warnings.warn(
+            f"thinking=True has no effect for {model_id}: none of the "
+            "thinking delimiters is a single token of its vocabulary, so the "
+            "answer after its reasoning cannot be found. It answers without "
+            "thinking.",
+            stacklevel=3,
+        )
+        return
+    switched_on = switch is not None and template_kwargs.get(switch.name) == switch.on
+    template_opens = rendered_probe is not None and rendered_probe.rstrip().endswith(
+        tokens.start
+    )
+    if not (switched_on or template_opens):
+        warnings.warn(
+            f"thinking=True found no way to turn thinking on for {model_id}: "
+            "its chat template has no known thinking switch set to on and "
+            "does not open a thinking block. It thinks only where it opens "
+            "a block itself.",
+            stacklevel=3,
+        )
 
 
 def leading_whitespace_tokens(step_tokens: Sequence[str]) -> int:
