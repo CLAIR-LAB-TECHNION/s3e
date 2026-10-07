@@ -161,6 +161,14 @@ class TestOpensBlock:
     def test_open_block_detection(self, ids, expected):
         assert TOKENS.opens_block(ids, self._decode) is expected
 
+    def test_closed_block_needs_no_decode(self):
+        """The empty block of a thinking-off template is read from the ids."""
+
+        def decode(ids):
+            raise AssertionError(f"decoded {ids}")
+
+        assert TOKENS.opens_block([1, START, 3, END, 3], decode) is False
+
 
 class TestClosingText:
     def test_open_prompt_mirrors_trailing_whitespace(self):

@@ -115,7 +115,12 @@ class ThinkingTokens:
         after = reversed_ids.index(self.start_id)
         if after == 0:
             return True
-        return after <= MAX_SEPARATOR_TOKENS and not decode(ids[-after:]).strip()
+        tail = ids[-after:]
+        # A closing delimiter is not whitespace, so finding it spares the
+        # decode for the empty block thinking-off templates render.
+        if after > MAX_SEPARATOR_TOKENS or self.end_id in tail:
+            return False
+        return not decode(tail).strip()
 
     def closing_text(self, prompt_text: str, prompt_open: bool) -> str:
         """Text that closes the block at once, leaving it empty.
