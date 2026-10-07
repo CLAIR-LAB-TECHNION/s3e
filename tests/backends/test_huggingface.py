@@ -1080,6 +1080,26 @@ class TestHuggingFaceVLMThinking:
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_separator_search_stops_each_row_at_its_answer(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """No greedy steps are spent past the first non-whitespace token."""
+        prompt_ids = [1, THINK_START]
+        vlm, model, _ = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
+            generate=lambda **kwargs: self._separator_then_answer(prompt_ids),
+        )
+
+        vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        (criterion,) = model.generate.call_args.kwargs["stopping_criteria"]
+        last_tokens = torch.tensor([[1, 3], [1, 4], [1, THINK_END]])  # "\n\n", "Yes", "</think>"
+        assert criterion(last_tokens, scores=None).tolist() == [False, True, True]
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
     def test_rows_without_a_block_are_untouched(self, mock_model_cls, mock_proc_cls):
         vlm, model, _ = self._make_vlm(
             mock_model_cls, mock_proc_cls,

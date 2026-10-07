@@ -17,7 +17,7 @@ require("torch", "hf", "HuggingFaceVLM")
 require("transformers", "hf", "HuggingFaceVLM")
 
 import torch
-from transformers import AutoProcessor
+from transformers import AutoProcessor, StoppingCriteria, StoppingCriteriaList
 
 from .backend import VLMBackend, VLMOutput, _validate_num_logprobs
 from .utils.thinking import (
@@ -46,6 +46,24 @@ _HUB_KWARGS = (
     "proxies",
     "trust_remote_code",
 )
+
+
+class _StopAtNonWhitespace(StoppingCriteria):
+    """Stop each row of a generation at its first non-whitespace token.
+
+    ``decode`` maps token ids to their strings, one per id.
+    """
+
+    def __init__(self, decode):
+        self.decode = decode
+
+    def __call__(self, input_ids, scores, **kwargs):
+        last_tokens = self.decode(input_ids[:, -1].tolist())
+        return torch.tensor(
+            [bool(token.strip()) for token in last_tokens],
+            dtype=torch.bool,
+            device=input_ids.device,
+        )
 
 
 class HuggingFaceVLM(VLMBackend):
@@ -381,13 +399,19 @@ class HuggingFaceVLM(VLMBackend):
         """Next-token probabilities at each continuation's answer position.
 
         Chat templates put whitespace between a closed block and the answer
-        (``"\\n\\n"`` for Qwen). A few greedy steps find it, and the answer
-        is then read from a forward pass over the continuation plus that
-        whitespace, with ``inference_kwargs``, like every other query.
+        (``"\\n\\n"`` for Qwen). Greedy steps find it, each row stopping at
+        its first non-whitespace token, and the answer is then read from a
+        forward pass over the continuation plus that whitespace, with
+        ``inference_kwargs``, like every other query.
         """
         inputs = self._prepare_rows(continuations, images)
         output_ids = self.model.generate(
-            **inputs, max_new_tokens=MAX_SEPARATOR_TOKENS, do_sample=False
+            **inputs,
+            max_new_tokens=MAX_SEPARATOR_TOKENS,
+            do_sample=False,
+            stopping_criteria=StoppingCriteriaList(
+                [_StopAtNonWhitespace(self._decode_token_ids)]
+            ),
         )
         texts = []
         for continuation, sequence in zip(
