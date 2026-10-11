@@ -276,6 +276,14 @@ class TestWarnIfThinkingUnavailable:
             (False, None, None, {}, None),  # thinking off: nothing to warn about
             (True, TOKENS, SWITCH, {"enable_thinking": True}, "assistant\n"),
             (True, TOKENS, None, {}, "assistant\n<think>\n"),  # template opens
+            # The caller turned the switch on with a value other than its own.
+            (
+                True,
+                TOKENS,
+                ThinkingSwitch("thinking_budget", -1, 0),
+                {"thinking_budget": 512},
+                "assistant\n",
+            ),
         ],
     )
     def test_silent_when_thinking_is_reachable(

@@ -117,7 +117,7 @@ class HuggingFaceVLM(VLMBackend):
             and otherwise closes any thinking block at once, so the answer
             follows an empty block. ``True`` turns the switch on and lets the
             model reason first (up to ``max_thinking_tokens`` in logprobs
-            mode); text replies then move the block to
+            mode). Either way, the block's text goes in
             :attr:`VLMOutput.reasoning`. A warning says when ``True`` cannot
             make the model think.
         max_thinking_tokens: Reasoning budget per logprobs-mode query with
@@ -160,11 +160,12 @@ class HuggingFaceVLM(VLMBackend):
     ):
         self.model_id = model_id
         self.num_logprobs = _validate_num_logprobs(num_logprobs)
-        self.thinking_delimiters = validate_thinking_options(
+        delimiter_candidates = validate_thinking_options(
             thinking, max_thinking_tokens, thinking_delimiters
         )
         self.thinking = thinking
         self.max_thinking_tokens = max_thinking_tokens
+        self.thinking_delimiters = thinking_delimiters
         self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self._pad_invariance_checked = bool(skip_pad_invariance_check)
         self._token_reverse_index: dict[str, list[int]] | None = None
@@ -196,11 +197,11 @@ class HuggingFaceVLM(VLMBackend):
             tokenizer.padding_side = "left"
 
         self._thinking_tokens = resolve_thinking_tokens(
-            self.thinking_delimiters, tokenizer
+            delimiter_candidates, tokenizer
         )
         self._thinking_switch = (
             None
-            if self.thinking_delimiters is None
+            if delimiter_candidates is None
             else find_thinking_switch(self._render_probe)
         )
         template_kwargs = self._template_kwargs()
@@ -402,7 +403,6 @@ class HuggingFaceVLM(VLMBackend):
             ]
             row_reasonings = [""] * len(rows)
 
-        probs = probs.clone()
         probs[rows] = self._answer_probs_after(
             images, continuations, **inference_kwargs
         ).to(device=probs.device, dtype=probs.dtype)
@@ -465,6 +465,7 @@ class HuggingFaceVLM(VLMBackend):
             **inputs,
             max_new_tokens=MAX_SEPARATOR_TOKENS,
             do_sample=False,
+            pad_token_id=self._pad_token_id(self._eos_token_ids()),
             stopping_criteria=StoppingCriteriaList(
                 [_StopAtNonWhitespace(self._decode_token_ids)]
             ),
@@ -785,7 +786,7 @@ class HuggingFaceVLM(VLMBackend):
             text = (
                 None
                 if answer_ids is None
-                else self._decode_sequence(answer_ids, skip_special_tokens=True).strip()
+                else self._decode_sequence(answer_ids, skip_special_tokens=True).lstrip()
             )
             reasoning = self._decode_sequence(reasoning_ids, skip_special_tokens=True)
             outputs.append(
@@ -842,7 +843,7 @@ class HuggingFaceVLM(VLMBackend):
                 closed.update(reopened)
 
         return [
-            VLMOutput(token_probs=None, text=text.strip(), reasoning="")
+            VLMOutput(token_probs=None, text=text.lstrip(), reasoning="")
             if row in closed
             else VLMOutput(token_probs=None, text=text)
             for row, text in enumerate(self._decode_generated_sequences(sequences))
@@ -859,7 +860,7 @@ class HuggingFaceVLM(VLMBackend):
             prompt_length = inputs["input_ids"].shape[-1]
             inference_kwargs["stopping_criteria"] = StoppingCriteriaList(
                 [
-                    *inference_kwargs.get("stopping_criteria", []),
+                    *(inference_kwargs.get("stopping_criteria") or []),
                     _StopAtFirstToken(stop_at_first, prompt_length),
                 ]
             )

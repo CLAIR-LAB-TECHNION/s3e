@@ -1017,6 +1017,8 @@ class TestVLLMBackendThinking:
         "prompt_ids, token_ids, text, reasoning",
         [
             ([1, THINK_START], [6, THINK_END, 3, 4], "Yes", "r"),
+            # Only the separator after the block is dropped.
+            ([1, THINK_START], [6, THINK_END, 3, 4, 3], "Yes\n\n", "r"),
             ([1, 2], [THINK_START, 6, 6, THINK_END, 3, 5], "No", "rr"),
             ([1, THINK_START], [6, 6], None, "rr"),
             ([1, 2], [4], "raw", None),
@@ -1051,12 +1053,13 @@ class TestVLLMBackendThinking:
             _request_output(prompt="chat:q<think>\n", prompt_ids=[1, THINK_START])
         ]
         mock_llm.generate.return_value = [
-            _request_output(prompt_ids=[1, THINK_START, THINK_END], text="\n\nYes")
+            _request_output(prompt_ids=[1, THINK_START, THINK_END], text="\n\nYes\n")
         ]
 
         result = backend.query([], "q", generate=True, max_tokens=5)
 
-        assert (result.text, result.reasoning) == ("Yes", "")
+        # Only the separator goes, as after a template's own empty block.
+        assert (result.text, result.reasoning) == ("Yes\n", "")
         assert self._generated_prompts(mock_llm) == [["chat:q<think>\n\n</think>"]]
         sampling = [c.kwargs for c in mock_sp_cls.call_args_list]
         assert {"max_tokens": 1, "temperature": 0.0} in sampling  # the render-only chat

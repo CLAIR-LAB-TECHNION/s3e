@@ -191,7 +191,7 @@ def resolve_thinking_tokens(
         warnings.warn(
             f"Thinking delimiters {list(candidates)} are not single tokens of "
             "the model's vocabulary, so thinking handling is off.",
-            stacklevel=2,
+            stacklevel=3,
         )
     return None
 
@@ -285,7 +285,11 @@ def warn_if_thinking_unavailable(
             stacklevel=3,
         )
         return
-    switched_on = switch is not None and template_kwargs.get(switch.name) == switch.on
+    # Any value but the off one turns a switch on (e.g. a positive
+    # thinking_budget given through chat_template_kwargs).
+    switched_on = switch is not None and template_kwargs.get(
+        switch.name, switch.off
+    ) != switch.off
     template_opens = rendered_probe is not None and rendered_probe.rstrip().endswith(
         tokens.start
     )

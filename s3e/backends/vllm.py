@@ -108,7 +108,7 @@ class VLLMBackend(VLMBackend):
             and otherwise closes any thinking block at once, so the answer
             follows an empty block. ``True`` turns the switch on and lets the
             model reason first (up to ``max_thinking_tokens`` in logprobs
-            mode); text replies then move the block to
+            mode). Either way, the block's text goes in
             :attr:`VLMOutput.reasoning`. A warning says when ``True`` cannot
             make the model think.
         max_thinking_tokens: Reasoning budget per logprobs-mode query with
@@ -150,11 +150,12 @@ class VLLMBackend(VLMBackend):
     ):
         self.model_id = model_id
         self.num_logprobs = _validate_num_logprobs(num_logprobs)
-        self.thinking_delimiters = validate_thinking_options(
+        delimiter_candidates = validate_thinking_options(
             thinking, max_thinking_tokens, thinking_delimiters
         )
         self.thinking = thinking
         self.max_thinking_tokens = max_thinking_tokens
+        self.thinking_delimiters = thinking_delimiters
         self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self._token_reverse_index: dict[str, list[int]] | None = None
         self._tokenizer = None
@@ -188,11 +189,11 @@ class VLLMBackend(VLMBackend):
         )
 
         self._thinking_tokens = resolve_thinking_tokens(
-            self.thinking_delimiters, self._get_tokenizer()
+            delimiter_candidates, self._get_tokenizer()
         )
         self._thinking_switch = (
             None
-            if self.thinking_delimiters is None
+            if delimiter_candidates is None
             else find_thinking_switch(self._render_probe)
         )
         template_kwargs = self._template_kwargs()
@@ -547,7 +548,7 @@ class VLLMBackend(VLMBackend):
             text = reply.outputs[0].text
             results[row] = VLMOutput(
                 token_probs=None,
-                text=text.strip() if close else text,
+                text=text.lstrip() if close else text,
                 reasoning="" if close else None,
             )
         return results
@@ -613,9 +614,7 @@ class VLLMBackend(VLMBackend):
             "answer would be read from another prompt. This happens with vLLM "
             "versions whose RequestOutput.prompt is missing or holds expanded "
             "image placeholders, and with text-only engines whose tokenizer "
-            "adds a BOS token. Turn thinking off through chat_template_kwargs "
-            "(e.g. {'enable_thinking': False}) where the template supports "
-            "it, or use HuggingFaceVLM."
+            "adds a BOS token. Use HuggingFaceVLM for this model."
         )
 
     def _decode_with_special_tokens(self, token_ids) -> str:
@@ -723,7 +722,7 @@ class VLLMBackend(VLMBackend):
         text = (
             None
             if answer_ids is None
-            else tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+            else tokenizer.decode(answer_ids, skip_special_tokens=True).lstrip()
         )
         reasoning = tokenizer.decode(reasoning_ids, skip_special_tokens=True)
         return VLMOutput(token_probs=None, text=text, reasoning=reasoning.strip())
