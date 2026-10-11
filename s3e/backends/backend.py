@@ -46,11 +46,18 @@ class VLMOutput:
             when the query did not request interest tokens. A ``False``
             here means the model answered outside the expected token set,
             so the reported masses cover almost none of the distribution.
+        reasoning: The text of the model's thinking block, which backends
+            close or let the model generate before reading the answer (see
+            :mod:`s3e.backends.utils.thinking`). ``""`` when the backend
+            closed the block without reasoning, ``None`` when it had no block
+            to handle (including the empty block a chat template renders when
+            its switch turns thinking off).
     """
 
     token_probs: dict[str, float] | None = field(default_factory=dict)
     text: str | None = None
     argmax_in_interest: bool | None = None
+    reasoning: str | None = None
 
 
 class VLMBackend(ABC):

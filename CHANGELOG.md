@@ -27,6 +27,21 @@ the commit history and PyPI release dates when this file was introduced.
   `CITATION.cff` checks, and a weekly workflow that runs the real-model tests,
   the README Quick Start, and the tutorial notebook on CPU.
 - SPDX license headers in every Python source file.
+- Thinking-model support in `HuggingFaceVLM` and `VLLMBackend`: a
+  `thinking` flag. `thinking=False` (the default) turns thinking off through
+  the chat template's switch, found by rendering (`enable_thinking`,
+  `thinking`, or Seed's `thinking_budget`), and otherwise closes any
+  thinking block at once, so the answer follows an empty block, in logprobs
+  and text mode alike. `thinking=True` turns the switch on and lets the
+  model reason first (up to `max_thinking_tokens` in logprobs mode), with a
+  warning when it cannot. Blocks are found by their delimiters, among those
+  of known model families (`<think>`, Gemma 4's `<|channel>`, Mistral's
+  `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). The
+  block's text is in the new `VLMOutput.reasoning`, and a
+  `chat_template_kwargs` argument passes other template variables.
+- A thinking-models section in the walkthrough notebook: Qwen3.5-0.8B with
+  its thinking block ignored, closed, and thought through, and the tradeoff
+  between the accuracy reasoning can add and the time it costs.
 
 ### Changed
 - Runtime dependencies and extras declare minimum supported versions, which
@@ -37,8 +52,19 @@ the commit history and PyPI release dates when this file was introduced.
 - **Breaking:** `TemplateTranslator.translate` raises `ValueError`, naming the
   template and predicate, instead of `KeyError` or `IndexError` when a
   placeholder has no matching argument.
+- **Breaking:** the backend helper modules moved to `s3e.backends.utils`, so
+  that `s3e.backends` holds only the backends and their interface:
+  `s3e.backends.resolve` and `s3e.backends.token_index` are now
+  `s3e.backends.utils.resolve` and `s3e.backends.utils.token_index`.
+  `resolve_backend` and `OPENAI_MODEL_IDENTIFIER` are still exported by
+  `s3e.backends`.
 
 ### Fixed
+- Thinking models (e.g. Qwen3.5-4B and larger, Mistral reasoning models, and
+  Gemma 4 with thinking enabled) no longer break the HuggingFace and vLLM
+  backends: logprobs mode read the token that opens the reasoning, putting
+  almost no mass on the answer tokens without a warning, and text mode
+  returned the reasoning as the reply.
 - `HuggingFaceVLM` loads the processor from the same Hub snapshot as the
   model: `revision`, `cache_dir`, `token`, and the other file-selection
   kwargs are forwarded to it, so a pinned revision no longer pairs with the

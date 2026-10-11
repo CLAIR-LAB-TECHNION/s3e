@@ -8,7 +8,8 @@ development setup, test commands, style, and release process, see
 
 | Module | Responsibility |
 |---|---|
-| `s3e/backends/` | The {class}`~s3e.VLMBackend` interface and {class}`~s3e.VLMOutput`; the HuggingFace, OpenAI, and vLLM backends; {func}`~s3e.resolve_backend` (model id → backend); a reverse token index shared by the local backends |
+| `s3e/backends/` | The {class}`~s3e.VLMBackend` interface and {class}`~s3e.VLMOutput`; the HuggingFace, OpenAI, and vLLM backends |
+| `s3e/backends/utils/` | Helpers that are not backends: {func}`~s3e.resolve_backend` (model id → backend); a reverse token index and thinking-block handling shared by the local backends |
 | `s3e/engine/` | {class}`~s3e.QueryEngine`; answer spaces ({class}`~s3e.BinaryAnswers`, {class}`~s3e.CategoricalAnswers`); results ({class}`~s3e.Prediction`, {class}`~s3e.PredictionSet`) |
 | `s3e/calibration/` | The {class}`~s3e.Calibrator` interface, {class}`~s3e.PlattCalibrator`, and calibration data ({class}`~s3e.CalibrationSet`) |
 | `s3e/translation/` | The {class}`~s3e.QueryTranslator` interface and its implementations; the JSON cache used by {class}`~s3e.LLMTranslator` |
@@ -59,6 +60,27 @@ them. `examples/custom_backend.py` is a complete, minimal backend.
 `BackendContract` in `tests/backends/test_contract.py` encodes this
 behavior. Subclass it in your backend's test module and provide a
 `make_backend` fixture to run the whole contract against your backend.
+
+A backend for local models that may think before answering can reuse
+`s3e/backends/utils/thinking.py`, as {class}`~s3e.HuggingFaceVLM` and
+{class}`~s3e.VLLMBackend` do. At construction,
+{func}`~s3e.backends.utils.thinking.resolve_thinking_tokens` finds the
+model's delimiter pair,
+{func}`~s3e.backends.utils.thinking.find_thinking_switch` finds its chat
+template's thinking switch by rendering a probe conversation, and
+{func}`~s3e.backends.utils.thinking.warn_if_thinking_unavailable` tells the
+user when `thinking=True` cannot work; every query is then rendered with
+{func}`~s3e.backends.utils.thinking.thinking_template_kwargs`. Where a block
+still appears,
+{meth}`~s3e.backends.utils.thinking.ThinkingTokens.opens_block` and the most
+likely next token tell whether a query is about to think,
+{meth}`~s3e.backends.utils.thinking.ThinkingTokens.closing_text` or a
+generated reasoning ends the block, and the answer token is read at the
+first non-whitespace position after it
+({func}`~s3e.backends.utils.thinking.leading_whitespace_tokens`). Text
+replies are split with
+{meth}`~s3e.backends.utils.thinking.ThinkingTokens.split`, and the block's
+text goes in {attr}`VLMOutput.reasoning <s3e.VLMOutput.reasoning>`.
 
 ### A new translator
 

@@ -5,6 +5,8 @@
 integration against tiny real models, and the shared backend contract.
 """
 
+import math
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -937,6 +939,599 @@ class TestHuggingFaceVLMMocked:
         ]
 
 
+# Vocabulary for the thinking tests: id -> decoded string.
+THINK_VOCAB = ["<pad>", "q", "x", "\n\n", "Yes", "No", "r", "<think>", "</think>"]
+THINK_START, THINK_END = 7, 8
+
+
+def _logits_for(probs_by_id):
+    """A logits row whose softmax puts ``probs_by_id`` on those ids."""
+    row = torch.full((len(THINK_VOCAB),), -30.0)
+    for token_id, prob in probs_by_id.items():
+        row[token_id] = math.log(prob)
+    return row
+
+
+class TestHuggingFaceVLMThinking:
+    """Thinking blocks: detection, closing, thinking first, and text mode."""
+
+    def _make_vlm(self, mock_model_cls, mock_proc_cls, prompt_ids, forward_steps,
+                  generate=None, reads_enable_thinking=False, **vlm_kwargs):
+        """A mocked HuggingFaceVLM over ``THINK_VOCAB``.
+
+        ``prompt_ids`` is what the processor returns for every text;
+        ``forward_steps`` are the next-token distributions of successive
+        forward passes (the last one repeats); ``generate`` is the side
+        effect of ``model.generate``. With ``reads_enable_thinking``, the
+        chat template renders an open block when ``enable_thinking`` is set.
+        """
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = model
+        model.device = torch.device("cpu")
+        model.config.is_encoder_decoder = False
+        model.generation_config.eos_token_id = 0
+        model.generation_config.pad_token_id = 0
+        steps = [
+            _logits_for(probs).expand(1, len(prompt_ids), -1) for probs in forward_steps
+        ]
+        model.side_effect = lambda *a, **k: MagicMock(
+            logits=steps.pop(0) if len(steps) > 1 else steps[0]
+        )
+        if generate is not None:
+            model.generate.side_effect = generate
+
+        processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = processor
+        processor.return_value = {"input_ids": torch.tensor([prompt_ids])}
+        def render(messages, **kwargs):
+            text = f"chat:{messages[-1]['content'][-1]['text']}"
+            if reads_enable_thinking:
+                text += "<think>\n" if kwargs.get("enable_thinking") else "<think>\n\n</think>\n\n"
+            return text
+
+        processor.apply_chat_template.side_effect = render
+        processor.batch_decode.side_effect = lambda seqs, **kwargs: [
+            THINK_VOCAB[int(seq[0])] for seq in seqs
+        ]
+        processor.decode.side_effect = lambda ids, skip_special_tokens=False: "".join(
+            THINK_VOCAB[int(i)]
+            for i in ids
+            if not (skip_special_tokens and int(i) == 0)
+        )
+        tokenizer = processor.tokenizer
+        tokenizer.encode.side_effect = lambda text, add_special_tokens=False: (
+            [THINK_VOCAB.index(text)] if text in THINK_VOCAB else [1, 2]
+        )
+        tokenizer.decode.side_effect = lambda ids: "".join(THINK_VOCAB[i] for i in ids)
+
+        vlm = HuggingFaceVLM("test/model", **vlm_kwargs)
+        return vlm, model, processor
+
+    @staticmethod
+    def _separator_then_answer(prompt_ids):
+        """generate() output of the separator pass: "\\n\\n", then "Yes"."""
+        return torch.tensor([prompt_ids + [3, 4]])
+
+    def _texts_sent_to_processor(self, processor):
+        return [c.kwargs["text"] for c in processor.call_args_list]
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_open_prompt_is_closed_and_answer_read_after_block(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
+
+        prompt_ids = [1, THINK_START]
+        vlm, model, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 0.9, 4: 0.05, 5: 0.05}, {4: 0.8, 5: 0.2}],
+            generate=lambda **kwargs: self._separator_then_answer(prompt_ids),
+        )
+
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert result.token_probs == pytest.approx({"Yes": 0.8, "No": 0.2}, abs=1e-6)
+        assert result.argmax_in_interest is True
+        assert result.reasoning == ""
+        # The separator pass sees the closed block; the answer is read from a
+        # forward pass over the block plus the separator it found.
+        assert self._texts_sent_to_processor(processor)[-2:] == [
+            "chat:q</think>",
+            "chat:q</think>\n\n",
+        ]
+        assert model.generate.call_args.kwargs["max_new_tokens"] == MAX_SEPARATOR_TOKENS
+        assert model.generate.call_args.kwargs["do_sample"] is False
+        # An explicit pad id keeps generate() from logging that it picks one.
+        assert model.generate.call_args.kwargs["pad_token_id"] == 0
+        assert model.call_args.kwargs["logits_to_keep"] == 1
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_model_opening_a_block_gets_a_whole_empty_block(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        prompt_ids = [1, 2]
+        vlm, _, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{THINK_START: 0.9, 4: 0.1}, {4: 0.3, 5: 0.7}],
+            generate=lambda **kwargs: self._separator_then_answer(prompt_ids),
+        )
+
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert result.token_probs == pytest.approx({"Yes": 0.3, "No": 0.7}, abs=1e-6)
+        assert self._texts_sent_to_processor(processor)[-1] == (
+            "chat:q<think>\n\n</think>\n\n"
+        )
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_answer_right_after_block_needs_no_separator(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        prompt_ids = [1, THINK_START]
+        vlm, _, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
+            generate=lambda **kwargs: torch.tensor([prompt_ids + [5]]),
+        )
+
+        vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert self._texts_sent_to_processor(processor)[-1] == "chat:q</think>"
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_separator_search_stops_each_row_at_its_answer(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """No greedy steps are spent past the first non-whitespace token."""
+        prompt_ids = [1, THINK_START]
+        vlm, model, _ = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
+            generate=lambda **kwargs: self._separator_then_answer(prompt_ids),
+        )
+
+        vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        (criterion,) = model.generate.call_args.kwargs["stopping_criteria"]
+        last_tokens = torch.tensor([[1, 3], [1, 4], [1, THINK_END]])  # "\n\n", "Yes", "</think>"
+        assert criterion(last_tokens, scores=None).tolist() == [False, True, True]
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_rows_without_a_block_are_untouched(self, mock_model_cls, mock_proc_cls):
+        vlm, model, _ = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=[1, 2],
+            forward_steps=[{4: 0.6, 5: 0.4}],
+        )
+
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert result.token_probs == pytest.approx({"Yes": 0.6, "No": 0.4}, abs=1e-6)
+        assert result.reasoning is None
+        model.generate.assert_not_called()
+        assert model.call_count == 1
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_delimiters_none_turns_handling_off(self, mock_model_cls, mock_proc_cls):
+        vlm, model, _ = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=[1, THINK_START],
+            forward_steps=[{6: 0.9, 4: 0.1}],
+            thinking_delimiters=None,
+        )
+
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert vlm.thinking_delimiters is None
+        assert result.reasoning is None
+        assert result.argmax_in_interest is False
+        model.generate.assert_not_called()
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @pytest.mark.parametrize(
+        "generated, continuation, reasoning",
+        [
+            ([6, 6, THINK_END], "chat:qrr</think>", "rr"),
+            ([6, 6, 6], "chat:qrrr\n</think>", "rrr"),  # budget ran out
+        ],
+    )
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_think_mode_generates_reasoning_then_scores(
+        self, mock_model_cls, mock_proc_cls, generated, continuation, reasoning
+    ):
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
+
+        prompt_ids = [1, THINK_START]
+
+        def generate(**kwargs):
+            if kwargs["max_new_tokens"] == MAX_SEPARATOR_TOKENS:
+                return self._separator_then_answer(prompt_ids)
+            return torch.tensor([prompt_ids + generated])
+
+        vlm, model, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.9, 5: 0.1}],
+            generate=generate,
+            thinking=True,
+            max_thinking_tokens=3,
+        )
+
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        think_call = model.generate.call_args_list[0].kwargs
+        assert think_call["max_new_tokens"] == 3
+        assert think_call["eos_token_id"] == [THINK_END, 0]
+        assert think_call["pad_token_id"] == 0
+        assert self._texts_sent_to_processor(processor)[-2:] == [
+            continuation,
+            continuation + "\n\n",
+        ]
+        assert result.reasoning == reasoning
+        assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1}, abs=1e-6)
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_think_mode_cuts_a_row_at_its_end_of_sequence(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """Without a pad id, generate() pads finished rows with the first
+        stop id, the closing delimiter; a row that ended on EOS is cut there
+        and closed, not continued through the EOS."""
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
+
+        prompt_ids = [1, THINK_START]
+
+        def generate(**kwargs):
+            if kwargs["max_new_tokens"] == MAX_SEPARATOR_TOKENS:
+                return self._separator_then_answer(prompt_ids)
+            return torch.tensor([prompt_ids + [6, 0, THINK_END]])
+
+        vlm, model, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.9, 5: 0.1}],
+            generate=generate,
+            thinking=True,
+        )
+        model.generation_config.pad_token_id = None
+
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert model.generate.call_args_list[0].kwargs["pad_token_id"] == 0
+        assert self._texts_sent_to_processor(processor)[-1] == (
+            "chat:qr\n</think>\n\n"
+        )
+        assert result.reasoning == "r"
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_think_mode_opens_the_block_the_model_was_about_to_open(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
+
+        prompt_ids = [1, 2]
+
+        def generate(**kwargs):
+            if kwargs["max_new_tokens"] == MAX_SEPARATOR_TOKENS:
+                return self._separator_then_answer(prompt_ids)
+            return torch.tensor([prompt_ids + [6, THINK_END]])
+
+        vlm, _, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{THINK_START: 0.6, 4: 0.4}, {4: 0.9, 5: 0.1}],
+            generate=generate,
+            thinking=True,
+        )
+
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert self._texts_sent_to_processor(processor)[1:3] == [
+            "chat:q<think>",
+            "chat:q<think>r</think>",
+        ]
+        assert result.reasoning == "r"
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_answer_after_block_is_scored_with_the_query_kwargs(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        prompt_ids = [1, THINK_START]
+        vlm, model, _ = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
+            generate=lambda **kwargs: self._separator_then_answer(prompt_ids),
+        )
+
+        vlm.query([], "q", interest_tokens=["Yes", "No"], use_cache=False)
+
+        first_pass, answer_pass = (c.kwargs for c in model.call_args_list)
+        assert answer_pass["use_cache"] is first_pass["use_cache"] is False
+        assert answer_pass["logits_to_keep"] == 1
+        assert "use_cache" not in model.generate.call_args.kwargs
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_delimiter_in_the_users_text_opens_nothing(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        vlm, model, _ = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=[THINK_START, 1, 2],
+            forward_steps=[{4: 0.6, 5: 0.4}],
+        )
+
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert result.reasoning is None
+        model.generate.assert_not_called()
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_sequential_fallback_skips_each_rows_block(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        prompt_ids = [1, THINK_START]
+        vlm, _, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.8, 5: 0.2}, {6: 1.0}, {4: 0.3, 5: 0.7}],
+            generate=lambda **kwargs: self._separator_then_answer(prompt_ids),
+        )
+        single_row = processor.return_value
+
+        def process(text, **kwargs):
+            if isinstance(text, list) and len(text) > 1:
+                raise ValueError("cannot batch")
+            return single_row
+
+        processor.side_effect = process
+
+        results = vlm.query_batch([], ["a", "b"], interest_tokens=["Yes", "No"])
+
+        assert [r.reasoning for r in results] == ["", ""]
+        assert results[0].token_probs == pytest.approx({"Yes": 0.8, "No": 0.2}, abs=1e-6)
+        assert results[1].token_probs == pytest.approx({"Yes": 0.3, "No": 0.7}, abs=1e-6)
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @pytest.mark.parametrize(
+        "prompt_ids, generated, text, reasoning",
+        [
+            ([1, THINK_START], [6, THINK_END, 3, 4], "Yes", "r"),
+            # Only the separator after the block is dropped.
+            ([1, THINK_START], [6, THINK_END, 3, 4, 3], "Yes\n\n", "r"),
+            ([1, 2], [THINK_START, 6, 6, THINK_END, 3, 5], "No", "rr"),
+            ([1, THINK_START], [6, 6, 0], None, "rr"),
+            ([1, 2], [4, 3], "Yes", None),  # no block: decoded as before
+        ],
+    )
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_text_mode_moves_block_to_reasoning(
+        self, mock_model_cls, mock_proc_cls, prompt_ids, generated, text, reasoning
+    ):
+        vlm, _, _ = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{4: 1.0}],
+            generate=lambda **kwargs: torch.tensor([prompt_ids + generated]),
+            thinking=True,
+        )
+
+        result = vlm.query([], "q", generate=True, max_new_tokens=10)
+
+        assert result.text == text
+        assert result.reasoning == reasoning
+
+    @pytest.mark.parametrize(
+        "prompt_ids, replies, sent, text, reasoning",
+        [
+            # The prompt opens the block: it is closed before generating.
+            ([1, THINK_START], [[4, 3]], "chat:q</think>", "Yes", ""),
+            # The reply opens one: it stops there and is generated again
+            # after a whole empty block.
+            ([1, 2], [[THINK_START], [5]], "chat:q<think>\n\n</think>", "No", ""),
+            ([1, 2], [[4, 3]], "chat:q", "Yes", None),  # no block
+        ],
+    )
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_text_mode_closes_blocks_when_thinking_is_off(
+        self, mock_model_cls, mock_proc_cls, prompt_ids, replies, sent, text, reasoning
+    ):
+        from s3e.backends.huggingface import _StopAtFirstToken
+
+        replies = list(replies)
+        vlm, model, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{4: 1.0}],
+            generate=lambda **kwargs: torch.tensor([prompt_ids + replies.pop(0)]),
+        )
+
+        result = vlm.query([], "q", generate=True, max_new_tokens=10)
+
+        assert (result.text, result.reasoning) == (text, reasoning)
+        last_sent = self._texts_sent_to_processor(processor)[-1]
+        assert (last_sent if isinstance(last_sent, str) else last_sent[0]) == sent
+        first_call = model.generate.call_args_list[0].kwargs
+        assert any(isinstance(c, _StopAtFirstToken) for c in first_call["stopping_criteria"])
+        assert first_call["max_new_tokens"] == 10
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_text_after_a_closed_block_keeps_its_trailing_text(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """Only the separator goes, as after a template's own empty block."""
+        prompt_ids = [1, THINK_START]
+        vlm, _, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{4: 1.0}],
+            generate=lambda **kwargs: torch.tensor([prompt_ids + [3, 4, 3]]),
+        )
+        processor.batch_decode.side_effect = lambda seqs, **kwargs: [
+            "".join(THINK_VOCAB[int(i)] for i in seq) for seq in seqs
+        ]
+
+        result = vlm.query([], "q", generate=True, max_new_tokens=10)
+
+        assert (result.text, result.reasoning) == ("Yes\n\n", "")
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_text_mode_accepts_stopping_criteria_none(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        from s3e.backends.huggingface import _StopAtFirstToken
+
+        prompt_ids = [1, 2]
+        vlm, model, _ = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{4: 1.0}],
+            generate=lambda **kwargs: torch.tensor([prompt_ids + [4]]),
+        )
+
+        result = vlm.query([], "q", generate=True, stopping_criteria=None)
+
+        assert result.text == "Yes"
+        (criterion,) = model.generate.call_args.kwargs["stopping_criteria"]
+        assert isinstance(criterion, _StopAtFirstToken)
+
+    def test_stop_at_first_token_only_stops_the_first_step(self):
+        from s3e.backends.huggingface import _StopAtFirstToken
+
+        stop = _StopAtFirstToken(THINK_START, prompt_length=2)
+
+        assert stop(torch.tensor([[1, 2, THINK_START], [1, 2, 4]]), None).tolist() == [
+            True, False
+        ]
+        assert stop(torch.tensor([[1, 2, 4, THINK_START]]), None).tolist() == [False]
+
+    @pytest.mark.parametrize(
+        "vlm_kwargs, enable_thinking",
+        [
+            ({}, False),
+            ({"thinking": True}, True),
+            ({"chat_template_kwargs": {"enable_thinking": True}}, True),  # caller wins
+        ],
+    )
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_thinking_sets_the_templates_switch(
+        self, mock_model_cls, mock_proc_cls, vlm_kwargs, enable_thinking
+    ):
+        vlm, _, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=[1, 2],
+            forward_steps=[{4: 1.0}],
+            reads_enable_thinking=True,
+            **vlm_kwargs,
+        )
+
+        vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert processor.apply_chat_template.call_args.kwargs["enable_thinking"] is enable_thinking
+        assert vlm.thinking_delimiters == "auto"  # as given, not the pairs tried
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_thinking_on_warns_without_a_way_to_think(self, mock_model_cls, mock_proc_cls):
+        with pytest.warns(UserWarning, match="no way to turn thinking on"):
+            self._make_vlm(
+                mock_model_cls, mock_proc_cls,
+                prompt_ids=[1, 2],
+                forward_steps=[{4: 1.0}],
+                thinking=True,
+            )
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_thinking_on_with_a_switch_is_silent(self, mock_model_cls, mock_proc_cls):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            self._make_vlm(
+                mock_model_cls, mock_proc_cls,
+                prompt_ids=[1, 2],
+                forward_steps=[{4: 1.0}],
+                reads_enable_thinking=True,
+                thinking=True,
+            )
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_chat_template_kwargs_reach_the_template(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        vlm, _, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=[1, 2],
+            forward_steps=[{4: 1.0}],
+            chat_template_kwargs={"enable_thinking": False},
+        )
+
+        vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+        assert processor.apply_chat_template.call_args.kwargs["enable_thinking"] is False
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_template_rejecting_its_kwargs_raises(self, mock_model_cls, mock_proc_cls):
+        """A prompt without the template would silently ignore the kwargs."""
+        vlm, _, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=[1, 2],
+            forward_steps=[{4: 1.0}],
+            chat_template_kwargs={"enable_thinking": False},
+        )
+        processor.apply_chat_template.side_effect = ValueError("template error")
+
+        with pytest.raises(ValueError, match="template error"):
+            vlm.query([], "q", interest_tokens=["Yes", "No"])
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"thinking": "think"},
+            {"thinking": True, "thinking_delimiters": None},
+            {"max_thinking_tokens": 0},
+            {"thinking_delimiters": ("<think>",)},
+        ],
+    )
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_invalid_thinking_options_rejected_before_model_load(
+        self, mock_model_cls, mock_proc_cls, kwargs
+    ):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        with pytest.raises(ValueError):
+            HuggingFaceVLM("test/model", **kwargs)
+
+        mock_model_cls.from_pretrained.assert_not_called()
+
+
 @pytest.mark.slow
 class TestHuggingFaceVLMIntegration:
     """Integration tests with a tiny real HF model.
@@ -998,6 +1593,109 @@ class TestHuggingFaceVLMIntegration:
             for r in results
         )
 
+
+
+@pytest.mark.slow
+class TestHuggingFaceVLMThinkingIntegration:
+    """Thinking handling against a tiny random Qwen3.5.
+
+    Its chat template opens a ``<think>`` block by default, like the real
+    Qwen3.5-4B and larger. The weights are random, so the tests check the
+    mechanics (where the answer is read, what lands in ``reasoning``), not
+    the answers.
+    """
+
+    TINY_THINKING_VLM_ID = (
+        "onnx-internal-testing/tiny-random-Qwen3_5ForConditionalGeneration"
+    )
+
+    def _backend(self, **kwargs):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        return HuggingFaceVLM(
+            self.TINY_THINKING_VLM_ID,
+            device_map="cpu",
+            torch_dtype=torch.float32,
+            **kwargs,
+        )
+
+    @pytest.fixture(scope="class")
+    def image(self):
+        return Image.new("RGB", (64, 64), color=(200, 30, 30))
+
+    def test_thinking_off_through_the_templates_switch(self, image):
+        backend = self._backend()
+
+        result = backend.query([image], "Is it red?", interest_tokens=["Yes", "No"])
+
+        assert backend.processor.apply_chat_template(
+            backend._build_messages([image], "Is it red?"),
+            add_generation_prompt=True,
+            tokenize=False,
+            **backend._template_kwargs(),
+        ).rstrip().endswith("</think>")
+        assert result.reasoning is None
+
+    def test_block_the_template_opens_is_closed(self, image):
+        backend = self._backend(chat_template_kwargs={"enable_thinking": True})
+
+        result = backend.query(
+            [image], "Is it red? Answer Yes or No.", interest_tokens=["Yes", "No"]
+        )
+
+        assert result.reasoning == ""
+        assert set(result.token_probs) == {"Yes", "No"}
+        assert 0.0 <= sum(result.token_probs.values()) <= 1.0 + 1e-6
+
+    def test_thinking_generates_reasoning(self, image):
+        backend = self._backend(thinking=True, max_thinking_tokens=4)
+
+        result = backend.query([image], "Is it red?", interest_tokens=["Yes", "No"])
+
+        assert isinstance(result.reasoning, str)
+        assert set(result.token_probs) == {"Yes", "No"}
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"chat_template_kwargs": {"enable_thinking": True}},  # blocks closed
+            {"thinking": True, "max_thinking_tokens": 4},
+        ],
+    )
+    def test_batched_rows_match_single_queries(self, image, kwargs):
+        """Thinking rows re-scored together, left-padded, match one by one."""
+        backend = self._backend(**kwargs)
+        prompts = ["Is it red?", "Is the block on the small table? Answer Yes or No."]
+
+        batched = backend.query_batch([image], prompts, interest_tokens=["Yes", "No"])
+        single = [
+            backend.query([image], prompt, interest_tokens=["Yes", "No"])
+            for prompt in prompts
+        ]
+
+        for batched_row, single_row in zip(batched, single):
+            assert batched_row.reasoning == single_row.reasoning
+            assert batched_row.token_probs == pytest.approx(
+                single_row.token_probs, abs=1e-5
+            )
+
+    def test_text_mode_moves_unfinished_block_to_reasoning(self, image):
+        result = self._backend(thinking=True).query(
+            [image], "Is it red?", generate=True, max_new_tokens=6, do_sample=False
+        )
+
+        assert result.text is None
+        assert result.reasoning
+
+    def test_text_mode_answers_after_a_closed_block(self, image):
+        backend = self._backend(chat_template_kwargs={"enable_thinking": True})
+
+        result = backend.query(
+            [image], "Is it red?", generate=True, max_new_tokens=6, do_sample=False
+        )
+
+        assert result.reasoning == ""
+        assert isinstance(result.text, str)
 
 
 @pytest.mark.slow

@@ -3,7 +3,7 @@
 
 """Public factory turning model-id strings into VLM backends."""
 
-from .backend import VLMBackend
+from ..backend import VLMBackend
 
 OPENAI_MODEL_IDENTIFIER = "OpenAI/"
 
@@ -37,9 +37,9 @@ def resolve_backend(vlm: "str | VLMBackend", **vlm_kwargs) -> VLMBackend:
             f"got {type(vlm).__name__}"
         )
     if vlm.startswith(OPENAI_MODEL_IDENTIFIER):
-        from .openai import OpenAIVLM
+        from ..openai import OpenAIVLM
 
         return OpenAIVLM(vlm[len(OPENAI_MODEL_IDENTIFIER):], **vlm_kwargs)
-    from .huggingface import HuggingFaceVLM
+    from ..huggingface import HuggingFaceVLM
 
     return HuggingFaceVLM(vlm, **vlm_kwargs)

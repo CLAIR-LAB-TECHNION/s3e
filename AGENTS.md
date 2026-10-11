@@ -14,12 +14,12 @@
 ## Layout
 - `s3e/estimator.py`: `SemanticStateEstimator`, the thin state-estimation facade wiring predicates (an explicit list, or grounded from PDDL by `from_pddl`), translation, and a `QueryEngine`
 - `s3e/engine/`: `QueryEngine`, answer spaces (`BinaryAnswers`, `CategoricalAnswers`), and result types (`Prediction`, `PredictionSet`); the PDDL-free core
-- `s3e/backends/`: `VLMBackend` interface, `VLMOutput`, `HuggingFaceVLM`, `OpenAIVLM`, `VLLMBackend`, `resolve_backend()`
+- `s3e/backends/`: the `VLMBackend` interface and `VLMOutput` (`backend.py`) and the backends `HuggingFaceVLM`, `OpenAIVLM`, `VLLMBackend`; helpers that are not backends live in `s3e/backends/utils/`: `resolve.py` (`resolve_backend()`), `token_index.py` (reverse token index), and `thinking.py` (thinking-block detection shared by the HuggingFace and vLLM backends)
 - `s3e/calibration/`: offline calibration over prediction data (`Calibrator`, `PlattCalibrator`, `CalibrationSet`/`CalibrationExample`/`CalibrationSample`)
 - `s3e/translation/`: predicate-to-query translators, including `cache.py` (JSON cache helpers for `LLMTranslator`)
 - `s3e/pddl/`: Unified Planning / PDDL helpers (parsing, grounding, state conversion)
 - `s3e/_deps.py`: `require(module, extra)` helper for lazy, informative optional-dependency errors
-- `tests/`: mirrors the package layout (`tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, `tests/workflows/`, `tests/test_estimator.py`, `tests/test_imports.py`, ...)
+- `tests/`: mirrors the package layout (`tests/engine/`, `tests/backends/` with `tests/backends/utils/`, `tests/calibration/`, `tests/pddl/`, `tests/workflows/`, `tests/test_estimator.py`, `tests/test_imports.py`, ...)
 - `tests/conftest.py`: shared fixtures and Blocksworld sample data
 - `tests/fakes.py`: shared `FakeVLM` double implementing the full `VLMBackend` contract
 - `examples/`: runnable scripts (`custom_backend.py`, `blocksworld_benchmark.py`), run by `tests/test_examples.py` with fake backends
@@ -72,7 +72,7 @@
 - `pytest -m "not slow"` is the default verification command for normal development.
 - Running the suite assumes a dev install (`dev` or `dev-gpu`). Without `vllm`, the vLLM unit tests skip with a reason; the slow vLLM integration tests additionally require CUDA. Other partial installs (missing torch/openai/unified-planning) are supported for the *library* (see `tests/test_imports.py`) but not for running the test suite itself.
 - Reuse fixtures from `tests/conftest.py` and the shared `FakeVLM` double from `tests/fakes.py` instead of duplicating common setup.
-- The test tree mirrors the package: `tests/engine/`, `tests/backends/`, `tests/calibration/`, `tests/pddl/`, plus `tests/test_estimator.py`, `tests/test_translators.py`, `tests/test_cache.py`, `tests/test_imports.py` (import-hygiene for bare/partial installs), and `tests/workflows/` (end-to-end usage-pattern tests that span modules).
+- The test tree mirrors the package: `tests/engine/`, `tests/backends/` (and `tests/backends/utils/`), `tests/calibration/`, `tests/pddl/`, plus `tests/test_estimator.py`, `tests/test_translators.py`, `tests/test_cache.py`, `tests/test_imports.py` (import-hygiene for bare/partial installs), and `tests/workflows/` (end-to-end usage-pattern tests that span modules).
 
 ## Code Style Guidelines
 
@@ -120,6 +120,7 @@
 - Use `@dataclass` for lightweight structured outputs like `VLMOutput`.
 - Update package re-exports and `__all__` when adding public APIs.
 - Keep backend-specific logic inside backend modules, not generic estimator modules.
+- `s3e/backends/` holds only the `VLMBackend` interface and backend implementations; put helpers shared by backends in `s3e/backends/utils/`.
 
 ### Error Handling
 - Raise explicit, informative exceptions.
