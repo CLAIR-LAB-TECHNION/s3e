@@ -52,8 +52,8 @@ the commit history and PyPI release dates when this file was introduced.
 - **Breaking:** `TemplateTranslator.translate` raises `ValueError`, naming the
   template and predicate, instead of `KeyError` or `IndexError` when a
   placeholder has no matching argument.
-- The backend helper modules moved to `s3e.backends.utils`, so that
-  `s3e.backends` holds only the backends and their interface:
+- **Breaking:** the backend helper modules moved to `s3e.backends.utils`, so
+  that `s3e.backends` holds only the backends and their interface:
   `s3e.backends.resolve` and `s3e.backends.token_index` are now
   `s3e.backends.utils.resolve` and `s3e.backends.utils.token_index`.
   `resolve_backend` and `OPENAI_MODEL_IDENTIFIER` are still exported by

@@ -53,7 +53,12 @@ cover.
 
 Helpers for backends that handle thinking models (see the developer guide):
 
+.. autofunction:: s3e.backends.utils.thinking.validate_thinking_options
+
 .. autofunction:: s3e.backends.utils.thinking.find_thinking_switch
+
+.. autoclass:: s3e.backends.utils.thinking.ThinkingSwitch
+   :members: template_kwargs
 
 .. autofunction:: s3e.backends.utils.thinking.thinking_template_kwargs
 
