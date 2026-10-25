@@ -422,3 +422,22 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/python,pycharm,visualstudiocode,windows,linux,macos,jupyternotebooks
 slurm-*.out
+
+# venues/ (icaps27-tool branch): only the ICAPS 2027 tool-paper submission is tracked.
+# Other venues' material and superseded documents stay local.
+venues/joss/
+venues/softwarex/
+venues/jmlr/
+venues/archive/
+# LaTeX build products of the paper
+venues/icaps27/paper/*.aux
+venues/icaps27/paper/*.bbl
+venues/icaps27/paper/*.blg
+venues/icaps27/paper/*.fdb_latexmk
+venues/icaps27/paper/*.fls
+venues/icaps27/paper/*.out
+venues/icaps27/paper/*.synctex.gz
+venues/icaps27/paper/*.toc
+# but keep the paper's figures despite the repository-wide *.png / *.pdf rules
+!venues/icaps27/paper/figures/*.png
+!venues/icaps27/paper/figures/*.pdf
