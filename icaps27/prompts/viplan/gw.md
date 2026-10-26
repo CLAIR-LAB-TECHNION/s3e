@@ -1,0 +1,1 @@
+Images are a front view of a robotic arm.

@@ -1,0 +1,5 @@
+{
+  "robot-gripping": "Is the robot gripping the {item}?",
+  "robot-gripper-empty": "Is the robot gripper empty?",
+  "on-table": "Is the {item} on the {table}?"
+}

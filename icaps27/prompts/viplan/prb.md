@@ -1,0 +1,1 @@
+Images are taken from the point of view of a static robot. Metal objects have a reflective surface, while rubber objects have a matte surface.

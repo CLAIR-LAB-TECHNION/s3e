@@ -1,0 +1,23 @@
+{
+  "isvisibleobject": "Is the {item} currently visible?",
+  "isvisiblereceptacle": "Is the {receptacle} currently visible?",
+  "openable": "Can the {receptacle} be opened?",
+  "opened": "Is the {receptacle} open?",
+  "inreceptacle": "Is the {item} in the {receptacle}?",
+  "receptacletype": "Is the {receptacle} a {receptacle_type}?",
+  "cancontain": "Can a {receptacle_type} contain a {object_type}?",
+  "objecttype": "Is the {item} a {object_type}?",
+  "holds": "Is the agent holding the {item}?",
+  "holdsany": "Is the agent holding any item?",
+  "isclean": "Is the {item} clean?",
+  "cleanable": "Can the {item} be cleaned?",
+  "ishot": "Is the {item} hot?",
+  "heatable": "Can the {item} be heated?",
+  "iscool": "Is the {item} cool?",
+  "coolable": "Can the {item} be cooled?",
+  "pickupable": "Can the {item} be picked up?",
+  "toggleable": "Can the {item} be toggled on or off?",
+  "istoggled": "Is the {item} currently toggled on?",
+  "sliceable": "Can the {item} be sliced?",
+  "issliced": "Is the {item} sliced?"
+}

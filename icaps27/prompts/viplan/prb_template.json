@@ -1,0 +1,5 @@
+{
+  "is-directly-on-table": "Is the {shape} directly on the table?",
+  "is-clear-on-top": "Is the top of the {shape} clear?",
+  "shape-on-top-of-block": "Is the {shape} on top of the {block}?"
+}

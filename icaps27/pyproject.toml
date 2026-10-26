@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools >= 77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "s3e-icaps27-experiments"
+version = "0.1.0"
+description = "Experiments for the S3E tool paper: closed-loop planning, scaling, scoring modes, calibration, reasoning models, other tools, and earlier versions"
+readme = "README.md"
+license = "MIT"
+# vLLM and ViPlan++ need Python < 3.14 / 3.15; 3.12 is the tested version.
+requires-python = ">= 3.10, < 3.14"
+dependencies = [
+    # The library under evaluation, pinned to the released version the paper reports.
+    "s3e[hf,pddl,calibration,openai]==0.5.0",
+    "unified-planning>=1.3.0",
+    "up-fast-downward>=0.5",
+    "numpy>=1.26",
+    "Pillow>=10",
+    "matplotlib>=3.8",
+    "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+# Local multi-GPU inference (E2 HF-vs-vLLM). Needs a CUDA host.
+vllm = ["s3e[vllm]==0.5.0"]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[tool.setuptools.packages.find]
+include = ["s3e_exp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: needs a CUDA device and downloads a real model",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "B"]
+ignore = ["B905"]

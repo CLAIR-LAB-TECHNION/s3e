@@ -1,0 +1,63 @@
+{
+  "_comment": "Table 1 (feature matrix). Values: true, false, \"partial\", or null (not established). Every non-S3E cell was checked against the cited source on 2026-10-26; re-check before submission.",
+  "features": [
+    {"key": "pddl_grounding", "short": "PDDL", "label": "Grounds predicates from a PDDL domain and problem"},
+    {"key": "translation", "short": "translate", "label": "Pluggable predicate-to-question translation"},
+    {"key": "answer_probabilities", "short": "probs", "label": "Per-option answer probabilities"},
+    {"key": "null_option", "short": "unknown", "label": "Explicit 'unknown' answer"},
+    {"key": "multi_backend", "short": "backends", "label": "Several model backends (local and API)"},
+    {"key": "offline_calibration", "short": "calib", "label": "Offline calibration of the probabilities"},
+    {"key": "planner_handoff", "short": "planner", "label": "Planner-ready state (Unified Planning / PDDL)"},
+    {"key": "reasoning_models", "short": "thinking", "label": "Logprob scoring for reasoning (thinking) models"}
+  ],
+  "tools": [
+    {"name": "S3E 0.5", "source": "this paper", "features": {
+      "pddl_grounding": true, "translation": true, "answer_probabilities": true, "null_option": true,
+      "multi_backend": true, "offline_calibration": true, "planner_handoff": true,
+      "reasoning_models": "partial"},
+      "notes": "reasoning_models: on main (unreleased), not in 0.5.0"},
+    {"name": "Unified Planning", "source": "https://github.com/aiplan4eu/unified-planning", "features": {
+      "pddl_grounding": true, "translation": false, "answer_probabilities": false, "null_option": false,
+      "multi_backend": false, "offline_calibration": false, "planner_handoff": true,
+      "reasoning_models": false}},
+    {"name": "PDDLGym", "source": "https://github.com/tomsilver/pddlgym", "features": {
+      "pddl_grounding": true, "translation": false, "answer_probabilities": false, "null_option": false,
+      "multi_backend": false, "offline_calibration": false, "planner_handoff": true,
+      "reasoning_models": false}},
+    {"name": "t2v_metrics (VQAScore)", "source": "https://github.com/linzhiqiu/t2v_metrics", "features": {
+      "pddl_grounding": false, "translation": "partial", "answer_probabilities": "partial",
+      "null_option": false, "multi_backend": true, "offline_calibration": false,
+      "planner_handoff": false, "reasoning_models": false},
+      "notes": "one answer string per call, full-vocabulary softmax of the first generated token after logits processors; question_template only"},
+    {"name": "LMMs-Eval", "source": "https://github.com/EvolvingLMMs-Lab/lmms-eval", "features": {
+      "pddl_grounding": false, "translation": false, "answer_probabilities": "partial",
+      "null_option": false, "multi_backend": true, "offline_calibration": false,
+      "planner_handoff": false, "reasoning_models": false},
+      "notes": "loglikelihood = mean cross-entropy over the chat-templated continuation; image loglikelihood unavailable for the qwen2_vl/qwen2_5_vl/qwen3_vl/gemma3/internvl wrappers"},
+    {"name": "VLMEvalKit", "source": "https://github.com/open-compass/VLMEvalKit", "features": {
+      "pddl_grounding": false, "translation": false, "answer_probabilities": false,
+      "null_option": false, "multi_backend": true, "offline_calibration": false,
+      "planner_handoff": false, "reasoning_models": null},
+      "notes": "generation only; answers extracted from text or by an LLM judge"},
+    {"name": "ViPlan grounder", "source": "https://github.com/merlerm/ViPlan", "features": {
+      "pddl_grounding": true, "translation": "partial", "answer_probabilities": false,
+      "null_option": false, "multi_backend": true, "offline_calibration": false,
+      "planner_handoff": true, "reasoning_models": null},
+      "notes": "fixed templates; decisions from parsed text (first-token logprobs are logged, not used)"},
+    {"name": "DKPROMPT", "source": "arXiv 2406.17659", "features": {
+      "pddl_grounding": true, "translation": "partial", "answer_probabilities": false,
+      "null_option": true, "multi_backend": null, "offline_calibration": false,
+      "planner_handoff": true, "reasoning_models": null},
+      "notes": "text answers yes/no/skip; code not released"},
+    {"name": "PG-VLM", "source": "arXiv 2309.02561", "features": {
+      "pddl_grounding": false, "translation": false, "answer_probabilities": true,
+      "null_option": false, "multi_backend": false, "offline_calibration": false,
+      "planner_handoff": false, "reasoning_models": false},
+      "notes": "fine-tuned InstructBLIP; score p(yes)/p(no)"},
+    {"name": "pix2pred", "source": "arXiv 2501.00296", "features": {
+      "pddl_grounding": "partial", "translation": false, "answer_probabilities": false,
+      "null_option": false, "multi_backend": "partial", "offline_calibration": false,
+      "planner_handoff": true, "reasoning_models": null},
+      "notes": "VLM labels atoms as text (GPT-4o / Gemini)"}
+  ]
+}

@@ -1,0 +1,15 @@
+# The repository root ignores *.json, *.png, and *.pdf; this directory keeps
+# its configs, prompts, and transcribed external results.
+!*.json
+.venv/
+envs/
+*.egg-info/
+__pycache__/
+instances/*
+!instances/README.md
+results/raw/*
+!results/raw/.gitkeep
+results/figures/*
+!results/figures/.gitkeep
+results/smoke*/
+slurm-*.out

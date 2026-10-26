@@ -1,0 +1,8 @@
+.venv
+envs
+instances/*
+results/raw/*
+results/figures/*
+results/smoke*
+**/__pycache__
+*.egg-info

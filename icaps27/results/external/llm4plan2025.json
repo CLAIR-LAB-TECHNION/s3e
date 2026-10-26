@@ -1,0 +1,107 @@
+{
+  "source": {
+    "title": "S3E: Semantic Symbolic State Estimation With Vision-Language Foundation Models",
+    "venue": "AAAI 2025 Workshop LM4Plan",
+    "url": "https://openreview.net/pdf?id=RKfBy2wlST",
+    "retrieved_from": "https://web.archive.org/web/20250523015804/https://openreview.net/pdf?id=RKfBy2wlST",
+    "pdf_built": "2025-02-09",
+    "transcribed": "2026-10-26"
+  },
+  "setup": {
+    "translator": "LLaMA 3 70B (LLM translation of grounded predicates into yes/no questions)",
+    "vqa_models": "LLaVA-OneVision 0.5B / 7B / 72B (exact Hugging Face ids not given)",
+    "scoring": "normalized probability of yes vs no tokens (several surface forms each); state = P(yes) >= theta",
+    "images": "one image per query",
+    "experiment_1": "simulated grocery sorting (robosuite/MuJoCo, UR5): 3 tables, 6 items, 25 grounded predicates (on-table x18, robot-gripper-empty, robot-gripping x6); 2,000 data points from random imperfect actions; about 75% of atoms false",
+    "experiment_2": "real UR5e: 4 items, 2 table sections, 13 grounded predicates; hand-labeled video frames",
+    "appendix": "photorealistic Blocksworld (Asai 2018), 2-10 objects, over 7,500 data points"
+  },
+  "columns": ["acc@0.3", "acc@0.5", "acc@0.7", "AP_micro", "AP_macro"],
+  "caveats": [
+    "Table 1 vs Table 3 and Table 2 vs Table 4 disagree on some shared rows (e.g. 72B+Instruct 0.87/0.88/0.77 vs 0.88/0.89/0.78); the per-table values are kept as printed.",
+    "Table 3 rows '72B (no trans) + Instruct' and '72B (no trans) + Instruct + Pose' repeat other rows (likely copy errors).",
+    "Macro AP is presumably over grounded predicates (per-predicate AP bars in Fig. 9)."
+  ],
+  "tables": {
+    "table1_exp1_simulated": {
+      "0.5B": [0.78, 0.79, 0.79, 0.37, 0.35],
+      "7B": [0.72, 0.85, 0.88, 0.70, 0.66],
+      "72B": [0.82, 0.90, 0.89, 0.81, 0.74],
+      "0.5B + Instruct": [0.53, 0.71, 0.76, 0.24, 0.33],
+      "7B + Instruct": [0.78, 0.85, 0.85, 0.67, 0.63],
+      "72B + Instruct": [0.87, 0.92, 0.88, 0.80, 0.77],
+      "0.5B + Pose": [0.78, 0.78, 0.78, 0.38, 0.42],
+      "7B + Pose": [0.74, 0.87, 0.90, 0.76, 0.77],
+      "72B + Pose": [0.86, 0.93, 0.91, 0.87, 0.83],
+      "0.5B + Instruct + Pose": [0.53, 0.71, 0.75, 0.24, 0.41],
+      "7B + Instruct + Pose": [0.81, 0.86, 0.86, 0.73, 0.73],
+      "72B + Instruct + Pose": [0.90, 0.94, 0.91, 0.88, 0.91]
+    },
+    "table2_exp2_real": {
+      "0.5B": [0.58, 0.63, 0.67, 0.45, 0.61],
+      "7B": [0.78, 0.77, 0.76, 0.79, 0.84],
+      "72B": [0.81, 0.81, 0.82, 0.86, 0.91],
+      "0.5B Mid-poses": [0.56, 0.63, 0.66, 0.46, 0.74],
+      "7B Mid-poses": [0.73, 0.77, 0.77, 0.80, 0.85],
+      "72B Mid-poses": [0.82, 0.81, 0.81, 0.90, 0.99]
+    },
+    "table3_exp1_translation_ablation": {
+      "0.5B": [0.78, 0.79, 0.79, 0.37, 0.35],
+      "0.5B (no trans)": [0.79, 0.79, 0.79, 0.18, 0.23],
+      "7B": [0.72, 0.85, 0.88, 0.70, 0.66],
+      "7B (no trans)": [0.57, 0.63, 0.70, 0.26, 0.50],
+      "72B": [0.82, 0.90, 0.89, 0.81, 0.74],
+      "72B (no trans)": [0.81, 0.87, 0.85, 0.73, 0.68],
+      "0.5B + Pose": [0.78, 0.78, 0.78, 0.38, 0.43],
+      "0.5B (no trans) + Pose": [0.78, 0.78, 0.78, 0.19, 0.25],
+      "7B + Pose": [0.74, 0.87, 0.90, 0.76, 0.77],
+      "7B (no trans) + Pose": [0.60, 0.64, 0.70, 0.27, 0.59],
+      "72B + Pose": [0.86, 0.93, 0.91, 0.87, 0.83],
+      "72B (no trans) + Pose": [0.84, 0.89, 0.87, 0.80, 0.75],
+      "0.5B + Instruct": [0.53, 0.71, 0.76, 0.24, 0.33],
+      "0.5B (no trans) + Instruct": [0.71, 0.79, 0.79, 0.17, 0.23],
+      "7B + Instruct": [0.78, 0.85, 0.85, 0.67, 0.63],
+      "7B (no trans) + Instruct": [0.53, 0.58, 0.61, 0.21, 0.47],
+      "72B + Instruct": [0.88, 0.92, 0.89, 0.80, 0.78],
+      "72B (no trans) + Instruct": [0.81, 0.87, 0.85, 0.73, 0.68],
+      "0.5B + Instruct + Pose": [0.53, 0.71, 0.75, 0.24, 0.42],
+      "0.5B (no trans) + Instruct + Pose": [0.71, 0.78, 0.78, 0.18, 0.25],
+      "7B + Instruct + Pose": [0.81, 0.86, 0.86, 0.73, 0.73],
+      "7B (no trans) + Instruct + Pose": [0.54, 0.59, 0.61, 0.22, 0.55],
+      "72B + Instruct + Pose": [0.90, 0.94, 0.91, 0.88, 0.91],
+      "72B (no trans) + Instruct + Pose": [0.84, 0.89, 0.87, 0.80, 0.75]
+    },
+    "table4_exp2_translation_ablation": {
+      "0.5B": [0.58, 0.63, 0.67, 0.46, 0.55],
+      "0.5B (no trans)": [0.47, 0.60, 0.64, 0.40, 0.48],
+      "7B": [0.78, 0.77, 0.76, 0.79, 0.81],
+      "7B (no trans)": [0.44, 0.49, 0.54, 0.36, 0.45],
+      "72B": [0.81, 0.81, 0.82, 0.86, 0.89],
+      "72B (no trans)": [0.66, 0.70, 0.72, 0.78, 0.75],
+      "0.5B Mid-poses": [0.56, 0.63, 0.66, 0.47, 0.70],
+      "0.5B (no trans) Mid-poses": [0.51, 0.58, 0.66, 0.43, 0.59],
+      "7B Mid-poses": [0.73, 0.77, 0.77, 0.80, 0.83],
+      "7B (no trans) Mid-poses": [0.46, 0.53, 0.56, 0.40, 0.60],
+      "72B Mid-poses": [0.82, 0.81, 0.81, 0.90, 0.99],
+      "72B (no trans) Mid-poses": [0.64, 0.69, 0.73, 0.82, 0.85]
+    },
+    "table5_prb_object_limits": {
+      "_columns": "each cell: acc@0.3, acc@0.5, acc@0.7, AP_micro, AP_macro; keys are the maximum number of objects",
+      "0.5B": {"3": [0.72, 0.81, 0.81, 0.44, 0.76], "5": [0.70, 0.84, 0.87, 0.32, 0.60], "7": [0.72, 0.86, 0.89, 0.26, 0.45], "10": [0.74, 0.88, 0.91, 0.20, 0.30]},
+      "0.5B + Instruct": {"3": [0.74, 0.81, 0.81, 0.41, 0.75], "5": [0.73, 0.85, 0.87, 0.29, 0.59], "7": [0.74, 0.87, 0.89, 0.22, 0.44], "10": [0.74, 0.89, 0.91, 0.16, 0.29]},
+      "7B": {"3": [0.82, 0.84, 0.85, 0.68, 0.91], "5": [0.78, 0.81, 0.83, 0.59, 0.83], "7": [0.75, 0.78, 0.82, 0.50, 0.71], "10": [0.73, 0.77, 0.81, 0.41, 0.55]},
+      "7B + Instruct": {"3": [0.85, 0.86, 0.87, 0.73, 0.89], "5": [0.81, 0.84, 0.87, 0.62, 0.80], "7": [0.79, 0.83, 0.86, 0.51, 0.69], "10": [0.77, 0.82, 0.86, 0.41, 0.53]},
+      "72B": {"3": [0.92, 0.92, 0.93, 0.88, 0.95], "5": [0.87, 0.88, 0.89, 0.78, 0.87], "7": [0.84, 0.86, 0.87, 0.68, 0.76], "10": [0.81, 0.83, 0.86, 0.56, 0.59]},
+      "72B + Instruct": {"3": [0.91, 0.92, 0.93, 0.94, 0.96], "5": [0.83, 0.85, 0.87, 0.85, 0.88], "7": [0.78, 0.81, 0.83, 0.76, 0.78], "10": [0.74, 0.77, 0.80, 0.64, 0.64]}
+    },
+    "table6_prb_conflicts": {
+      "_columns": "each cell: acc@0.3, acc@0.5, acc@0.7, AP_micro, AP_macro; all with the 10-object limit",
+      "0.5B": {"rubber only": [0.58, 0.72, 0.76, 0.38, 0.76], "metal only": [0.71, 0.80, 0.80, 0.40, 0.73], "color conflict": [0.70, 0.80, 0.80, 0.44, 0.78], "color-size conflict": [0.72, 0.84, 0.86, 0.33, 0.63], "color-shape conflict": [0.72, 0.86, 0.88, 0.28, 0.56]},
+      "0.5B + Instruct": {"rubber only": [0.65, 0.75, 0.75, 0.37, 0.74], "metal only": [0.68, 0.79, 0.80, 0.35, 0.72], "color conflict": [0.72, 0.80, 0.79, 0.41, 0.77], "color-size conflict": [0.75, 0.85, 0.86, 0.29, 0.62], "color-shape conflict": [0.74, 0.87, 0.88, 0.24, 0.55]},
+      "7B": {"rubber only": [0.74, 0.77, 0.79, 0.66, 0.95], "metal only": [0.78, 0.81, 0.82, 0.68, 0.93], "color conflict": [0.79, 0.80, 0.82, 0.67, 0.94], "color-size conflict": [0.77, 0.80, 0.83, 0.59, 0.85], "color-shape conflict": [0.77, 0.80, 0.83, 0.55, 0.83]},
+      "7B + Instruct": {"rubber only": [0.77, 0.81, 0.83, 0.71, 0.93], "metal only": [0.83, 0.84, 0.84, 0.73, 0.90], "color conflict": [0.82, 0.84, 0.85, 0.71, 0.92], "color-size conflict": [0.81, 0.84, 0.86, 0.62, 0.83], "color-shape conflict": [0.80, 0.84, 0.87, 0.57, 0.81]},
+      "72B": {"rubber only": [0.87, 0.88, 0.89, 0.83, 0.96], "metal only": [0.90, 0.91, 0.91, 0.90, 0.95], "color conflict": [0.91, 0.92, 0.92, 0.89, 0.98], "color-size conflict": [0.87, 0.88, 0.89, 0.79, 0.90], "color-shape conflict": [0.85, 0.87, 0.88, 0.74, 0.87]},
+      "72B + Instruct": {"rubber only": [0.88, 0.89, 0.90, 0.91, 0.97], "metal only": [0.89, 0.91, 0.91, 0.94, 0.96], "color conflict": [0.91, 0.92, 0.93, 0.94, 0.98], "color-size conflict": [0.83, 0.85, 0.87, 0.86, 0.91], "color-shape conflict": [0.80, 0.82, 0.85, 0.82, 0.89]}
+    }
+  }
+}
