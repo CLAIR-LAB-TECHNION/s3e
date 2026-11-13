@@ -29,6 +29,7 @@ from s3e_exp.store import JsonlStore, read_json  # noqa: E402
 SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948")
 MARKERS = ("o", "s", "^", "D", "v", "P", "X", "*")
 TEXT, MUTED, GRID, REFERENCE = "#0b0b0b", "#52514e", "#e4e3df", "#8a8984"
+TABLE_ONLY = ("[thinking-off]", "[vev-")
 
 
 def _rel(path) -> str:
@@ -143,7 +144,10 @@ def _e1_domain(domain: str, rows: list[dict], files, out: Outputs, plt) -> None:
 
     # Figure: valid-plan rate vs number of blocks (threshold decoder) per model,
     # and atom accuracy vs valid rate with the oracle-noise reference.
-    models = sorted({r["model"] for r in rows if r["model"] != "oracle"})
+    # The palette holds eight series, which the main runs fill; other prompt or
+    # thinking conditions of a model are table rows only.
+    models = sorted({r["model"] for r in rows if r["model"] != "oracle"
+                     and not any(c in r["model"] for c in TABLE_ONLY)})
     sizes = sorted({r["size"] for r in rows if r.get("size") is not None})
     fig, (left, right) = plt.subplots(1, 2, figsize=(6.8, 2.5))
     data = []
@@ -414,6 +418,23 @@ def e4(results: Path, out: Outputs, plt) -> None:
                   table, "E4: calibration transfer across problem instances.", transfer_files)
 
 
+def e4_labels(results: Path, out: Outputs, plt) -> None:
+    files = sorted((results / "e4").glob("labels-*.json"))
+    table = []
+    for f in files:
+        by_size = defaultdict(list)
+        for row in read_json(f)["rows"]:
+            by_size[row["labeled_scenes"]].append(row)
+        for size, rows in sorted(by_size.items()):
+            table.append([f.stem.removeprefix("labels-"), size, len(rows)] +
+                         [mean_std([r[k] for r in rows])[0]
+                          for k in ("accuracy", "ece", "exact_map")])
+    if table:
+        out.table("e4_labels", ["model", "labeled scenes", "repeats", "accuracy", "ECE",
+                                "exact state (MAP)"], table,
+                  "E4: lifted Platt scaling by number of labeled scenes (0: uncalibrated).", files)
+
+
 def e5(results: Path, out: Outputs, plt) -> None:
     files = sorted((results / "e5").glob("*.json"))
     table = []
@@ -483,6 +504,30 @@ def e7(results: Path, out: Outputs, plt) -> None:
                   "E7: the 2025 workshop setting with the current library.", workshop)
 
 
+def e8(results: Path, out: Outputs, plt) -> None:
+    files = sorted((results / "e8").glob("plan-*.jsonl"))
+    groups = defaultdict(lambda: defaultdict(list))
+    for f in files:
+        for r in JsonlStore(f).read():
+            groups[(r["model"], r["decoder"])][r.get("seed")].append(r)
+    table = []
+    for (model, decoder), by_seed in sorted(groups.items()):
+        rows = [r for v in by_seed.values() for r in v]
+        cells = [model, decoder, len(rows), len(by_seed)]
+        for key in ("valid", "executable", "exact", "consistent"):
+            m, s = mean_std([rate(v, key) for v in by_seed.values()])
+            cells.append(f"{m:.3f} ± {s:.3f}")
+        cells.append(1 - sum(r["atom_errors"] for r in rows) / sum(r["atoms"] for r in rows))
+        cells.append(sum(r["queries"] for r in rows) / len(rows))
+        table.append(cells)
+    if table:
+        out.table("e8_categorical", ["model", "format", "scenes", "seeds", "valid plan",
+                                     "executable", "exact state", "consistent", "atom accuracy",
+                                     "queries / scene"], table,
+                  "E8: one categorical query per block, argmax decoded, nothing repaired "
+                  "(mean ± sd across seeds).", files)
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--results", type=Path, default=ROOT / "results/raw")
@@ -490,7 +535,7 @@ def main(argv=None) -> None:
     args = parser.parse_args(argv)
     plt = style()
     out = Outputs(args.out)
-    for step in (e1_offline, e1_online, e2, e3, e4, e5, e6, e7):
+    for step in (e1_offline, e1_online, e2, e3, e4, e4_labels, e5, e6, e7, e8):
         step(args.results, out, plt)
     out.write_manifest()
     print(json.dumps(out.manifest, indent=1))

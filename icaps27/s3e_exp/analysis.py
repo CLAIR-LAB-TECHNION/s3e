@@ -138,14 +138,19 @@ def decode(results: PredictionSet, decoder: str = "threshold", *, confidence: fl
     """Boolean state over the estimated atoms.
 
     ``threshold``: P(true) >= confidence. ``map``: the most probable
-    physically consistent state (domains with ``map_decode`` only).
+    physically consistent state (domains with ``map_decode`` only). ``hard-map``: the
+    same over thresholded 0/1 answers, i.e. the consistent state nearest in Hamming distance.
     """
     if decoder == "threshold":
         return to_state(results, confidence)
-    if decoder == "map":
+    if decoder in ("map", "hard-map"):
         if domain is None or not hasattr(domain, "map_decode"):
             raise ValueError("the map decoder needs a domain with map_decode")
-        full = domain.map_decode(results.probabilities(), objects)
+        probabilities = results.probabilities()
+        if decoder == "hard-map":
+            # Hard yes/no answers only: the consistent state nearest in Hamming distance.
+            probabilities = {a: float(p >= confidence) for a, p in probabilities.items()}
+        full = domain.map_decode(probabilities, objects)
         return {atom: full[atom] for atom in results}
     raise ValueError(f"Unknown decoder {decoder!r}")
 

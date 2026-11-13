@@ -62,6 +62,14 @@
     "thinking": true,
     "role": "reasoning model (template thinking on by default)"
   },
+  "vev-4b": {
+    "id": "CountingSheep/vev-4b",
+    "revision": "793c449dfb5579655c979f94552176dd41dc597e",
+    "backend": "hf",
+    "hf_kwargs": {"torch_dtype": "bfloat16"},
+    "thinking": true,
+    "role": "open vision decision model (Qwen3.5-4B + Vev adapter); CC BY-NC 4.0, weights not redistributed"
+  },
   "ministral-3-3b-reasoning": {
     "id": "mistralai/Ministral-3-3B-Reasoning-2512",
     "revision": "4a36357c811bf511a7b625d132e12f22408aac91",

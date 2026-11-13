@@ -49,9 +49,6 @@ from s3e_exp.estimation import (  # noqa: E402
 from s3e_exp.models import TimedBackend, build_backend, model_spec  # noqa: E402
 from s3e_exp.store import JsonlStore, write_json  # noqa: E402
 
-# Known template switches, in the order S3E probes them.
-SWITCHES = ("enable_thinking", "thinking")
-
 
 def thinking_supported() -> bool:
     from s3e import HuggingFaceVLM
@@ -75,15 +72,22 @@ def condition_kwargs(condition: str, switch: "str | None") -> dict:
 
 
 def template_switch(spec: dict) -> "str | None":
-    """The thinking switch the model's chat template reads, if any (no weights loaded)."""
+    """The thinking switch the model's chat template reads, if any (no weights loaded).
+
+    Uses S3E's own probe, which renders the template with both values: the word
+    "thinking" also appears in templates without a switch (Ministral-3's content
+    blocks), where passing it changes nothing.
+    """
     if spec.get("backend") in ("openai", "fake"):
         return None
+    from s3e.backends.utils.thinking import find_thinking_switch
     from transformers import AutoProcessor
 
     processor = AutoProcessor.from_pretrained(spec["id"], revision=spec.get("revision"))
-    template = getattr(processor, "chat_template", None) or getattr(
-        getattr(processor, "tokenizer", None), "chat_template", None) or ""
-    return next((s for s in SWITCHES if s in str(template)), None)
+    messages = [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
+    found = find_thinking_switch(lambda kwargs: processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True, **kwargs))
+    return found.name if found else None
 
 
 def reasoning_tokens(backend, text: "str | None") -> int:
@@ -113,7 +117,8 @@ def predict_main(args) -> None:
             continue
         kwargs = condition_kwargs(condition, switch)
         backend = TimedBackend(build_backend(spec, args.backend, **kwargs, **args.vlm_kwargs))
-        config = EstimationConfig(scoring="logprobs", mask=args.mask, batch_size=args.batch_size)
+        config = EstimationConfig(scoring="logprobs", mask=args.mask, batch_size=args.batch_size,
+                                  system_prompt=args.system_prompt)
         run_written = (out / "run.json").exists()
         for scene in scenes:
             if (scene.id,) in done:
@@ -198,6 +203,9 @@ def main(argv=None) -> None:
     predict.add_argument("--mask", default="dynamic")
     predict.add_argument("--view", default="0")
     predict.add_argument("--batch-size", type=int, default=16)
+    predict.add_argument("--system-prompt", default=None,
+                         help="override S3E's system prompt; '' sends none, which keeps a "
+                              "template's default (Ministral-3 asks for [THINK] only there)")
     predict.add_argument("--keep-reasoning", type=int, default=3,
                          help="reasoning texts kept per scene, for inspection")
     predict.add_argument("--out", type=Path, default=Path("results/raw/e5"))

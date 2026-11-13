@@ -27,7 +27,7 @@ VIPLAN_PRB ?=
 VIPLAN_ALF ?=
 
 .PHONY: help env env-vllm env-t2v overlay-s3e test lint smoke smoke-fake instances \
-	instances-viplan collect collect-viplan e1 e1-online e2 e3 e4 e5 e6 e7 workshop reproduce figures
+	instances-viplan collect collect-viplan e1 e1-online e2 e3 e4 e5 e6 e7 vev e8 workshop reproduce figures
 
 help:
 	@sed -n 's/^## //p' $(MAKEFILE_LIST)
@@ -132,7 +132,7 @@ collect-viplan:
 ## e1             offline planning from every collected logprobs run (CPU)
 e1:
 	$(PY) experiments/e1_closed_loop.py plan --instances $(INSTANCES)/blocksworld \
-		--predictions $(wildcard $(RESULTS)/predictions/blocksworld/*/logprobs-*) \
+		--predictions $(wildcard $(RESULTS)/predictions/blocksworld/*/logprobs-none $(RESULTS)/predictions/blocksworld/*/logprobs-dynamic) \
 		--out $(RESULTS)/e1/plan-blocksworld.jsonl
 	$(PY) experiments/e1_closed_loop.py summary $(RESULTS)/e1/plan-blocksworld.jsonl --by-size \
 		--json $(RESULTS)/e1/plan-blocksworld.summary.json
@@ -141,6 +141,15 @@ e1:
 			--decoders threshold calibrated \
 			--predictions $(RESULTS)/predictions/$$d/*/logprobs-* \
 			--out $(RESULTS)/e1/plan-$$d.jsonl || exit 1; done
+
+## e1-hardmap     nearest consistent state to the thresholded answers (CPU; paper Table 2, column Hard)
+e1-hardmap:
+	$(PY) experiments/e1_closed_loop.py plan --instances $(INSTANCES)/blocksworld --decoders hard-map \
+		--no-reference oracle --noise \
+		--predictions $(RESULTS)/predictions/blocksworld/{gemma-4-e4b,qwen3-vl-4b,qwen3-vl-8b}/logprobs-none \
+			$(RESULTS)/predictions/blocksworld/qwen3.5-4b/logprobs-none-thinking-off \
+			$(RESULTS)/predictions/blocksworld/vev-4b/logprobs-none-vev-{default,native} \
+		--out $(RESULTS)/e1/plan-hardmap.jsonl
 
 ## workshop       the 2025 workshop setting: LLaVA-OneVision on GroceriesWorld frames (GPU)
 workshop:
@@ -246,8 +255,54 @@ e7:
 	$(PY) experiments/e7_versions.py summary $(RESULTS)/e7/$(SCALE_MODEL) \
 		--json $(RESULTS)/e7/$(SCALE_MODEL).summary.json
 
+## vev            Vev-4B (S3E defaults, native prompt) and its base model on every scene, with
+##                E3, E4, and E1 per run (GPU, then CPU; needs the thinking overlay)
+vev:
+	$(MAKE) overlay-s3e REF=$(THINKING_REF)
+	PYTHONPATH=envs/s3e-$(THINKING_REF) $(PY) experiments/collect.py --instances $(INSTANCES)/blocksworld \
+		--model vev-4b --vlm-kwargs '{"thinking": false}' --tag vev-default --out $(RESULTS)/predictions
+	PYTHONPATH=envs/s3e-$(THINKING_REF) $(PY) experiments/collect.py --instances $(INSTANCES)/blocksworld \
+		--model vev-4b --vlm-kwargs '{"thinking": false}' --scoring text_match --max-new-tokens 16 \
+		--tag vev-default --out $(RESULTS)/predictions
+	PYTHONPATH=envs/s3e-$(THINKING_REF) $(PY) experiments/collect.py --instances $(INSTANCES)/blocksworld \
+		--model vev-4b --vlm-kwargs '{"thinking": false}' --tag vev-native \
+		--system-prompt "$$(cat prompts/vev-system.txt)" --prompt-template "$$(cat prompts/vev-native.txt)" \
+		--out $(RESULTS)/predictions
+	PYTHONPATH=envs/s3e-$(THINKING_REF) $(PY) experiments/collect.py --instances $(INSTANCES)/blocksworld \
+		--model qwen3.5-4b --vlm-kwargs '{"thinking": false}' --tag thinking-off --out $(RESULTS)/predictions
+	for spec in vev-4b/logprobs-none-vev-default:vev-4b-default vev-4b/logprobs-none-vev-native:vev-4b-native \
+		qwen3.5-4b/logprobs-none-thinking-off:qwen3.5-4b-nothink; do \
+		run=$(RESULTS)/predictions/blocksworld/$${spec%%:*}; stem=$${spec##*:}; \
+		text=$$(echo $$run | sed 's/logprobs-none/text_match-none/'); [ -d $$text ] || text=; \
+		$(PY) experiments/e3_scoring.py --instances $(INSTANCES)/blocksworld --runs $$run $$text \
+			--out $(RESULTS)/e3/$$stem.json || exit 1; \
+		$(PY) experiments/e4_calibration.py scopes --instances $(INSTANCES)/blocksworld --run $$run \
+			--out $(RESULTS)/e4/scopes-$$stem.json || exit 1; \
+		$(PY) experiments/e4_calibration.py transfer --instances $(INSTANCES)/blocksworld --run $$run \
+			--out $(RESULTS)/e4/transfer-$$stem.json || exit 1; \
+		$(PY) experiments/e4_labels.py --instances $(INSTANCES)/blocksworld --run $$run \
+			--out $(RESULTS)/e4/labels-$$stem.json || exit 1; \
+		$(PY) experiments/e1_closed_loop.py plan --instances $(INSTANCES)/blocksworld --predictions $$run \
+			--decoders threshold calibrated map calibrated+map --no-reference oracle --noise \
+			--out $(RESULTS)/e1/plan-$$stem.jsonl || exit 1; done
+
+## e8             categorical answers: one query per block, argmax decoded, planned (GPU, then CPU)
+e8:
+	$(MAKE) overlay-s3e REF=$(THINKING_REF)
+	for model in qwen3-vl-4b qwen3-vl-8b; do \
+		$(PY) experiments/e8_categorical.py predict --instances $(INSTANCES)/blocksworld --model $$model \
+			--out $(RESULTS)/e8 || exit 1; done
+	PYTHONPATH=envs/s3e-$(THINKING_REF) $(PY) experiments/e8_categorical.py predict \
+		--instances $(INSTANCES)/blocksworld --model vev-4b --format choice \
+		--vlm-kwargs '{"thinking": false}' --system-prompt "$$(cat prompts/vev-system.txt)" --out $(RESULTS)/e8
+	$(PY) experiments/e8_categorical.py plan --instances $(INSTANCES)/blocksworld \
+		--predictions $(RESULTS)/e8/blocksworld/qwen3-vl-4b/word $(RESULTS)/e8/blocksworld/qwen3-vl-8b/word \
+		$(RESULTS)/e8/blocksworld/vev-4b/choice --out $(RESULTS)/e8/plan-blocksworld.jsonl
+	$(PY) experiments/e1_closed_loop.py summary $(RESULTS)/e8/plan-blocksworld.jsonl --by-size \
+		--json $(RESULTS)/e8/plan-blocksworld.summary.json
+
 ## reproduce      everything (GPU, many hours); each step resumes
-reproduce: instances collect collect-viplan e1 e1-online e2 e3 e4 e5 e6 e7 workshop figures
+reproduce: instances collect collect-viplan e1 e1-online e2 e3 e4 e5 e6 e7 vev e8 workshop figures
 
 ## figures        tables and figures from results/raw (CPU, no model)
 figures:

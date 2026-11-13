@@ -45,7 +45,7 @@ from s3e_exp.models import TimedBackend, build_backend, model_spec  # noqa: E402
 from s3e_exp.planning import parse, plan_and_validate  # noqa: E402
 from s3e_exp.store import JsonlStore, read_json, write_json  # noqa: E402
 
-DECODERS = ("threshold", "calibrated", "map", "calibrated+map", "views-single", "views-avg")
+DECODERS = ("threshold", "calibrated", "map", "calibrated+map", "hard-map", "views-single", "views-avg")
 
 
 def _worker_init():
@@ -99,6 +99,8 @@ def plan_main(args) -> None:
         run = read_json(Path(path) / "run.json")
         model = run["model"]["name"] + ("" if run["config"]["mask"] == "none"
                                         else f"[{run['config']['mask']}]")
+        tag = Path(path).name.removeprefix(f"{run['config']['scoring']}-{run['config']['mask']}")
+        model += f"[{tag.lstrip('-')}]" if tag else ""
         records = [r for r in load_predictions(path) if r["scene"] in scenes]
         calibrated = {}
         if any(d.startswith("calibrated") for d in args.decoders):
@@ -132,7 +134,7 @@ def plan_main(args) -> None:
                     results = views[view]
                     if decoder.startswith("calibrated"):
                         results = calibrated.get((scene_id, view), results)
-                    kind = "map" if decoder.endswith("map") else "threshold"
+                    kind = decoder if decoder == "hard-map" else "map" if decoder.endswith("map") else "threshold"
                     if kind == "map" and (not hasattr(domain, "map_decode")
                                           or len(objects or ()) > 8):
                         continue

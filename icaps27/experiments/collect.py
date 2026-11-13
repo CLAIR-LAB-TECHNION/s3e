@@ -41,6 +41,8 @@ def parser() -> argparse.ArgumentParser:
                    help="tokens of an explicit 'unknown' answer, e.g. unknown")
     p.add_argument("--system-prompt", default=None,
                    help="override S3E's system prompt ('' sends none, as t2v_metrics does)")
+    p.add_argument("--prompt-template", default=None,
+                   help="override the domain's query wrapper; must contain {query}")
     p.add_argument("--tag", default=None, help="suffix for the run directory")
     p.add_argument("--out", type=Path, default=Path("results/raw/predictions"))
     return p
@@ -56,6 +58,7 @@ def main(argv=None) -> None:
         scoring=args.scoring, mask=args.mask, views=tuple(args.views),
         batch_size=args.batch_size, max_new_tokens=args.max_new_tokens,
         null_tokens=args.null_tokens, system_prompt=args.system_prompt,
+        prompt_template=args.prompt_template,
     )
     name = config.tag() + (f"-{args.tag}" if args.tag else "")
     if args.backend and args.backend != spec.get("backend", "hf"):

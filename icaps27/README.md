@@ -36,7 +36,7 @@ The prompts in `prompts/viplan/` are from ViPlan++ (MIT).
 ## Layout
 
 ```
-Makefile            env | smoke | instances | collect | e1 ... e7 | figures | reproduce
+Makefile            env | smoke | instances | collect | e1 ... e8 | vev | figures | reproduce
 Dockerfile          Ubuntu 22.04, CPU torch, the lock's exact versions
 pyproject.toml      s3e==0.5.0 (PyPI), unified-planning, up-fast-downward, ...; uv.lock
 configs/            models.json (ids + pinned Hub revisions), feature_matrix.json
@@ -51,7 +51,7 @@ s3e_exp/            the harness
   metrics.py, provenance.py, store.py, models.py (registry, timing, fake model)
   workers/          scripts that run outside this environment (other S3E versions,
                     t2v_metrics, the hand-written scorer)
-experiments/        one script per stage (instances, collect, e1 ... e7, figures)
+experiments/        one script per stage (instances, collect, e1 ... e8, figures)
 results/external/   llm4plan2025.json: the 2025 workshop paper's tables
 slurm/run.sbatch    run a Makefile target on a GPU node
 tests/              harness tests with the fake model (CPU, ~2 min)
@@ -95,6 +95,8 @@ so Slurm `--requeue` is safe: `sbatch -p <partition> --export=ALL,TARGET=collect
 | E5 | `make e5` | GPU | builds the thinking overlay (S3E main, commit `2a09b7e`) |
 | E6 | `make env-t2v && make e6` | GPU | the t2v_metrics environment is separate (pinned commit); all scorers unbatched, bfloat16, no system prompt (t2v_metrics' own setting) |
 | E7 | `make e7` | GPU | overlays for S3E 0.2.0 and main |
+| Vev | `make vev` | GPU, then CPU | Vev-4B with S3E defaults and its native prompt, and its base model |
+| E8 | `make e8` | GPU, then CPU | categorical answers; Vev-4B needs the S3E main overlay |
 | Figures | `make figures` | CPU | from `results/raw/` only |
 
 `make reproduce` runs them all in order.

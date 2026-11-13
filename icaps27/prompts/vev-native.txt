@@ -1,0 +1,6 @@
+State:
+(image above)
+
+Question: {query}
+
+Answer Yes or No.
