@@ -75,12 +75,16 @@ still appears,
 {meth}`~s3e.backends.utils.thinking.ThinkingTokens.opens_block` and the most
 likely next token tell whether a query is about to think,
 {meth}`~s3e.backends.utils.thinking.ThinkingTokens.closing_text` or a
-generated reasoning ends the block, and the answer token is read at the
-first non-whitespace position after it
-({func}`~s3e.backends.utils.thinking.leading_whitespace_tokens`). Text
-replies are split with
-{meth}`~s3e.backends.utils.thinking.ThinkingTokens.split`, and the block's
-text goes in {attr}`VLMOutput.reasoning <s3e.VLMOutput.reasoning>`.
+generated reasoning ends the block
+({func}`~s3e.backends.utils.thinking.close_truncated_block` closes one the
+budget cut off), and the answer token is read at the first non-whitespace
+position after it
+({func}`~s3e.backends.utils.thinking.leading_whitespace_tokens`). In text
+mode the reply is generated after the same closed block. Generated ids are
+split with {meth}`~s3e.backends.utils.thinking.ThinkingTokens.split`; the
+block's text goes in {attr}`VLMOutput.reasoning <s3e.VLMOutput.reasoning>`
+and a cut-off one sets
+{attr}`VLMOutput.thinking_truncated <s3e.VLMOutput.thinking_truncated>`.
 
 ### A new translator
 

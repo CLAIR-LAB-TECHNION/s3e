@@ -772,9 +772,39 @@ class TestHuggingFaceVLMMocked:
         img = Image.new("RGB", (64, 64))
         _ = vlm.query([img], "Is A on B?", generate=True)
 
+        from s3e.backends.backend import DEFAULT_MAX_REPLY_TOKENS
+
         mock_model.generate.assert_called_once()
         generate_kwargs = mock_model.generate.call_args.kwargs
-        assert "max_new_tokens" not in generate_kwargs
+        # The library's reply length, not transformers' default of 20.
+        assert generate_kwargs["max_new_tokens"] == DEFAULT_MAX_REPLY_TOKENS
+
+    @pytest.mark.parametrize(
+        "length",
+        [{"max_new_tokens": 7}, {"max_length": 30}, {"generation_config": "config"}],
+    )
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_generate_mode_keeps_the_callers_length(
+        self, mock_model_cls, mock_proc_cls, length
+    ):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        mock_model = MagicMock()
+        mock_model_cls.from_pretrained.return_value = mock_model
+        mock_model.device = torch.device("cpu")
+        mock_processor = MagicMock()
+        mock_proc_cls.from_pretrained.return_value = mock_processor
+        mock_processor.return_value = {"input_ids": torch.ones(1, 5, dtype=torch.long)}
+        mock_processor.decode.return_value = "yes"
+        mock_model.generate.return_value = torch.ones((1, 6), dtype=torch.long)
+
+        HuggingFaceVLM("test/model").query([], "q", generate=True, **length)
+
+        generate_kwargs = mock_model.generate.call_args.kwargs
+        assert {k: generate_kwargs[k] for k in length} == length
+        if "max_new_tokens" not in length:
+            assert "max_new_tokens" not in generate_kwargs
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
@@ -1119,6 +1149,7 @@ class TestHuggingFaceVLMThinking:
 
         assert result.token_probs == pytest.approx({"Yes": 0.6, "No": 0.4}, abs=1e-6)
         assert result.reasoning is None
+        assert result.thinking_truncated is None
         model.generate.assert_not_called()
         assert model.call_count == 1
 
@@ -1141,16 +1172,22 @@ class TestHuggingFaceVLMThinking:
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
-        "generated, continuation, reasoning",
+        "generated, notice, continuation, reasoning, truncated",
         [
-            ([6, 6, THINK_END], "chat:qrr</think>", "rr"),
-            ([6, 6, 6], "chat:qrrr\n</think>", "rrr"),  # budget ran out
+            ([6, 6, THINK_END], None, "chat:qrr</think>", "rr", False),
+            ([6, 6, 6], None, "chat:qrrr\n</think>", "rrr", True),  # budget ran out
+            # The notice goes only into a block the budget cut off ...
+            ([6, 6, 6], "CUT", "chat:qrrr\nCUT\n</think>", "rrr", True),
+            # ... not into one the model closed, or ended with EOS.
+            ([6, 6, THINK_END], "CUT", "chat:qrr</think>", "rr", False),
+            ([6, 6, 0], "CUT", "chat:qrr\n</think>", "rr", False),
         ],
     )
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_think_mode_generates_reasoning_then_scores(
-        self, mock_model_cls, mock_proc_cls, generated, continuation, reasoning
+        self, mock_model_cls, mock_proc_cls, generated, notice, continuation,
+        reasoning, truncated,
     ):
         from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
@@ -1168,6 +1205,7 @@ class TestHuggingFaceVLMThinking:
             generate=generate,
             thinking=True,
             max_thinking_tokens=3,
+            thinking_truncation_notice=notice,
         )
 
         result = vlm.query([], "q", interest_tokens=["Yes", "No"])
@@ -1180,7 +1218,8 @@ class TestHuggingFaceVLMThinking:
             continuation,
             continuation + "\n\n",
         ]
-        assert result.reasoning == reasoning
+        assert result.reasoning == reasoning  # never the notice
+        assert result.thinking_truncated is truncated
         assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1}, abs=1e-6)
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
@@ -1312,35 +1351,136 @@ class TestHuggingFaceVLMThinking:
         assert results[0].token_probs == pytest.approx({"Yes": 0.8, "No": 0.2}, abs=1e-6)
         assert results[1].token_probs == pytest.approx({"Yes": 0.3, "No": 0.7}, abs=1e-6)
 
+    @staticmethod
+    def _decode_whole_sequences(processor):
+        """batch_decode that decodes every id (special ones skipped)."""
+        processor.batch_decode.side_effect = lambda seqs, skip_special_tokens=False: [
+            "".join(
+                THINK_VOCAB[int(i)]
+                for i in seq
+                if not (skip_special_tokens and int(i) == 0)
+            )
+            for seq in seqs
+        ]
+
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
-        "prompt_ids, generated, text, reasoning",
+        "prompt_ids, first_reply, reasoning_ids, notice, sent, reasoning, truncated",
         [
-            ([1, THINK_START], [6, THINK_END, 3, 4], "Yes", "r"),
-            # Only the separator after the block is dropped.
-            ([1, THINK_START], [6, THINK_END, 3, 4, 3], "Yes\n\n", "r"),
-            ([1, 2], [THINK_START, 6, 6, THINK_END, 3, 5], "No", "rr"),
-            ([1, THINK_START], [6, 6, 0], None, "rr"),
-            ([1, 2], [4, 3], "Yes", None),  # no block: decoded as before
+            # The prompt opens the block: reason, then reply after it.
+            ([1, THINK_START], None, [6, THINK_END], None, "chat:qr</think>", "r", False),
+            # The budget (3) runs out: the block is closed, with the notice.
+            ([1, THINK_START], None, [6, 6, 6], None, "chat:qrrr\n</think>", "rrr", True),
+            (
+                [1, THINK_START], None, [6, 6, 6], "CUT",
+                "chat:qrrr\nCUT\n</think>", "rrr", True,
+            ),
+            # The reply opens the block: it stops there, and the model
+            # reasons inside the block it opened.
+            ([1, 2], [THINK_START], [6, THINK_END], None, "chat:q<think>r</think>", "r", False),
         ],
     )
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
-    def test_text_mode_moves_block_to_reasoning(
-        self, mock_model_cls, mock_proc_cls, prompt_ids, generated, text, reasoning
+    def test_text_mode_reasons_then_replies(
+        self, mock_model_cls, mock_proc_cls, prompt_ids, first_reply, reasoning_ids,
+        notice, sent, reasoning, truncated,
     ):
-        vlm, _, _ = self._make_vlm(
+        from s3e.backends.huggingface import _StopAtFirstToken
+
+        def generate(**kwargs):
+            if "eos_token_id" in kwargs:  # the reasoning pass
+                return torch.tensor([prompt_ids + reasoning_ids])
+            if any(
+                isinstance(c, _StopAtFirstToken) for c in kwargs.get("stopping_criteria") or []
+            ):
+                return torch.tensor([prompt_ids + first_reply])
+            return torch.tensor([prompt_ids + [3, 4, 0]])  # "\n\nYes", then padding
+
+        vlm, model, processor = self._make_vlm(
             mock_model_cls, mock_proc_cls,
             prompt_ids=prompt_ids,
             forward_steps=[{4: 1.0}],
-            generate=lambda **kwargs: torch.tensor([prompt_ids + generated]),
+            generate=generate,
             thinking=True,
+            max_thinking_tokens=3,
+            thinking_truncation_notice=notice,
         )
+        self._decode_whole_sequences(processor)
 
         result = vlm.query([], "q", generate=True, max_new_tokens=10)
 
-        assert result.text == text
-        assert result.reasoning == reasoning
+        assert (result.text, result.reasoning) == ("Yes", reasoning)
+        assert result.thinking_truncated is truncated
+        reasoning_call, reply_call = (
+            c.kwargs for c in model.generate.call_args_list[-2:]
+        )
+        assert reasoning_call["max_new_tokens"] == 3
+        assert reasoning_call["do_sample"] is False
+        # The caller's length bounds the reply only.
+        assert reply_call["max_new_tokens"] == 10
+        assert self._texts_sent_to_processor(processor)[-1] == sent
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_text_mode_reply_without_a_block_is_kept(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        prompt_ids = [1, 2]
+        vlm, model, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{4: 1.0}],
+            generate=lambda **kwargs: torch.tensor([prompt_ids + [4, 3]]),
+            thinking=True,
+        )
+        self._decode_whole_sequences(processor)
+
+        result = vlm.query([], "q", generate=True)
+
+        assert (result.text, result.reasoning, result.thinking_truncated) == (
+            "Yes\n\n", None, None
+        )
+        model.generate.assert_called_once()
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_text_mode_batch_reasons_only_where_a_block_opens(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """Rows keep their order: the first reasons, the second replied at once."""
+        from s3e.backends.huggingface import _StopAtFirstToken
+
+        def generate(**kwargs):
+            if "eos_token_id" in kwargs:
+                return torch.tensor([[1, 2, 6, THINK_END]])
+            if any(
+                isinstance(c, _StopAtFirstToken) for c in kwargs.get("stopping_criteria") or []
+            ):
+                return torch.tensor([[1, 2, THINK_START, 0], [1, 2, 5, 0]])
+            return torch.tensor([[1, 2, 3, 4]])
+
+        vlm, model, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=[1, 2],
+            forward_steps=[{4: 1.0}],
+            generate=generate,
+            thinking=True,
+        )
+        self._decode_whole_sequences(processor)
+        # The batch has two rows; each later pass continues only the first.
+        processor.side_effect = lambda text, **kwargs: {
+            "input_ids": torch.tensor([[1, 2]] * (len(text) if isinstance(text, list) else 1))
+        }
+
+        results = vlm.query_batch([], ["q", "q"], generate=True)
+
+        assert [(r.text, r.reasoning, r.thinking_truncated) for r in results] == [
+            ("Yes", "r", False),
+            ("No", None, None),
+        ]
 
     @pytest.mark.parametrize(
         "prompt_ids, replies, sent, text, reasoning",
@@ -1517,6 +1657,8 @@ class TestHuggingFaceVLMThinking:
             {"thinking": True, "thinking_delimiters": None},
             {"max_thinking_tokens": 0},
             {"thinking_delimiters": ("<think>",)},
+            {"thinking_truncation_notice": ""},
+            {"thinking_truncation_notice": "cut</think>"},
         ],
     )
     @patch("s3e.backends.huggingface.AutoProcessor")
@@ -1679,13 +1821,15 @@ class TestHuggingFaceVLMThinkingIntegration:
                 single_row.token_probs, abs=1e-5
             )
 
-    def test_text_mode_moves_unfinished_block_to_reasoning(self, image):
-        result = self._backend(thinking=True).query(
-            [image], "Is it red?", generate=True, max_new_tokens=6, do_sample=False
-        )
+    def test_text_mode_replies_after_a_block_the_budget_closed(self, image):
+        result = self._backend(
+            thinking=True, max_thinking_tokens=4, thinking_truncation_notice="CUT"
+        ).query([image], "Is it red?", generate=True, max_new_tokens=6, do_sample=False)
 
-        assert result.text is None
+        assert isinstance(result.text, str)
         assert result.reasoning
+        assert isinstance(result.thinking_truncated, bool)
+        assert "CUT" not in result.reasoning
 
     def test_text_mode_answers_after_a_closed_block(self, image):
         backend = self._backend(chat_template_kwargs={"enable_thinking": True})

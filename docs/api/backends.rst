@@ -29,6 +29,8 @@ Implementations
 
 .. autoclass:: VLLMBackend
 
+.. autodata:: s3e.backends.backend.DEFAULT_MAX_REPLY_TOKENS
+
 Thinking models
 ---------------
 
@@ -39,9 +41,10 @@ with ``enable_thinking=True``). :class:`HuggingFaceVLM` and
 :class:`VLLMBackend` take a ``thinking`` flag: ``False`` (the default) turns
 thinking off through the chat template's switch, or closes any block that
 still appears; ``True`` turns the switch on and lets the model reason first.
-Their ``max_thinking_tokens``, ``thinking_delimiters``, and
-``chat_template_kwargs`` arguments refine this, and
-:attr:`VLMOutput.reasoning` holds the block's text. The user guide's
+Their ``max_thinking_tokens``, ``thinking_truncation_notice``,
+``thinking_delimiters``, and ``chat_template_kwargs`` arguments refine this,
+:attr:`VLMOutput.reasoning` holds the block's text, and
+:attr:`VLMOutput.thinking_truncated` says whether the budget cut it off. The user guide's
 *Thinking models* section covers the options and the models they do not
 cover.
 
@@ -68,5 +71,7 @@ Helpers for backends that handle thinking models (see the developer guide):
 
 .. autoclass:: s3e.backends.utils.thinking.ThinkingTokens
    :members: opens_block, closing_text, split
+
+.. autofunction:: s3e.backends.utils.thinking.close_truncated_block
 
 .. autofunction:: s3e.backends.utils.thinking.leading_whitespace_tokens

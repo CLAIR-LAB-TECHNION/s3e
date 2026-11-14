@@ -12,6 +12,7 @@ from s3e.engine import (
     CategoricalAnswers,
     PredictionSet,
     QueryEngine,
+    ThinkingTruncatedWarning,
     UnmatchedAnswerWarning,
 )
 
@@ -203,3 +204,43 @@ class TestUnmatchedAnswerWarning:
                 images, ["q"]
             )
             QueryEngine(FakeVLM({"yes": 1e-9, "no": 0.0})).ask(images, ["q"])
+
+
+class _TruncatingVLM(FakeVLM):
+    """Marks the queries containing ``cut`` as cut off by the thinking budget."""
+
+    def _output_for(self, prompt, generate, interest_tokens):
+        output = super()._output_for(prompt, generate, interest_tokens)
+        output.thinking_truncated = "cut" in prompt
+        return output
+
+
+class TestThinkingTruncatedWarning:
+    def test_one_warning_per_call_with_count_and_example(self, images):
+        engine = QueryEngine(_TruncatingVLM({"yes": 0.8, "no": 0.1}))
+        with pytest.warns(ThinkingTruncatedWarning) as record:
+            engine.ask(images, ["cut a", "whole b", "cut c"])
+        assert len(record) == 1
+        message = str(record[0].message)
+        assert "2 of 3 queries" in message
+        assert "'cut a'" in message
+        assert record[0].filename == __file__
+
+    def test_no_warning_when_nothing_was_cut(self, images):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ThinkingTruncatedWarning)
+            QueryEngine(_TruncatingVLM()).ask(images, ["whole a"])
+            QueryEngine(FakeVLM()).ask(images, ["cut a"])  # flag left at None
+
+    def test_unmatched_warning_names_the_truncated_replies(self, images):
+        engine = QueryEngine(_TruncatingVLM(text="Hmm"), scoring="text_match")
+        with pytest.warns(UnmatchedAnswerWarning) as record:
+            with pytest.warns(ThinkingTruncatedWarning):
+                engine.ask(images, ["cut a", "whole b"])
+        assert "1 of them ran out of the thinking budget" in str(record[0].message)
+
+    def test_unmatched_warning_without_truncation_says_nothing_of_it(self, images):
+        engine = QueryEngine(FakeVLM(text="Hmm"), scoring="text_match")
+        with pytest.warns(UnmatchedAnswerWarning) as record:
+            engine.ask(images, ["q"])
+        assert "thinking budget" not in str(record[0].message)

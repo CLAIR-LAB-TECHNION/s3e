@@ -12,6 +12,7 @@ from s3e.backends.utils.thinking import (
     MAX_SEPARATOR_TOKENS,
     ThinkingSwitch,
     ThinkingTokens,
+    close_truncated_block,
     find_thinking_switch,
     leading_whitespace_tokens,
     resolve_thinking_tokens,
@@ -83,6 +84,33 @@ class TestValidateThinkingOptions:
     def test_invalid_delimiters_rejected(self, delimiters):
         with pytest.raises(ValueError, match="thinking_delimiters"):
             validate_thinking_options(False, 1024, delimiters)
+
+    def test_truncation_notice_accepted(self):
+        assert validate_thinking_options(
+            True, 1024, "auto", "THINKING TRUNCATED"
+        ) == KNOWN_THINKING_DELIMITERS
+
+    @pytest.mark.parametrize("notice", ["", "  \n", 1, b"cut"])
+    def test_empty_or_non_string_notice_rejected(self, notice):
+        with pytest.raises(ValueError, match="non-empty string"):
+            validate_thinking_options(True, 1024, "auto", notice)
+
+    @pytest.mark.parametrize(
+        "delimiters, notice",
+        [
+            ("auto", "cut </think> here"),
+            ("auto", "[THINK]"),  # any known pair "auto" may pick
+            (("<t>", "</t>"), "cut <t>"),
+        ],
+    )
+    def test_notice_containing_a_delimiter_rejected(self, delimiters, notice):
+        with pytest.raises(ValueError, match="contains the thinking delimiter"):
+            validate_thinking_options(True, 1024, delimiters, notice)
+
+    def test_notice_may_name_another_pairs_delimiter(self):
+        assert validate_thinking_options(
+            True, 1024, ("<t>", "</t>"), "</think>"
+        ) == (("<t>", "</t>"),)
 
 
 class TestResolveThinkingTokens:
@@ -190,6 +218,21 @@ class TestClosingText:
 
     def test_closed_prompt_gets_a_whole_empty_block(self):
         assert TOKENS.closing_text("x", prompt_open=False) == "<think>\n\n</think>"
+
+
+class TestCloseTruncatedBlock:
+    @pytest.mark.parametrize(
+        "reasoning, notice, closing",
+        [
+            ("and finally the", None, "\n</think>"),
+            ("and finally the\n", None, "</think>"),
+            ("", None, "\n</think>"),
+            ("and finally the", "THINKING TRUNCATED", "\nTHINKING TRUNCATED\n</think>"),
+            ("and finally the ", "CUT\n", "CUT\n</think>"),
+        ],
+    )
+    def test_closing_text(self, reasoning, notice, closing):
+        assert close_truncated_block(reasoning, "</think>", notice) == closing
 
 
 class TestSplit:

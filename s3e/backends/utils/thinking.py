@@ -62,12 +62,23 @@ def validate_thinking_options(
     thinking: bool,
     max_thinking_tokens: int,
     thinking_delimiters: "tuple[str, str] | str | None",
+    thinking_truncation_notice: "str | None" = None,
 ) -> "tuple[tuple[str, str], ...] | None":
     """Validate a backend's thinking parameters.
 
     Returns the delimiter pairs to try, in order: the known pairs for
-    ``"auto"``, the one given pair, or None when handling is off.
+    ``"auto"``, the one given pair, or None when handling is off. A
+    truncation notice must be a non-empty string that contains none of
+    those delimiters, since it is tokenized as plain text inside the block.
     """
+    if thinking_truncation_notice is not None and (
+        not isinstance(thinking_truncation_notice, str)
+        or not thinking_truncation_notice.strip()
+    ):
+        raise ValueError(
+            "thinking_truncation_notice must be None or a non-empty string; "
+            f"got {thinking_truncation_notice!r}"
+        )
     if not isinstance(thinking, bool):
         raise ValueError(f"thinking must be True or False; got {thinking!r}")
     if (
@@ -87,8 +98,8 @@ def validate_thinking_options(
             )
         return None
     if thinking_delimiters == "auto":
-        return KNOWN_THINKING_DELIMITERS
-    if (
+        candidates = KNOWN_THINKING_DELIMITERS
+    elif (
         not isinstance(thinking_delimiters, (tuple, list))
         or len(thinking_delimiters) != 2
         or not all(isinstance(d, str) and d for d in thinking_delimiters)
@@ -98,7 +109,22 @@ def validate_thinking_options(
             "thinking_delimiters must be \"auto\", None, or two distinct "
             f"non-empty strings; got {thinking_delimiters!r}"
         )
-    return (tuple(thinking_delimiters),)
+    else:
+        candidates = (tuple(thinking_delimiters),)
+    if thinking_truncation_notice is not None:
+        inside = [
+            delimiter
+            for pair in candidates
+            for delimiter in pair
+            if delimiter in thinking_truncation_notice
+        ]
+        if inside:
+            raise ValueError(
+                f"thinking_truncation_notice contains the thinking delimiter "
+                f"{inside[0]!r}, which would open or close the block; got "
+                f"{thinking_truncation_notice!r}"
+            )
+    return candidates
 
 
 @dataclass(frozen=True)
@@ -301,6 +327,22 @@ def warn_if_thinking_unavailable(
             "a block itself.",
             stacklevel=3,
         )
+
+
+def close_truncated_block(
+    reasoning: str, end: str, notice: "str | None" = None
+) -> str:
+    """Text that closes a block the model left open, appended to its reasoning.
+
+    Starts a new line unless the reasoning ends in whitespace, then adds
+    ``notice`` (if any) on its own line, then the closing delimiter ``end``:
+    ``"...and finally the"`` becomes ``"...and finally the\\nNOTICE\\n</think>"``.
+    Returns only the appended text.
+    """
+    closing = "" if reasoning[-1:].isspace() else "\n"
+    if notice is not None:
+        closing += notice if notice[-1:].isspace() else notice + "\n"
+    return closing + end
 
 
 def leading_whitespace_tokens(step_tokens: Sequence[str]) -> int:
