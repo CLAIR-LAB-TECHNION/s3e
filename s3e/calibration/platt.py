@@ -88,7 +88,10 @@ def fit_platt_parameters(scores: list[float], labels: list[bool]) -> PlattParame
     if positives == 0 or negatives == 0:
         raise ValueError("Platt scaling requires both positive and negative labels.")
 
-    model = LogisticRegression(random_state=0)
+    # lbfgs stops on the mean gradient (default tol 1e-4), so samples making
+    # up less than about 1e-4 of a group could be ignored, e.g. a rare answer
+    # in text_match data; a tight tolerance fits them too, at little cost.
+    model = LogisticRegression(random_state=0, tol=1e-10, max_iter=1000)
     model.fit([[score] for score in scores], labels)
 
     coef = float(model.coef_[0][0])
@@ -168,24 +171,29 @@ class PlattCalibrator(Calibrator):
             data: Scores and labels from :meth:`CalibrationSet.collect`.
             scope: ``"global"``, ``"lifted"``, or ``"grounded"`` grouping.
             pass_through_single_class: Skip (leave uncalibrated) groups
-                whose samples are all positive or all negative instead of
-                raising.
+                that cannot be fitted, instead of raising: groups whose
+                samples are all positive or all negative, and groups whose
+                samples all have the same score.
+
+        Data collected in ``text_match`` mode has two score values, one for
+        a yes and one for a no, so each group's fit comes close to two
+        rates: how often the predicate was true when the model said yes, and
+        when it said no. At this score scale the L2 penalty of the fit only
+        nudges them, so they are close to the raw rates of the calibration
+        data: a group with few replies of one answer gets probabilities
+        near 0 or 1 for it. A group in which the model gave every sample
+        the same answer has one score value, and nothing in the data says
+        what the other answer means, so it cannot be fitted.
 
         Raises:
-            ValueError: On an unknown scope, an empty set, data not
-                collected with ``scoring="logprobs"``, or a single-class
-                group when ``pass_through_single_class`` is False.
+            ValueError: On an unknown scope, an empty set, or, when
+                ``pass_through_single_class`` is False, a single-class group
+                or a group whose samples all have the same score.
         """
         if scope not in VALID_SCOPES:
             raise ValueError(f"Unknown scope {scope!r}; expected one of {VALID_SCOPES}")
         if not data.samples:
             raise ValueError("Expected at least one calibration sample.")
-        scoring = data.meta.get("scoring")
-        if scoring is not None and scoring != "logprobs":
-            raise ValueError(
-                f"CalibrationSet meta records scoring={scoring!r}; Platt "
-                "scaling requires scores collected with scoring='logprobs'"
-            )
         grouped: dict[str, list] = {}
         for sample in data.samples:
             grouped.setdefault(_group_key(sample.predicate, scope), []).append(sample)
@@ -201,6 +209,17 @@ class PlattCalibrator(Calibrator):
                     "Platt scaling requires both positive and negative labels "
                     "(or pass pass_through_single_class=True to leave such "
                     "groups uncalibrated)"
+                )
+            if len({s.score for s in samples}) < 2:
+                if pass_through_single_class:
+                    continue
+                raise ValueError(
+                    f"Calibration group {key!r} has a single score value "
+                    f"({samples[0].score!r}), so the fit cannot tell what any "
+                    "other score means; in text_match mode, the model gave the "
+                    "same answer for every sample in the group. Collect data "
+                    "with both answers (or pass pass_through_single_class=True "
+                    "to leave such groups uncalibrated)"
                 )
             groups[key] = fit_platt_parameters([s.score for s in samples], labels)
         return cls(scope=scope, groups=groups, meta=dict(data.meta))

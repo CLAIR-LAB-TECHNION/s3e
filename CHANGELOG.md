@@ -39,11 +39,26 @@ the commit history and PyPI release dates when this file was introduced.
   `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). The
   block's text is in the new `VLMOutput.reasoning`, and a
   `chat_template_kwargs` argument passes other template variables.
+- Calibration in `text_match` mode: `CalibrationSet.collect`,
+  `PlattCalibrator.fit`, and `SemanticStateEstimator.estimate(calibrator=...)`
+  accept text-mode estimators and data. A calibrated text answer gets one of
+  two probabilities per group: how often the predicate was true when the
+  model said yes, and when it said no. A text reply's score is
+  `log((1 + EPS) / EPS)`, about +-27.6, so changing `EPS` would invalidate
+  saved text-mode calibrators.
 - A thinking-models section in the walkthrough notebook: Qwen3.5-0.8B with
   its thinking block ignored, closed, and thought through, and the tradeoff
   between the accuracy reasoning can add and the time it costs.
 
 ### Changed
+- An estimator refuses a calibrator whose recorded scoring mode differs from
+  its own. Previously it refused every calibrator in `text_match` mode, and
+  any calibrator recorded in a mode other than `logprobs`.
+- `PlattCalibrator.fit` refuses a group whose samples all have the same score
+  (in `text_match` mode: the model gave every sample the same answer), whose
+  fit cannot say what any other score means; `pass_through_single_class=True`
+  now also leaves such groups uncalibrated. `CalibrationSet.collect` refuses
+  a non-binary answer space before querying the VLM instead of after.
 - Runtime dependencies and extras declare minimum supported versions, which
   CI tests on Python 3.10 (all but vLLM's, which needs a GPU), e.g.
   `transformers>=4.56` (for `from_pretrained(dtype=...)`), `openai>=1.66`
@@ -60,6 +75,11 @@ the commit history and PyPI release dates when this file was introduced.
   `s3e.backends`.
 
 ### Fixed
+- `PlattCalibrator.fit` fits with a tight convergence tolerance. With the
+  default one, a group could stop fitting before it accounted for samples
+  making up less than about 1 in 10,000 of it (e.g. a rare answer in
+  `text_match` data), without a warning. Fits on other data change only in
+  far decimal places.
 - Thinking models (e.g. Qwen3.5-4B and larger, Mistral reasoning models, and
   Gemma 4 with thinking enabled) no longer break the HuggingFace and vLLM
   backends: logprobs mode read the token that opens the reasoning, putting
