@@ -1077,6 +1077,62 @@ class TestVLLMBackendThinking:
         assert {"max_tokens": 3, "temperature": 0.0, "stop_token_ids": [THINK_END]} in sampling
         assert {"max_tokens": 5, "temperature": 0.0} in sampling  # the reply
 
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_text_mode_reasons_with_the_querys_sampling_settings(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        """Reasoning and reply are decoded alike (e.g. Qwen's recommended
+        sampling); only what shapes the reply as a whole stays with it."""
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, thinking=True, max_thinking_tokens=3
+        )
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, 2], token_ids=[THINK_START]),
+        ]
+        mock_llm.generate.side_effect = [
+            [_request_output(token_ids=[6, THINK_END], stop_reason=THINK_END)],
+            [_request_output(prompt_ids=[1, 2, THINK_START], text="\n\nYes")],
+        ]
+        sampling = {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "seed": 7}
+
+        result = backend.query(
+            [], "q", generate=True, max_tokens=5, stop=["."], n=1, **sampling
+        )
+
+        assert result.text == "Yes"
+        params = [c.kwargs for c in mock_sp_cls.call_args_list]
+        assert {**sampling, "max_tokens": 3, "stop_token_ids": [THINK_END]} in params
+        assert {**sampling, "max_tokens": 5, "stop": ["."], "n": 1} in params  # the reply
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_logprobs_mode_reasons_greedily_whatever_the_query_asks(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, thinking=True, max_thinking_tokens=3
+        )
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
+        ]
+        mock_llm.generate.side_effect = [
+            [_request_output(token_ids=[6, THINK_END], stop_reason=THINK_END)],
+            [_separator_output()],
+            [_readout_output({4: 0.9, 5: 0.1})],
+        ]
+
+        backend.query([], "q", interest_tokens=["Yes", "No"], temperature=0.6)
+
+        think_params = [
+            c.kwargs for c in mock_sp_cls.call_args_list if "stop_token_ids" in c.kwargs
+        ]
+        assert think_params == [
+            {"max_tokens": 3, "temperature": 0.0, "stop_token_ids": [THINK_END]}
+        ]
+
     @pytest.mark.parametrize(
         "notice, sent",
         [

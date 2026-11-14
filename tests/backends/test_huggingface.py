@@ -1212,6 +1212,7 @@ class TestHuggingFaceVLMThinking:
 
         think_call = model.generate.call_args_list[0].kwargs
         assert think_call["max_new_tokens"] == 3
+        assert think_call["do_sample"] is False  # greedy in logprobs mode
         assert think_call["eos_token_id"] == [THINK_END, 0]
         assert think_call["pad_token_id"] == 0
         assert self._texts_sent_to_processor(processor)[-2:] == [
@@ -1416,10 +1417,55 @@ class TestHuggingFaceVLMThinking:
             c.kwargs for c in model.generate.call_args_list[-2:]
         )
         assert reasoning_call["max_new_tokens"] == 3
-        assert reasoning_call["do_sample"] is False
         # The caller's length bounds the reply only.
         assert reply_call["max_new_tokens"] == 10
         assert self._texts_sent_to_processor(processor)[-1] == sent
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_text_mode_reasons_with_the_querys_decoding_settings(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """Reasoning and reply are decoded alike (e.g. Qwen's recommended
+        sampling); only what shapes the reply as a whole stays with it."""
+        from transformers import StoppingCriteriaList
+
+        prompt_ids = [1, THINK_START]
+
+        def generate(**kwargs):
+            if THINK_END in (kwargs.get("eos_token_id") or []):  # the reasoning pass
+                return torch.tensor([prompt_ids + [6, THINK_END]])
+            return torch.tensor([prompt_ids + [3, 4]])
+
+        vlm, model, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{4: 1.0}],
+            generate=generate,
+            thinking=True,
+            max_thinking_tokens=3,
+        )
+        self._decode_whole_sequences(processor)
+        sampling = {"do_sample": True, "temperature": 0.6, "top_p": 0.95, "top_k": 20}
+        reply_only = {
+            "max_new_tokens": 10,
+            "stopping_criteria": StoppingCriteriaList(),
+            "num_return_sequences": 1,
+            "eos_token_id": 0,
+        }
+
+        result = vlm.query([], "q", generate=True, **sampling, **reply_only)
+
+        assert result.text == "Yes"
+        reasoning_call, reply_call = (c.kwargs for c in model.generate.call_args_list)
+        assert {k: reasoning_call[k] for k in sampling} == sampling
+        assert reasoning_call["max_new_tokens"] == 3
+        assert reasoning_call["eos_token_id"] == [THINK_END, 0]
+        assert "stopping_criteria" not in reasoning_call
+        assert "num_return_sequences" not in reasoning_call
+        assert {k: reply_call[k] for k in sampling} == sampling
+        assert reply_call["max_new_tokens"] == 10
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @patch("s3e.backends.huggingface.AutoProcessor")

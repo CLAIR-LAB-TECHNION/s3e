@@ -93,6 +93,25 @@ class _StopAtFirstToken(StoppingCriteria):
 # The conversation rendered to find a chat template's thinking switch.
 _PROBE_PROMPT = "Is the switch on?"
 
+# generate() kwargs that shape the reply as a whole (its length, where it
+# stops, how many sequences, the output format): a text-mode reasoning pass
+# takes the query's other kwargs (its decoding settings), but not these.
+_REPLY_ONLY_GENERATE_KWARGS = frozenset(
+    {
+        "max_new_tokens",
+        "max_length",
+        "min_new_tokens",
+        "min_length",
+        "eos_token_id",
+        "stopping_criteria",
+        "stop_strings",
+        "num_return_sequences",
+        "return_dict_in_generate",
+        "output_scores",
+        "output_logits",
+    }
+)
+
 
 class HuggingFaceVLM(VLMBackend):
     """VLM backend using HuggingFace Transformers Auto classes.
@@ -122,9 +141,11 @@ class HuggingFaceVLM(VLMBackend):
             see :data:`~s3e.backends.utils.thinking.KNOWN_THINKING_SWITCHES`),
             and otherwise closes any thinking block at once, so the answer
             follows an empty block. ``True`` turns the switch on and lets the
-            model reason first, greedily and up to ``max_thinking_tokens``,
-            in logprobs and text mode alike. Either way, the block's text
-            goes in :attr:`VLMOutput.reasoning`. A warning says when ``True``
+            model reason first, up to ``max_thinking_tokens``: greedily in
+            logprobs mode, and in text mode with the query's own decoding
+            settings (e.g. ``do_sample``, ``temperature``, ``top_p``), so
+            reasoning and reply are decoded alike. Either way, the block's
+            text goes in :attr:`VLMOutput.reasoning`. A warning says when ``True``
             cannot make the model think.
         max_thinking_tokens: Reasoning budget per query with
             ``thinking=True``; a block still open after this many tokens is
@@ -447,8 +468,13 @@ class HuggingFaceVLM(VLMBackend):
             truncated[row] = row_cut
         return probs, reasonings, truncated
 
-    def _think(self, images, prompts, tokens):
+    def _think(self, images, prompts, tokens, decoding=None):
         """Generate each prompt's reasoning, up to ``max_thinking_tokens``.
+
+        ``decoding`` are the query's generate() kwargs in text mode: the
+        reasoning is decoded with them, as the first part of the reply, less
+        those that shape the reply as a whole. Without them (logprobs mode)
+        it is greedy.
 
         Every prompt ends inside an open block. Returns one continuation per
         prompt (the prompt plus its reasoning, ending with the closing
@@ -459,13 +485,24 @@ class HuggingFaceVLM(VLMBackend):
         """
         inputs = self._prepare_rows(prompts, images)
         eos_ids = self._eos_token_ids()
+        decoding = (
+            {"do_sample": False}
+            if decoding is None
+            else {
+                key: value
+                for key, value in decoding.items()
+                if key not in _REPLY_ONLY_GENERATE_KWARGS
+            }
+        )
         # An explicit pad id: generate() would otherwise pad finished rows
         # with the first stop id, the closing delimiter.
-        pad_id = self._pad_token_id(eos_ids)
+        pad_id = decoding.pop("pad_token_id", None)
+        if pad_id is None:
+            pad_id = self._pad_token_id(eos_ids)
         output_ids = self.model.generate(
             **inputs,
+            **decoding,
             max_new_tokens=self.max_thinking_tokens,
-            do_sample=False,
             eos_token_id=[tokens.end_id, *eos_ids],
             pad_token_id=pad_id,
         )
@@ -834,9 +871,10 @@ class HuggingFaceVLM(VLMBackend):
 
         A row thinks when its prompt ends by opening a block, or when its
         reply would open one (it stops at that token). Those rows reason
-        through the same budgeted pass as logprobs mode (:meth:`_think`), and
-        their reply is generated after the closed block with
-        ``inference_kwargs``. Other rows keep the reply they generated.
+        through the same budgeted pass as logprobs mode (:meth:`_think`),
+        decoded with ``inference_kwargs`` like the reply, which is then
+        generated after the closed block. Other rows keep the reply they
+        generated.
         """
         decode = partial(self._decode_sequence, skip_special_tokens=False)
         texts = list(text_inputs)
@@ -871,7 +909,7 @@ class HuggingFaceVLM(VLMBackend):
 
         rows = sorted(think_prompts)
         continuations, reasonings, truncated = self._think(
-            images, [think_prompts[row] for row in rows], tokens
+            images, [think_prompts[row] for row in rows], tokens, inference_kwargs
         )
         sequences = self._generate_sequences(
             self._prepare_rows(continuations, images), **inference_kwargs

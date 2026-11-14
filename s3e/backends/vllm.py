@@ -76,6 +76,25 @@ from .utils.token_index import build_token_reverse_index, decode_single_token_id
 # The conversation rendered to find a chat template's thinking switch.
 _PROBE_PROMPT = "Is the switch on?"
 
+# SamplingParams fields that shape the reply as a whole (its length, where it
+# stops, how many sequences, what is returned): a text-mode reasoning pass
+# takes the query's other fields (its decoding settings), but not these.
+_REPLY_ONLY_SAMPLING_KWARGS = frozenset(
+    {
+        "max_tokens",
+        "min_tokens",
+        "stop",
+        "stop_token_ids",
+        "ignore_eos",
+        "include_stop_str_in_output",
+        "n",
+        "best_of",
+        "logprobs",
+        "prompt_logprobs",
+        "detokenize",
+    }
+)
+
 
 class VLLMBackend(VLMBackend):
     """VLM backend backed by a local vLLM engine.
@@ -113,9 +132,11 @@ class VLLMBackend(VLMBackend):
             see :data:`~s3e.backends.utils.thinking.KNOWN_THINKING_SWITCHES`),
             and otherwise closes any thinking block at once, so the answer
             follows an empty block. ``True`` turns the switch on and lets the
-            model reason first, greedily and up to ``max_thinking_tokens``,
-            in logprobs and text mode alike. Either way, the block's text
-            goes in :attr:`VLMOutput.reasoning`. A warning says when ``True``
+            model reason first, up to ``max_thinking_tokens``: greedily in
+            logprobs mode, and in text mode with the query's own sampling
+            settings (e.g. ``temperature``, ``top_p``, ``top_k``), so
+            reasoning and reply are decoded alike. Either way, the block's
+            text goes in :attr:`VLMOutput.reasoning`. A warning says when ``True``
             cannot make the model think.
         max_thinking_tokens: Reasoning budget per query with
             ``thinking=True``; a block still open after this many tokens is
@@ -466,8 +487,13 @@ class VLLMBackend(VLMBackend):
             return {"prompt": text}
         return {"prompt": text, "multi_modal_data": {"image": list(images)}}
 
-    def _think(self, images, prompt_texts, tokens):
+    def _think(self, images, prompt_texts, tokens, decoding=None):
         """Generate each prompt's reasoning, up to ``max_thinking_tokens``.
+
+        ``decoding`` are the query's ``SamplingParams`` fields in text mode:
+        the reasoning is decoded with them, as the first part of the reply,
+        less those that shape the reply as a whole. Without them (logprobs
+        mode) it is greedy.
 
         Every prompt ends inside an open block. Returns one continuation per
         prompt (the prompt plus its reasoning, ending with the closing
@@ -477,9 +503,15 @@ class VLLMBackend(VLMBackend):
         any, before its closing delimiter.
         """
         tokenizer = self._get_tokenizer()
+        sampling = {
+            key: value
+            for key, value in (decoding or {}).items()
+            if key not in _REPLY_ONLY_SAMPLING_KWARGS
+        }
+        sampling.setdefault("temperature", 0.0)
         sampling_params = SamplingParams(
+            **sampling,
             max_tokens=self.max_thinking_tokens,
-            temperature=0.0,
             stop_token_ids=[tokens.end_id],
         )
         outputs = self.llm.generate(
@@ -525,9 +557,9 @@ class VLLMBackend(VLMBackend):
         When the chat template opens the block, ``LLM.chat`` only renders the
         prompts (one greedy token); otherwise replies stop at a token that
         opens a block. The rows whose prompt or reply opens one reason
-        through the same budgeted pass as logprobs mode (:meth:`_think`), and
-        their reply is generated after the closed block with
-        ``inference_kwargs``. A rendered prompt the template left closed
+        through the same budgeted pass as logprobs mode (:meth:`_think`),
+        decoded with ``inference_kwargs`` like the reply, which is then
+        generated after the closed block. A rendered prompt the template left closed
         after all is continued as is; other replies are kept.
         """
         reply_params = self._build_sampling_params(True, **inference_kwargs)
@@ -580,6 +612,7 @@ class VLLMBackend(VLMBackend):
                     for row in think_rows
                 ],
                 tokens,
+                inference_kwargs,
             )
             if think_rows
             else ([], [], [])

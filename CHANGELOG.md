@@ -33,9 +33,11 @@ the commit history and PyPI release dates when this file was introduced.
   `thinking`, or Seed's `thinking_budget`), and otherwise closes any
   thinking block at once, so the answer follows an empty block, in logprobs
   and text mode alike. `thinking=True` turns the switch on and lets the
-  model reason first, greedily and up to `max_thinking_tokens`, with a
-  warning when it cannot; the answer is then scored, or the reply generated
-  with the query's own length, after the closed block. Blocks are found by their delimiters, among those
+  model reason first, up to `max_thinking_tokens`, with a warning when it
+  cannot; the answer is then scored, or the reply generated with the query's
+  own length, after the closed block. Logprobs mode reasons greedily; text
+  mode decodes the reasoning with the query's own decoding settings, like
+  the reply. Blocks are found by their delimiters, among those
   of known model families (`<think>`, Gemma 4's `<|channel>`, Mistral's
   `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). The
   block's text is in the new `VLMOutput.reasoning`, and a
