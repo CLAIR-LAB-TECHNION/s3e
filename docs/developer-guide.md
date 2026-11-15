@@ -122,6 +122,20 @@ before applying.
   modules, such as sharing one backend between estimators or calibrating
   offline.
 
+How each part of the library is verified without special hardware:
+
+- Engine, answer spaces, results, translators, calibration, and PDDL
+  grounding: the fast suite drives them through the deterministic fake
+  backends in `tests/fakes.py`.
+- HuggingFace backend: mocked in the fast suite.
+  `pytest -m slow tests/backends/test_huggingface.py` and the documentation
+  tests run real small models on a CPU.
+- OpenAI backend: mocked in the fast suite. Real use needs an
+  `OPENAI_API_KEY`.
+- vLLM backend: mocked in the fast suite when `vllm` is installed. The
+  real-engine tests (`pytest -m slow tests/backends/test_vllm.py`) need a CUDA
+  GPU.
+
 ## Continuous integration
 
 The `Tests` workflow runs on every pull request and push to `main`:
@@ -140,8 +154,22 @@ the `Draft PDF` workflow builds the JOSS paper when `paper/` changes.
 
 The documentation is built with Sphinx from `docs/`: MyST Markdown pages,
 autodoc API pages under `docs/api/`, and the walkthrough notebook (rendered
-with its saved outputs). The statement of need and the user guide are
-included from `README.md`, so edit them there. Build locally with:
+with its saved outputs). The statement of need on the home page is included
+from `README.md`, so edit it there. Everything else lives in `docs/`.
+
+Each piece of documentation has one home:
+
+- Docstrings document each public class and function, and are rendered into
+  the API reference. Document a change here first.
+- `docs/user-guide.md` explains configuration options and how to read
+  results. Add to it only when a change affects how users configure S3E or
+  read its results.
+- `docs/getting-started.md` and the walkthrough notebook teach the library
+  through examples that the slow tests run.
+- `README.md` is a landing page: overview, features, installation, a short
+  quick start, and links. Change it only when one of those changes.
+
+Build locally with:
 
 ```bash
 pip install -e ".[docs]"
