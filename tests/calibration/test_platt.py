@@ -132,6 +132,22 @@ class TestPlattFitApply:
         data = CalibrationSet(samples=make_samples(), meta={"scoring": "text_match"})
         assert PlattCalibrator.fit(data, scope="global").group_keys()
 
+    def test_apply_scores_with_recorded_eps(self):
+        from s3e.calibration.platt import GLOBAL_CALIBRATION_KEY, PlattParameters
+
+        params = PlattParameters(
+            a=-1.0, b=0.0, sample_count=2, positive_count=1, negative_count=1
+        )
+        results = make_results(true_mass=0.9, false_mass=0.0)
+
+        def calibrated(meta):
+            cal = PlattCalibrator("global", {GLOBAL_CALIBRATION_KEY: params}, meta)
+            return cal.apply(results)["on(a,b)"].probability
+
+        # P = sigmoid(log((0.9 + eps) / eps)): 10/11 for eps = 0.1
+        assert calibrated({"eps": 0.1}) == pytest.approx(10 / 11)
+        assert calibrated({}) == pytest.approx(1.0)  # default EPS = 1e-12
+
     def test_logprobs_meta_accepted(self):
         data = CalibrationSet(samples=make_samples(), meta={"scoring": "logprobs"})
         assert PlattCalibrator.fit(data, scope="global").group_keys()

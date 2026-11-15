@@ -219,9 +219,10 @@ class PlattCalibrator(Calibrator):
     def apply(self, results: "PredictionSet") -> "PredictionSet":
         """Return a new PredictionSet with calibrated probabilities.
 
-        Predictions whose group has no fitted parameters are passed
-        through unchanged, and predictions with no answer keep
-        P(true) = 0.5 (see :attr:`Prediction.has_answer`).
+        Predictions are scored with the ``eps`` recorded in :attr:`meta`
+        (default ``EPS``). Predictions whose group has no
+        fitted parameters are passed through unchanged, and predictions with
+        no answer keep P(true) = 0.5 (see :attr:`Prediction.has_answer`).
         """
         calibrated = {}
         for key, prediction in results.items():
@@ -229,8 +230,9 @@ class PlattCalibrator(Calibrator):
             if params is None:
                 calibrated[key] = prediction
             else:
+                score = prediction.log_odds(self.meta.get("eps", EPS))
                 calibrated[key] = prediction.with_probability(
-                    apply_platt_scaling(prediction.score, params)
+                    apply_platt_scaling(score, params)
                 )
         return type(results)(calibrated)
 
