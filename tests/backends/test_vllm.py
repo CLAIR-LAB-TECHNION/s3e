@@ -18,7 +18,7 @@ from PIL import Image
 
 torch = pytest.importorskip("torch", reason="torch not installed (s3e[hf])")
 
-from s3e.backends.backend import VLMOutput
+from s3e.backends.backend import DEFAULT_MAX_REPLY_TOKENS, VLMOutput
 
 from backends.test_contract import BackendContract
 
@@ -359,18 +359,23 @@ class TestVLLMBackendMocked:
         assert [r.text for r in results] == ["yes", "no"]
         assert all(r.token_probs is None for r in results)
 
+    @pytest.mark.parametrize(
+        "length, max_tokens",
+        # The library's reply length, not vLLM's default of 16.
+        [({}, DEFAULT_MAX_REPLY_TOKENS), ({"max_tokens": 5}, 5)],
+    )
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
-    def test_text_mode_does_not_bound_or_request_logprobs(
-        self, mock_llm_cls, mock_sp_cls
+    def test_text_mode_bounds_the_reply_and_requests_no_logprobs(
+        self, mock_llm_cls, mock_sp_cls, length, max_tokens
     ):
         backend, mock_llm = self._make_backend(mock_llm_cls)
         mock_llm.chat.return_value = [_make_text_output("yes")]
 
-        backend.query_batch([], ["q1"], generate=True)
+        backend.query_batch([], ["q1"], generate=True, **length)
 
         kwargs = mock_sp_cls.call_args.kwargs
-        assert "max_tokens" not in kwargs  # model may reason freely
+        assert kwargs["max_tokens"] == max_tokens
         assert "logprobs" not in kwargs
         assert kwargs["temperature"] == 0.0
 
@@ -1013,32 +1018,88 @@ class TestVLLMBackendThinking:
         assert result.reasoning == "r"
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
-    @pytest.mark.parametrize(
-        "prompt_ids, token_ids, text, reasoning",
-        [
-            ([1, THINK_START], [6, THINK_END, 3, 4], "Yes", "r"),
-            # Only the separator after the block is dropped.
-            ([1, THINK_START], [6, THINK_END, 3, 4, 3], "Yes\n\n", "r"),
-            ([1, 2], [THINK_START, 6, 6, THINK_END, 3, 5], "No", "rr"),
-            ([1, THINK_START], [6, 6], None, "rr"),
-            ([1, 2], [4], "raw", None),
-        ],
-    )
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
-    def test_text_mode_moves_block_to_reasoning(
-        self, mock_llm_cls, mock_sp_cls, prompt_ids, token_ids, text, reasoning
+    def test_text_mode_reasons_where_the_reply_opens_a_block(
+        self, mock_llm_cls, mock_sp_cls
     ):
-        backend, mock_llm = self._make_backend(mock_llm_cls, thinking=True)
+        """A reply that opens a block stops there; the model reasons inside
+        it, and the reply is generated after the closed block. Other replies
+        are kept."""
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, thinking=True, max_thinking_tokens=3
+        )
         mock_llm.chat.return_value = [
-            _request_output(prompt_ids=prompt_ids, token_ids=token_ids, text="raw")
+            _request_output(prompt_ids=[1, 2], token_ids=[THINK_START]),
+            _request_output(prompt_ids=[1, 2], token_ids=[4], text="Yes"),
+        ]
+        mock_llm.generate.side_effect = [
+            [_request_output(token_ids=[6, THINK_END], stop_reason=THINK_END)],
+            [
+                _request_output(
+                    prompt_ids=[1, 2, THINK_START, 6, THINK_END], text="\n\nNo"
+                )
+            ],
+        ]
+
+        results = backend.query_batch([], ["q", "q"], generate=True, max_tokens=5)
+
+        assert [(r.text, r.reasoning) for r in results] == [("No", "r"), ("Yes", None)]
+        assert self._generated_prompts(mock_llm) == [
+            ["chat:q<think>"],
+            ["chat:q<think>r</think>"],
+        ]
+        # The budget bounds the reasoning, the caller's length the reply.
+        params = [c.kwargs for c in mock_sp_cls.call_args_list]
+        assert {"max_tokens": 5, "temperature": 0.0, "stop_token_ids": [THINK_START]} in params
+        assert {"max_tokens": 3, "temperature": 0.0, "stop_token_ids": [THINK_END]} in params
+        assert {"max_tokens": 5, "temperature": 0.0} in params  # the reply
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_text_mode_replies_after_a_block_the_budget_closed(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        """LLM.chat only renders when the template opens the block."""
+        backend, mock_llm = self._make_backend(
+            mock_llm_cls, tokenizer=_think_tokenizer(opens=True), thinking=True,
+            max_thinking_tokens=3,
+        )
+        mock_llm.chat.return_value = [
+            _request_output(prompt="chat:q<think>\n", prompt_ids=[1, THINK_START])
+        ]
+        mock_llm.generate.side_effect = [
+            [_request_output(token_ids=[6, 6, 6])],
+            [_request_output(prompt_ids=[1, THINK_START, 6], text="\n\nYes")],
         ]
 
         result = backend.query([], "q", generate=True)
 
-        assert result.text == text
-        assert result.reasoning == reasoning
-        mock_llm.generate.assert_not_called()
+        assert (result.text, result.reasoning) == ("Yes", "rrr")
+        assert self._generated_prompts(mock_llm) == [
+            ["chat:q<think>\n"],
+            ["chat:q<think>\nrrr\n</think>"],
+        ]
+        sampling = [c.kwargs for c in mock_sp_cls.call_args_list]
+        assert {"max_tokens": 1, "temperature": 0.0} in sampling  # the render-only chat
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
+    def test_text_mode_reply_continuation_tokenized_differently_raises(
+        self, mock_llm_cls, mock_sp_cls
+    ):
+        backend, mock_llm = self._make_backend(mock_llm_cls, thinking=True)
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, 2], token_ids=[THINK_START]),
+        ]
+        mock_llm.generate.side_effect = [
+            [_request_output(token_ids=[6, THINK_END], stop_reason=THINK_END)],
+            [_request_output(prompt_ids=[2, 2, THINK_START], text="Yes")],
+        ]
+
+        with pytest.raises(RuntimeError, match="LLM.chat scored"):
+            backend.query([], "q", generate=True)
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
@@ -1355,14 +1416,15 @@ class TestVLLMBackendThinkingIntegration:
         assert result.reasoning
         assert sum(result.token_probs.values()) > 0.5
 
-    def test_text_mode_moves_block_to_reasoning(self, backend, image):
-        backend.thinking = True
+    def test_text_mode_reasons_then_replies(self, backend, image):
+        backend.thinking, backend.max_thinking_tokens = True, 32
         try:
-            result = backend.query([image], self.PROMPT, generate=True, max_tokens=64)
+            result = backend.query([image], self.PROMPT, generate=True, max_tokens=8)
         finally:
-            backend.thinking = False
+            backend.thinking, backend.max_thinking_tokens = False, 1024
 
         assert result.reasoning
+        assert isinstance(result.text, str)
 
     def test_text_mode_answers_after_a_closed_block(self, backend, image):
         backend.chat_template_kwargs = {"enable_thinking": True}

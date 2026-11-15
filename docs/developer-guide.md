@@ -77,8 +77,8 @@ likely next token tell whether a query is about to think,
 {meth}`~s3e.backends.utils.thinking.ThinkingTokens.closing_text` or a
 generated reasoning ends the block, and the answer token is read at the
 first non-whitespace position after it
-({func}`~s3e.backends.utils.thinking.leading_whitespace_tokens`). Text
-replies are split with
+({func}`~s3e.backends.utils.thinking.leading_whitespace_tokens`), or the
+text reply generated after it. Text replies are split with
 {meth}`~s3e.backends.utils.thinking.ThinkingTokens.split`, and the block's
 text goes in {attr}`VLMOutput.reasoning <s3e.VLMOutput.reasoning>`.
 

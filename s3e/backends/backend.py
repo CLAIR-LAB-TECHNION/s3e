@@ -14,6 +14,13 @@ from dataclasses import dataclass, field
 
 from PIL.Image import Image
 
+#: Reply length, in new tokens, of a text-mode query that sets none, on the
+#: local backends (:class:`~s3e.backends.HuggingFaceVLM`,
+#: :class:`~s3e.backends.VLLMBackend`). It replaces the frameworks' own
+#: defaults (20 for transformers, 16 for vLLM). A thinking model's reasoning
+#: has its own budget, ``max_thinking_tokens``.
+DEFAULT_MAX_REPLY_TOKENS = 256
+
 
 def _validate_num_logprobs(num_logprobs: int | None) -> int | None:
     """Validate a backend's optional top-k log-probability limit."""
