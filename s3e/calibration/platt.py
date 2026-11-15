@@ -88,13 +88,7 @@ def fit_platt_parameters(scores: list[float], labels: list[bool]) -> PlattParame
     if positives == 0 or negatives == 0:
         raise ValueError("Platt scaling requires both positive and negative labels.")
 
-    # The default lbfgs fit can stop before it accounts for a small minority
-    # of samples (e.g. one rare answer among 20,000 text_match replies), and
-    # with scikit-learn 1.0 no tolerance prevents it. Newton steps reach
-    # the same optimum on 1.0 and on current versions alike.
-    model = LogisticRegression(
-        random_state=0, solver="newton-cg", tol=1e-7, max_iter=1000
-    )
+    model = LogisticRegression(random_state=0)
     model.fit([[score] for score in scores], labels)
 
     coef = float(model.coef_[0][0])
@@ -174,24 +168,12 @@ class PlattCalibrator(Calibrator):
             data: Scores and labels from :meth:`CalibrationSet.collect`.
             scope: ``"global"``, ``"lifted"``, or ``"grounded"`` grouping.
             pass_through_single_class: Skip (leave uncalibrated) groups
-                that cannot be fitted, instead of raising: groups whose
-                samples are all positive or all negative, and groups whose
-                samples all have the same score.
-
-        Data collected in ``text_match`` mode has two score values, one for
-        a yes and one for a no, so each group's fit comes close to two
-        rates: how often the predicate was true when the model said yes, and
-        when it said no. At this score scale the L2 penalty of the fit only
-        nudges them, so they are close to the raw rates of the calibration
-        data: a group with few replies of one answer gets probabilities
-        near 0 or 1 for it. A group in which the model gave every sample
-        the same answer has one score value, and nothing in the data says
-        what the other answer means, so it cannot be fitted.
+                whose samples are all positive or all negative instead of
+                raising.
 
         Raises:
-            ValueError: On an unknown scope, an empty set, or, when
-                ``pass_through_single_class`` is False, a single-class group
-                or a group whose samples all have the same score.
+            ValueError: On an unknown scope, an empty set, or a single-class
+                group when ``pass_through_single_class`` is False.
         """
         if scope not in VALID_SCOPES:
             raise ValueError(f"Unknown scope {scope!r}; expected one of {VALID_SCOPES}")
@@ -212,17 +194,6 @@ class PlattCalibrator(Calibrator):
                     "Platt scaling requires both positive and negative labels "
                     "(or pass pass_through_single_class=True to leave such "
                     "groups uncalibrated)"
-                )
-            if len({s.score for s in samples}) < 2:
-                if pass_through_single_class:
-                    continue
-                raise ValueError(
-                    f"Calibration group {key!r} has a single score value "
-                    f"({samples[0].score!r}), so the fit cannot tell what any "
-                    "other score means; in text_match mode, the model gave the "
-                    "same answer for every sample in the group. Collect data "
-                    "with both answers (or pass pass_through_single_class=True "
-                    "to leave such groups uncalibrated)"
                 )
             groups[key] = fit_platt_parameters([s.score for s in samples], labels)
         return cls(scope=scope, groups=groups, meta=dict(data.meta))

@@ -277,8 +277,7 @@ class SemanticStateEstimator:
         if scoring is not None and scoring != self.engine.scoring:
             raise ValueError(
                 f"calibrator was fitted on scoring={scoring!r} data; this "
-                f"estimator uses scoring={self.engine.scoring!r}. The two modes' "
-                "scores are on different scales; fit a calibrator in this mode"
+                f"estimator uses scoring={self.engine.scoring!r}"
             )
         fingerprint = meta.get("domain_fingerprint")
         if (

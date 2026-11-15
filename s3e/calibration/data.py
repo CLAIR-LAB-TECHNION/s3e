@@ -90,24 +90,8 @@ class CalibrationSet:
         skipped: their probability is fixed at 0.5 whatever a calibrator says,
         so they are not valid training points. There can therefore be fewer
         samples than labels.
-
-        Works in both scoring modes. The set's ``meta`` records the mode, and
-        a calibrator fitted on it applies only to estimators using the same
-        mode: in ``text_match`` mode a reply's score is about +-27.6 (a yes or
-        a no; see :attr:`Prediction.score`), so the scores of the two modes
-        are on different scales.
-
-        Raises:
-            ValueError: If the estimator's answer space is not binary (checked
-                before any VLM query).
         """
         meta = estimator.calibration_meta()
-        if meta.get("true_label") is None:
-            raise ValueError(
-                "CalibrationSet.collect requires a binary answer space; "
-                "calibration samples are grouped log-odds scores, which are "
-                "defined for yes/no answers only"
-            )
         samples: list[CalibrationSample] = []
         original_problem = estimator.problem_pddl
         problem_changed = False

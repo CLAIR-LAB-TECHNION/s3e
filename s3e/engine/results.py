@@ -9,9 +9,6 @@ from functools import cached_property
 
 from .answers import AnswerSpace, BinaryAnswers
 
-# Saved calibrators depend on this value: a text_match reply's score is
-# log((1 + EPS) / EPS), about +-27.6, so changing EPS invalidates calibrators
-# fitted on text_match data.
 EPS = 1e-12
 PREDICTION_SET_FORMAT_VERSION = 1
 
@@ -124,8 +121,7 @@ class Prediction:
         """Grouped log-odds log(true_mass / false_mass) for binary spaces.
 
         Computed from the raw masses only (null mass is ignored); this is the
-        input calibrators fit on. ``EPS`` keeps it finite for zero masses, so a
-        ``text_match`` reply scores about +27.6 for a yes and -27.6 for a no.
+        input calibrators fit on. ``EPS`` keeps it finite for zero masses.
         """
         self._require_binary("score")
         true_mass = self.masses[self.answers.true_label]
