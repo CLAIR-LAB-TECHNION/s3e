@@ -88,7 +88,11 @@ def fit_platt_parameters(scores: list[float], labels: list[bool]) -> PlattParame
     if positives == 0 or negatives == 0:
         raise ValueError("Platt scaling requires both positive and negative labels.")
 
-    model = LogisticRegression(random_state=0)
+    # lbfgs can stop before it fits a small minority of samples (one rare
+    # answer among 20,000), and on scikit-learn 1.0 no tolerance prevents it.
+    model = LogisticRegression(
+        random_state=0, solver="newton-cg", tol=1e-7, max_iter=1000
+    )
     model.fit([[score] for score in scores], labels)
 
     coef = float(model.coef_[0][0])
@@ -168,12 +172,13 @@ class PlattCalibrator(Calibrator):
             data: Scores and labels from :meth:`CalibrationSet.collect`.
             scope: ``"global"``, ``"lifted"``, or ``"grounded"`` grouping.
             pass_through_single_class: Skip (leave uncalibrated) groups
-                whose samples are all positive or all negative instead of
-                raising.
+                whose samples are all positive or all negative, or all have
+                the same score, instead of raising.
 
         Raises:
             ValueError: On an unknown scope, an empty set, or a single-class
-                group when ``pass_through_single_class`` is False.
+                or single-score group when ``pass_through_single_class`` is
+                False.
         """
         if scope not in VALID_SCOPES:
             raise ValueError(f"Unknown scope {scope!r}; expected one of {VALID_SCOPES}")
@@ -194,6 +199,15 @@ class PlattCalibrator(Calibrator):
                     "Platt scaling requires both positive and negative labels "
                     "(or pass pass_through_single_class=True to leave such "
                     "groups uncalibrated)"
+                )
+            if len({s.score for s in samples}) < 2:
+                if pass_through_single_class:
+                    continue
+                raise ValueError(
+                    f"Calibration group {key!r} has a single score value, so "
+                    "the fit cannot tell what other scores mean (or pass "
+                    "pass_through_single_class=True to leave such groups "
+                    "uncalibrated)"
                 )
             groups[key] = fit_platt_parameters([s.score for s in samples], labels)
         return cls(scope=scope, groups=groups, meta=dict(data.meta))
