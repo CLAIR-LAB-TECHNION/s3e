@@ -103,7 +103,8 @@ Subclass {class}`~s3e.Calibrator` and implement `apply`, `save`, and `load`.
 `apply` must return a new `PredictionSet` and leave its input untouched;
 `Prediction.with_probability` makes the calibrated copy of each prediction.
 If the calibrator has a `meta` dict, the estimator compares any `scoring`,
-`answers`, and `domain_fingerprint` it holds with its own before applying.
+`answers`, `domain_fingerprint`, and `generation_policy` it holds with its own
+before applying.
 
 ## Tests
 

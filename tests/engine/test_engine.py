@@ -5,6 +5,7 @@
 
 import warnings
 
+import numpy as np
 import pytest
 
 from s3e.engine import (
@@ -92,6 +93,31 @@ class TestInferenceKwargs:
         engine = QueryEngine(fake, inference_kwargs={"temperature": 0.2, "seed": 1})
         engine.ask(images, ["q"], inference_kwargs={"seed": 7})
         assert fake.calls[0]["inference_kwargs"] == {"temperature": 0.2, "seed": 7}
+
+
+class TestGenerationPolicy:
+    @pytest.mark.parametrize("thinking, budget", [(True, 256), (False, None)])
+    def test_merges_per_call_kwargs_and_leaves_out_unset_settings(self, thinking, budget):
+        fake = FakeVLM()
+        fake.thinking, fake.max_thinking_tokens = thinking, 256
+        engine = QueryEngine(fake, inference_kwargs={"temperature": 0.6, "top_p": 0.9})
+        policy = engine.generation_policy({"top_p": 0.95, "top_k": None, "seed": 3})
+        assert policy == {
+            "thinking": thinking, "max_thinking_tokens": budget,
+            "temperature": 0.6, "top_p": 0.95,
+        }
+        assert engine.inference_kwargs == {"temperature": 0.6, "top_p": 0.9}
+        temperature = engine.generation_policy({"temperature": np.float32(0.5)})["temperature"]
+        assert type(temperature) is float
+        assert engine.generation_policy({"temperature": None})["temperature"] == 0.0
+
+    def test_model_id_only_when_the_backend_has_one(self):
+        fake = FakeVLM()
+        assert QueryEngine(fake).generation_policy() == {
+            "thinking": False, "max_thinking_tokens": None, "temperature": 0.0
+        }
+        fake.model_id = "org/model"
+        assert QueryEngine(fake).generation_policy()["model_id"] == "org/model"
 
 
 class TestBatching:

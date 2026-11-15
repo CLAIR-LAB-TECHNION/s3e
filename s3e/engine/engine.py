@@ -58,6 +58,11 @@ def _validate_scoring(scoring: str) -> str:
     return scoring
 
 
+# Decoding settings a generation policy records when they are set.
+_POLICY_KEYS = ("do_sample", "top_k", "top_p", "min_p", "repetition_penalty",
+                "presence_penalty", "frequency_penalty")
+
+
 class QueryEngine:
     """Answers free-form queries about images against an answer space.
 
@@ -126,7 +131,7 @@ class QueryEngine:
         """
         space = answers if answers is not None else self.answers
         mode = _validate_scoring(scoring) if scoring is not None else self.scoring
-        merged_kwargs = {**self.inference_kwargs, **(inference_kwargs or {})}
+        merged_kwargs = self._merged_kwargs(inference_kwargs)
         generate = mode == "text_match"
         interest = None if generate else space.interest_tokens
         if interest is not None:
@@ -170,6 +175,27 @@ class QueryEngine:
     ) -> list[PredictionSet]:
         """Run :meth:`ask` once per scene; combine with PredictionSet.average."""
         return [self.ask(scene, queries, **ask_kwargs) for scene in scenes]
+
+    def generation_policy(self, inference_kwargs: "dict | None" = None) -> dict:
+        """How this engine generates tokens (model, thinking, decoding), as
+        recorded by calibrators; ``inference_kwargs`` merge as in :meth:`ask`."""
+        merged = self._merged_kwargs(inference_kwargs)
+        thinking = bool(getattr(self.backend, "thinking", False))
+        policy = {
+            "thinking": thinking,
+            "max_thinking_tokens": (
+                getattr(self.backend, "max_thinking_tokens", None) if thinking else None
+            ),
+            "temperature": float(merged.get("temperature") or 0.0),
+        }
+        model_id = getattr(self.backend, "model_id", None)
+        if model_id is not None:
+            policy["model_id"] = model_id
+        policy.update({k: merged[k] for k in _POLICY_KEYS if merged.get(k) is not None})
+        return policy
+
+    def _merged_kwargs(self, inference_kwargs: "dict | None") -> dict:
+        return {**self.inference_kwargs, **(inference_kwargs or {})}
 
     def _reject_untokenizable_options(self, space: AnswerSpace) -> None:
         """Reject options whose every token form the backend cannot score.

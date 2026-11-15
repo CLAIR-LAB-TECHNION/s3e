@@ -11,6 +11,7 @@ paths, keeping the core importable without it.
 """
 
 from collections.abc import Sequence
+import warnings
 
 from PIL.Image import Image
 
@@ -21,6 +22,7 @@ from .constants import (
     SYSTEM_PROMPT_WITH_TRANSLATION,
 )
 from .engine import BinaryAnswers, PredictionSet, QueryEngine
+from .engine.engine import _POLICY_KEYS, _external_stacklevel
 from .translation import IdentityTranslator, QueryTranslator
 
 
@@ -228,10 +230,18 @@ class SemanticStateEstimator:
         calibrator=None,
         keep_raw: bool = False,
         inference_kwargs: "dict | None" = None,
+        allow_calibrator_policy_mismatch: bool = False,
     ) -> PredictionSet:
-        """Estimate the selected predicates; returns a lazy PredictionSet."""
+        """Estimate the selected predicates; returns a lazy PredictionSet.
+
+        A ``calibrator`` fitted under another generation policy (see
+        :meth:`QueryEngine.generation_policy`) is refused unless
+        ``allow_calibrator_policy_mismatch`` is True, which applies it with a warning.
+        """
         if calibrator is not None:
-            self._check_calibrator_compat(calibrator)
+            self._check_calibrator_compat(
+                calibrator, inference_kwargs, allow_calibrator_policy_mismatch
+            )
         selected = self._select(predicates)
         queries = [self.queries[p] for p in selected]
         # Distinct queries only: predicates that translate to the same query
@@ -266,7 +276,9 @@ class SemanticStateEstimator:
         threshold = confidence if confidence is not None else self.confidence
         return self.estimate(images).to_state(confidence=threshold)
 
-    def _check_calibrator_compat(self, calibrator) -> None:
+    def _check_calibrator_compat(
+        self, calibrator, inference_kwargs=None, allow_policy_mismatch=False
+    ) -> None:
         """Refuse calibrators whose recorded provenance contradicts this estimator.
 
         Only fields the calibrator's meta actually carries are compared, so
@@ -297,6 +309,22 @@ class SemanticStateEstimator:
                 f"calibrator uses {answers!r}, estimator uses "
                 f"{self.engine.answers.to_dict()!r}"
             )
+        recorded = meta.get("generation_policy")
+        if not recorded:
+            return
+        current = self.engine.generation_policy(inference_kwargs)
+        # Fields added to the policy later are not compared, so older calibrators still apply.
+        keys = sorted(set(recorded) | {k for k in _POLICY_KEYS if k in current})
+        details = "; ".join(
+            f"{k}: fitted {recorded.get(k)!r}, now {current.get(k)!r}"
+            for k in keys if recorded.get(k) != current.get(k)
+        )
+        if not details:
+            return
+        message = f"calibrator was fitted under a different generation policy ({details})"
+        if not allow_policy_mismatch:
+            raise ValueError(f"{message}; pass allow_calibrator_policy_mismatch=True to apply it")
+        warnings.warn(message, UserWarning, stacklevel=_external_stacklevel())
 
     def _select(self, predicates: "Sequence[str] | None") -> list[str]:
         if predicates is None:
@@ -325,4 +353,5 @@ class SemanticStateEstimator:
             "scoring": self.engine.scoring,
             "domain_fingerprint": self.domain_fingerprint,
             "answers": answers.to_dict(),
+            "generation_policy": self.engine.generation_policy(),
         }
