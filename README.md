@@ -255,6 +255,8 @@ calibrated_state = estimator.estimate(scene, calibrator=calibrator).to_state()
 
 Calibration works the same way in both scoring modes. A calibrator applies only in the mode its data was collected in.
 
+Scores also depend on how the model generates, so `collect` records a generation policy (`QueryEngine.generation_policy()`): the backend's `model_id` when it has one, `thinking` and `max_thinking_tokens`, the `temperature`, and whichever decoding settings (`do_sample`, `top_k`, `top_p`, ...) are set. `estimate(..., calibrator=...)` refuses, with a `ValueError` naming each difference, a calibrator fitted under another policy than the call's (constructor `inference_kwargs` merged with the call's). `allow_calibrator_policy_mismatch=True` applies it anyway with a warning, e.g. for a local copy of the same model; it never bypasses the scoring-mode, domain or answer-space checks. Calibrators saved without a policy apply unchecked.
+
 <!-- docs:user-guide:start -->
 ## Configuration reference
 
@@ -276,7 +278,7 @@ Calibration works the same way in both scoring modes. A calibrator applies only 
 Common methods:
 
 - `estimator(images, confidence=None) -> dict[str, bool]`: estimate and threshold into a boolean state.
-- `estimator.estimate(images, *, predicates=None, calibrator=None, keep_raw=False, inference_kwargs=None) -> PredictionSet`: full per-predicate detail.
+- `estimator.estimate(images, *, predicates=None, calibrator=None, keep_raw=False, inference_kwargs=None, allow_calibrator_policy_mismatch=False) -> PredictionSet`: full per-predicate detail.
 - `estimator.estimate_averaged(scenes, **estimate_kwargs) -> PredictionSet`: estimate each scene separately and average the stored masses.
 - `estimator.set_problem(domain, problem)`: re-ground a new PDDL problem; the engine/backend is untouched.
 - `estimator.to_up_state(state)`: convert a boolean state dict into a Unified Planning state object (PDDL-built estimators only).

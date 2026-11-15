@@ -3,6 +3,9 @@
 
 """Tests for the SemanticStateEstimator facade."""
 
+import re
+import warnings
+
 import pytest
 
 from s3e import (
@@ -694,6 +697,88 @@ class TestCalibratorCompat:
             estimator.estimate(
                 images, calibrator=self.make_calibrator({"scoring": "logprobs"})
             )
+
+    def test_collect_records_the_policy_and_platt_keeps_it(self, images, tmp_path):
+        from s3e.calibration import CalibrationExample, CalibrationSet, PlattCalibrator
+
+        estimator = make_estimator(inference_kwargs={"temperature": 0.6})
+        example = CalibrationExample(images=images, state_dict={"on(a,b)": True})
+        meta = CalibrationSet.collect(estimator, [example]).meta
+        policy = {"thinking": False, "max_thinking_tokens": None, "temperature": 0.6}
+        assert meta["generation_policy"] == policy
+        self.make_calibrator(meta).save(tmp_path / "platt.json")
+        loaded = PlattCalibrator.load(tmp_path / "platt.json")
+        assert loaded.meta["generation_policy"] == policy
+
+    @pytest.mark.parametrize(
+        "fitted, now, call_kwargs, detail",
+        [
+            ({}, {"thinking": True, "max_thinking_tokens": 256}, None,
+             "thinking: fitted False, now True"),
+            ({"thinking": True, "max_thinking_tokens": 256}, {"thinking": False}, None,
+             "thinking: fitted True, now False"),
+            ({"thinking": True, "max_thinking_tokens": 256}, {"max_thinking_tokens": 1024},
+             None, "max_thinking_tokens: fitted 256, now 1024"),
+            ({}, {}, {"temperature": 0.7}, "temperature: fitted 0.0, now 0.7"),
+            ({}, {}, {"do_sample": True}, "do_sample: fitted None, now True"),
+            ({"model_id": "org/a"}, {"model_id": "org/b"}, None,
+             "model_id: fitted 'org/a', now 'org/b'"),
+        ],
+    )
+    def test_policy_mismatch_refused(self, images, fitted, now, call_kwargs, detail):
+        fake = FakeVLM()
+        vars(fake).update(fitted)
+        estimator = make_estimator(fake)
+        calibrator = self.make_calibrator(estimator.calibration_meta())
+        vars(fake).update(now)
+        with pytest.raises(ValueError, match=re.escape(detail)) as error:
+            estimator.estimate(images, calibrator=calibrator, inference_kwargs=call_kwargs)
+        assert "allow_calibrator_policy_mismatch=True" in str(error.value)
+        assert fake.calls == []
+
+    def test_override_warns_at_the_callers_line_and_applies(self, images):
+        estimator = make_estimator()
+        calibrator = self.make_calibrator(estimator.calibration_meta())
+        with pytest.warns(UserWarning, match="temperature: fitted 0.0, now 0.7") as record:
+            results = estimator.estimate(
+                images,
+                calibrator=calibrator,
+                inference_kwargs={"temperature": 0.7},
+                allow_calibrator_policy_mismatch=True,
+            )
+        assert [w.filename for w in record] == [__file__]
+        assert all(p.probability_override is not None for p in results.values())
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            ("scoring", "text_match"),
+            ("domain_fingerprint", "0" * 64),
+            ("answers", BinaryAnswers("true", "false").to_dict()),
+        ],
+    )
+    def test_override_keeps_the_other_checks(self, images, field, value):
+        estimator = make_estimator()
+        meta = {**estimator.calibration_meta(), field: value}
+        with pytest.raises(ValueError, match="calibrator"):
+            estimator.estimate(
+                images,
+                calibrator=self.make_calibrator(meta),
+                inference_kwargs={"temperature": 0.7},
+                allow_calibrator_policy_mismatch=True,
+            )
+
+    @pytest.mark.parametrize(
+        "policy", [None, {"thinking": False, "max_thinking_tokens": None, "temperature": 0.7}]
+    )
+    def test_calibrator_without_a_policy_or_a_later_field_applies(self, images, policy):
+        fake = FakeVLM()
+        fake.model_id = "org/model"
+        estimator = make_estimator(fake, inference_kwargs={"temperature": 0.7})
+        meta = {**estimator.calibration_meta(), "generation_policy": policy}
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            estimator.estimate(images, calibrator=self.make_calibrator(meta))
 
 
 @pytest.mark.slow

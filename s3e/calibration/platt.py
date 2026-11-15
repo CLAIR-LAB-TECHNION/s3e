@@ -129,7 +129,7 @@ class PlattCalibrator(Calibrator):
             ``on(...)``), or ``"grounded"`` (one per grounded predicate).
         groups: Fitted parameters per group key.
         meta: Provenance recorded from the :class:`CalibrationSet` (scoring
-            mode, answer space, domain fingerprint), checked by
+            mode, answer space, domain fingerprint, generation policy), checked by
             :meth:`SemanticStateEstimator.estimate` before applying.
 
     Example:
