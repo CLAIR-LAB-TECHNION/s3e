@@ -331,7 +331,7 @@ How checked models behave (yes/no questions about a toy scene; `HuggingFaceVLM` 
 `Prediction` (one query's outcome) and `PredictionSet` (an ordered mapping of query/predicate → `Prediction`) are both immutable, with lazily cached derivations:
 
 - `prediction.masses`, `.null_mass`, `.unassigned_mass`, `.probability_override` (a calibrator's output): the stored raw data, never altered by the decision rule.
-- `prediction.probability`, `.answer`, `.has_answer`, `.null_dominated`, `.matched`, `.confident(threshold)`, `.distribution()`, `.score`: derived on demand.
+- `prediction.probability`, `.answer`, `.has_answer`, `.null_dominated`, `.matched`, `.confident(threshold)`, `.distribution()`, `.score`, `.log_odds(eps)`: derived on demand.
 - `prediction_set.probabilities()`, `.to_state(confidence=0.5)`, `.where(predicate)`.
 - `prediction_set.to_dict()` / `PredictionSet.from_dict(d)`: backend-free round trip (e.g. for offline recalibration).
 

@@ -541,6 +541,19 @@ class TestDuplicateQueries:
 
 
 class TestCollectIntegration:
+    def test_collect_scores_with_eps_and_records_it(self, images):
+        import math
+
+        from s3e.calibration import CalibrationExample, CalibrationSet
+
+        estimator = make_estimator(FakeVLM({"yes": 0.8, "no": 0.0}))
+        example = CalibrationExample(images=images, state_dict={"on(a,b)": True})
+        data = CalibrationSet.collect(estimator, [example], eps=1e-6)
+        assert data.meta["eps"] == 1e-6
+        assert data.samples[0].score == pytest.approx(math.log((0.8 + 1e-6) / 1e-6))
+        with pytest.raises(ValueError, match="eps"):
+            CalibrationSet.collect(estimator, [example], eps=0.0)
+
     def test_collect_produces_scored_samples(self, images):
         pytest.importorskip("sklearn")
         from s3e.calibration import CalibrationExample, CalibrationSet
