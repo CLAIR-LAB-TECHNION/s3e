@@ -34,21 +34,16 @@ the commit history and PyPI release dates when this file was introduced.
   thinking block at once, so the answer follows an empty block, in logprobs
   and text mode alike. `thinking=True` turns the switch on and lets the
   model reason first, up to `max_thinking_tokens`, with a warning when it
-  cannot; the answer is then scored, or the reply generated with the query's
-  own length, after the closed block. Logprobs mode reasons greedily; text
-  mode decodes the reasoning with the query's own decoding settings, like
-  the reply. Blocks are found by their delimiters, among those
+  cannot; the answer is then scored, or the reply generated, after the
+  closed block (text mode decodes the reasoning like the reply). Blocks are found by their delimiters, among those
   of known model families (`<think>`, Gemma 4's `<|channel>`, Mistral's
   `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). The
   block's text is in the new `VLMOutput.reasoning`, and a
   `chat_template_kwargs` argument passes other template variables.
-- Reasoning cut off by `max_thinking_tokens` is reported:
-  `VLMOutput.thinking_truncated` records it, `QueryEngine.ask` emits one
-  `ThinkingTruncatedWarning` per call that had such queries, and the
-  `UnmatchedAnswerWarning` says how many unmatched queries were cut off. A
-  `thinking_truncation_notice` option puts text inside such a block before
-  its closing delimiter; it defaults to `None` (nothing added), and its
-  effect is model-dependent.
+- Reasoning cut off by `max_thinking_tokens` is reported in
+  `VLMOutput.thinking_truncated` and by one `ThinkingTruncatedWarning` per
+  `QueryEngine.ask` call. `thinking_truncation_notice` (default `None`) puts
+  text inside such a block before its closing delimiter.
 - A thinking-models section in the walkthrough notebook: Qwen3.5-0.8B with
   its thinking block ignored, closed, and thought through, and the tradeoff
   between the accuracy reasoning can add and the time it costs.
@@ -56,9 +51,7 @@ the commit history and PyPI release dates when this file was introduced.
 ### Changed
 - A text-mode query that sets no length gets `DEFAULT_MAX_REPLY_TOKENS`
   (256) new tokens on `HuggingFaceVLM` and `VLLMBackend`, instead of the
-  frameworks' defaults (20 for transformers, 16 for vLLM; on `HuggingFaceVLM`
-  it also replaces a length from the checkpoint's generation config). Replies
-  are no longer cut after a few words.
+  frameworks' defaults (20 for transformers, 16 for vLLM).
 - Runtime dependencies and extras declare minimum supported versions, which
   CI tests on Python 3.10 (all but vLLM's, which needs a GPU), e.g.
   `transformers>=4.56` (for `from_pretrained(dtype=...)`), `openai>=1.66`

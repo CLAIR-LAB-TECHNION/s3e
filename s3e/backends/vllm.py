@@ -79,21 +79,9 @@ _PROBE_PROMPT = "Is the switch on?"
 # SamplingParams fields that shape the reply as a whole (its length, where it
 # stops, how many sequences, what is returned): a text-mode reasoning pass
 # takes the query's other fields (its decoding settings), but not these.
-_REPLY_ONLY_SAMPLING_KWARGS = frozenset(
-    {
-        "max_tokens",
-        "min_tokens",
-        "stop",
-        "stop_token_ids",
-        "ignore_eos",
-        "include_stop_str_in_output",
-        "n",
-        "best_of",
-        "logprobs",
-        "prompt_logprobs",
-        "detokenize",
-    }
-)
+_REPLY_ONLY_SAMPLING_KWARGS = frozenset({
+    "max_tokens", "min_tokens", "stop", "stop_token_ids", "n", "logprobs", "prompt_logprobs",
+})
 
 
 class VLLMBackend(VLMBackend):
@@ -133,11 +121,10 @@ class VLLMBackend(VLMBackend):
             and otherwise closes any thinking block at once, so the answer
             follows an empty block. ``True`` turns the switch on and lets the
             model reason first, up to ``max_thinking_tokens``: greedily in
-            logprobs mode, and in text mode with the query's own sampling
-            settings (e.g. ``temperature``, ``top_p``, ``top_k``), so
-            reasoning and reply are decoded alike. Either way, the block's
-            text goes in :attr:`VLMOutput.reasoning`. A warning says when ``True``
-            cannot make the model think.
+            logprobs mode, and in text mode with the query's sampling
+            settings, like the reply. Either way, the block's text goes in
+            :attr:`VLMOutput.reasoning`. A warning says when ``True`` cannot
+            make the model think.
         max_thinking_tokens: Reasoning budget per query with
             ``thinking=True``; a block still open after this many tokens is
             closed (:attr:`VLMOutput.thinking_truncated` is then True), and
@@ -325,12 +312,7 @@ class VLLMBackend(VLMBackend):
         )
         tokens = self._thinking_tokens
         if generate and tokens is not None:
-            generate_after = (
-                self._generate_after_thinking
-                if self.thinking
-                else self._generate_after_closed_blocks
-            )
-            return generate_after(
+            return self._generate_after_blocks(
                 images, prompts, system_prompt, conversations, chat_kwargs,
                 tokens, inference_kwargs,
             )
@@ -409,24 +391,9 @@ class VLLMBackend(VLMBackend):
             self._prompt_text(outputs[row], images, prompts[row], system_prompt)
             for row in rows
         ]
-        if self.thinking:
-            # Open the block where the model was about to, so the reasoning
-            # is generated inside it even if generate() starts differently.
-            continuations, reasonings, truncated = self._think(
-                images,
-                [
-                    text if is_open else text + tokens.start
-                    for text, is_open in zip(prompt_texts, prompt_open)
-                ],
-                tokens,
-            )
-        else:
-            continuations = [
-                text + tokens.closing_text(text, is_open)
-                for text, is_open in zip(prompt_texts, prompt_open)
-            ]
-            reasonings = [""] * len(rows)
-            truncated = [None] * len(rows)
+        continuations, reasonings, truncated = self._close_blocks(
+            images, prompt_texts, prompt_open, tokens
+        )
 
         answers = self._answer_outputs_after(
             images,
@@ -486,6 +453,37 @@ class VLLMBackend(VLMBackend):
         if not images:
             return {"prompt": text}
         return {"prompt": text, "multi_modal_data": {"image": list(images)}}
+
+    def _close_blocks(self, images, prompt_texts, prompt_open, tokens, decoding=None):
+        """Continue each prompt past a closed thinking block.
+
+        ``prompt_open`` says whether each prompt ends inside the block; the
+        others get the opening delimiter first. With thinking on, the model
+        reasons first (:meth:`_think`, decoded with ``decoding``); with it
+        off, the block is closed at once. Returns the continuations, the
+        reasoning texts, and whether each reasoning ran out of the budget
+        (None with thinking off).
+        """
+        if self.thinking:
+            # Open the block where the model was about to, so the reasoning
+            # is generated inside it even if generate() starts differently.
+            return self._think(
+                images,
+                [
+                    text if is_open else text + tokens.start
+                    for text, is_open in zip(prompt_texts, prompt_open)
+                ],
+                tokens,
+                decoding,
+            )
+        return (
+            [
+                text + tokens.closing_text(text, is_open)
+                for text, is_open in zip(prompt_texts, prompt_open)
+            ],
+            [""] * len(prompt_texts),
+            [None] * len(prompt_texts),
+        )
 
     def _think(self, images, prompt_texts, tokens, decoding=None):
         """Generate each prompt's reasoning, up to ``max_thinking_tokens``.
@@ -548,21 +546,21 @@ class VLLMBackend(VLMBackend):
             truncated.append(cut)
         return continuations, reasonings, truncated
 
-    def _generate_after_thinking(
+    def _generate_after_blocks(
         self, images, prompts, system_prompt, conversations, chat_kwargs,
         tokens, inference_kwargs,
     ) -> list[VLMOutput]:
-        """Text replies with thinking on: reason first, then reply.
+        """Text replies of a model with thinking blocks.
 
         When the chat template opens the block, ``LLM.chat`` only renders the
-        prompts (one greedy token); otherwise replies stop at a token that
-        opens a block. The rows whose prompt or reply opens one reason
-        through the same budgeted pass as logprobs mode (:meth:`_think`),
-        decoded with ``inference_kwargs`` like the reply, which is then
-        generated after the closed block. A rendered prompt the template left closed
-        after all is continued as is; other replies are kept.
+        prompts (one greedy token) and every row is continued: past the
+        block, or as is where the template left it closed after all.
+        Otherwise replies stop at a token that opens a block, and only those
+        rows are continued. The block is closed (:meth:`_close_blocks`: at
+        once, or after the model's reasoning, decoded with
+        ``inference_kwargs`` like the reply), and the reply is generated
+        after it.
         """
-        reply_params = self._build_sampling_params(True, **inference_kwargs)
         if self._template_opens_block(tokens):
             # Only render the prompts; every reply is generated below.
             outputs = self.llm.chat(
@@ -577,8 +575,9 @@ class VLLMBackend(VLMBackend):
                 )
                 for output in outputs
             ]
-            think_rows = [row for row, is_open in enumerate(opened) if is_open]
-            plain_rows = [row for row, is_open in enumerate(opened) if not is_open]
+            # Row -> whether its prompt opened the block (else its reply did).
+            blocks = {row: True for row, is_open in enumerate(opened) if is_open}
+            as_is = [row for row, is_open in enumerate(opened) if not is_open]
         else:
             stop_kwargs = dict(inference_kwargs)
             stop_kwargs["stop_token_ids"] = [
@@ -590,127 +589,48 @@ class VLLMBackend(VLMBackend):
                 **chat_kwargs,
             )
             results = [self._text_output(output) for output in outputs]
-            opened = [False] * len(outputs)
-            think_rows = [
-                row
+            blocks = {
+                row: False
                 for row, output in enumerate(outputs)
                 if list(output.outputs[0].token_ids[:1]) == [tokens.start_id]
-            ]
-            plain_rows = []
-        if not (think_rows or plain_rows):
+            }
+            as_is = []
+        if not (blocks or as_is):
             return results
 
-        prompt_texts = {
+        block_rows = list(blocks)
+        texts = {
             row: self._prompt_text(outputs[row], images, prompts[row], system_prompt)
-            for row in think_rows + plain_rows
+            for row in block_rows + as_is
         }
-        continuations, reasonings, truncated = (
-            self._think(
-                images,
-                [
-                    prompt_texts[row] if opened[row] else prompt_texts[row] + tokens.start
-                    for row in think_rows
-                ],
-                tokens,
-                inference_kwargs,
-            )
-            if think_rows
-            else ([], [], [])
+        continuations, reasonings, truncated = self._close_blocks(
+            images,
+            [texts[row] for row in block_rows],
+            [blocks[row] for row in block_rows],
+            tokens,
+            inference_kwargs,
         )
-        rows = think_rows + plain_rows
         replies = self.llm.generate(
             [
                 self._engine_prompt(text, images)
-                for text in continuations + [prompt_texts[row] for row in plain_rows]
+                for text in continuations + [texts[row] for row in as_is]
             ],
-            reply_params,
+            self._build_sampling_params(True, **inference_kwargs),
         )
-        for index, (row, reply) in enumerate(zip(rows, replies)):
+        for index, (row, reply) in enumerate(zip(block_rows + as_is, replies)):
             self._check_continuation(
                 outputs[row].prompt_token_ids or [], reply.prompt_token_ids or []
             )
             text = reply.outputs[0].text
-            if index < len(think_rows):
-                results[row] = VLMOutput(
+            results[row] = (
+                VLMOutput(
                     token_probs=None,
                     text=text.lstrip(),
                     reasoning=reasonings[index],
                     thinking_truncated=truncated[index],
                 )
-            else:
-                results[row] = VLMOutput(token_probs=None, text=text)
-        return results
-
-    def _generate_after_closed_blocks(
-        self, images, prompts, system_prompt, conversations, chat_kwargs,
-        tokens, inference_kwargs,
-    ) -> list[VLMOutput]:
-        """Text replies with thinking off: no reply contains a thinking block.
-
-        When the chat template opens the block, ``LLM.chat`` only renders the
-        prompts (one greedy token) and every row is continued after the
-        closed block. Otherwise replies stop at a token that opens a block,
-        and those rows are generated again after a whole empty block. The
-        continued rows get ``reasoning=""``.
-        """
-        if self._template_opens_block(tokens):
-            # Only render the prompts; every reply is generated below.
-            outputs = self.llm.chat(
-                conversations,
-                SamplingParams(max_tokens=1, temperature=0.0),
-                **chat_kwargs,
-            )
-            results = [None] * len(outputs)
-            rows = list(range(len(outputs)))
-            # A prompt the template left closed after all is continued as is.
-            closes = [
-                tokens.opens_block(
-                    output.prompt_token_ids or [], self._decode_with_special_tokens
-                )
-                for output in outputs
-            ]
-        else:
-            stop_kwargs = dict(inference_kwargs)
-            stop_kwargs["stop_token_ids"] = [
-                *(stop_kwargs.get("stop_token_ids") or []), tokens.start_id
-            ]
-            outputs = self.llm.chat(
-                conversations,
-                self._build_sampling_params(True, **stop_kwargs),
-                **chat_kwargs,
-            )
-            results = [self._text_output(output) for output in outputs]
-            rows = [
-                row
-                for row, output in enumerate(outputs)
-                if list(output.outputs[0].token_ids[:1]) == [tokens.start_id]
-            ]
-            closes = [True] * len(rows)
-        if not rows:
-            return results
-
-        continuations = []
-        for row, close in zip(rows, closes):
-            text = self._prompt_text(outputs[row], images, prompts[row], system_prompt)
-            # Rows only rendered end by opening the block; the others opened
-            # it as their reply's first token.
-            prompt_open = results[row] is None
-            continuations.append(
-                text + tokens.closing_text(text, prompt_open) if close else text
-            )
-        replies = self.llm.generate(
-            [self._engine_prompt(text, images) for text in continuations],
-            self._build_sampling_params(True, **inference_kwargs),
-        )
-        for row, close, reply in zip(rows, closes, replies):
-            self._check_continuation(
-                outputs[row].prompt_token_ids or [], reply.prompt_token_ids or []
-            )
-            text = reply.outputs[0].text
-            results[row] = VLMOutput(
-                token_probs=None,
-                text=text.lstrip() if close else text,
-                reasoning="" if close else None,
+                if index < len(block_rows)
+                else VLMOutput(token_probs=None, text=text)
             )
         return results
 

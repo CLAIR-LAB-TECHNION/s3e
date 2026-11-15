@@ -71,14 +71,6 @@ def validate_thinking_options(
     truncation notice must be a non-empty string that contains none of
     those delimiters, since it is tokenized as plain text inside the block.
     """
-    if thinking_truncation_notice is not None and (
-        not isinstance(thinking_truncation_notice, str)
-        or not thinking_truncation_notice.strip()
-    ):
-        raise ValueError(
-            "thinking_truncation_notice must be None or a non-empty string; "
-            f"got {thinking_truncation_notice!r}"
-        )
     if not isinstance(thinking, bool):
         raise ValueError(f"thinking must be True or False; got {thinking!r}")
     if (
@@ -111,19 +103,16 @@ def validate_thinking_options(
         )
     else:
         candidates = (tuple(thinking_delimiters),)
-    if thinking_truncation_notice is not None:
-        inside = [
-            delimiter
-            for pair in candidates
-            for delimiter in pair
-            if delimiter in thinking_truncation_notice
-        ]
-        if inside:
-            raise ValueError(
-                f"thinking_truncation_notice contains the thinking delimiter "
-                f"{inside[0]!r}, which would open or close the block; got "
-                f"{thinking_truncation_notice!r}"
-            )
+    notice = thinking_truncation_notice
+    if notice is not None and (
+        not isinstance(notice, str)
+        or not notice.strip()
+        or any(delimiter in notice for pair in candidates for delimiter in pair)
+    ):
+        raise ValueError(
+            "thinking_truncation_notice must be None or a non-empty string "
+            f"without a thinking delimiter; got {notice!r}"
+        )
     return candidates
 
 

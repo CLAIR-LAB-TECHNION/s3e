@@ -18,7 +18,7 @@ from PIL import Image
 
 torch = pytest.importorskip("torch", reason="torch not installed (s3e[hf])")
 
-from s3e.backends.backend import VLMOutput
+from s3e.backends.backend import DEFAULT_MAX_REPLY_TOKENS, VLMOutput
 
 from backends.test_contract import BackendContract
 
@@ -359,33 +359,25 @@ class TestVLLMBackendMocked:
         assert [r.text for r in results] == ["yes", "no"]
         assert all(r.token_probs is None for r in results)
 
+    @pytest.mark.parametrize(
+        "length, max_tokens",
+        # The library's reply length, not vLLM's default of 16.
+        [({}, DEFAULT_MAX_REPLY_TOKENS), ({"max_tokens": 5}, 5)],
+    )
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
     def test_text_mode_bounds_the_reply_and_requests_no_logprobs(
-        self, mock_llm_cls, mock_sp_cls
+        self, mock_llm_cls, mock_sp_cls, length, max_tokens
     ):
-        from s3e.backends.backend import DEFAULT_MAX_REPLY_TOKENS
-
         backend, mock_llm = self._make_backend(mock_llm_cls)
         mock_llm.chat.return_value = [_make_text_output("yes")]
 
-        backend.query_batch([], ["q1"], generate=True)
+        backend.query_batch([], ["q1"], generate=True, **length)
 
         kwargs = mock_sp_cls.call_args.kwargs
-        # The library's reply length, not vLLM's default of 16.
-        assert kwargs["max_tokens"] == DEFAULT_MAX_REPLY_TOKENS
+        assert kwargs["max_tokens"] == max_tokens
         assert "logprobs" not in kwargs
         assert kwargs["temperature"] == 0.0
-
-    @patch("s3e.backends.vllm.SamplingParams")
-    @patch("s3e.backends.vllm.LLM")
-    def test_text_mode_keeps_the_callers_length(self, mock_llm_cls, mock_sp_cls):
-        backend, mock_llm = self._make_backend(mock_llm_cls)
-        mock_llm.chat.return_value = [_make_text_output("yes")]
-
-        backend.query_batch([], ["q1"], generate=True, max_tokens=5)
-
-        assert mock_sp_cls.call_args.kwargs["max_tokens"] == 5
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
@@ -994,7 +986,8 @@ class TestVLLMBackendThinking:
             [_readout_output({4: 0.9, 5: 0.1})],
         ]
 
-        result = backend.query([], "q", interest_tokens=["Yes", "No"])
+        # Logprobs mode reasons greedily whatever the query asks.
+        result = backend.query([], "q", interest_tokens=["Yes", "No"], temperature=0.6)
 
         assert self._generated_prompts(mock_llm) == [
             ["chat:q"],
@@ -1062,7 +1055,11 @@ class TestVLLMBackendThinking:
             ],
         ]
 
-        results = backend.query_batch([], ["q", "q"], generate=True, max_tokens=5)
+        sampling = {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "seed": 7}
+
+        results = backend.query_batch(
+            [], ["q", "q"], generate=True, max_tokens=5, stop=["."], **sampling
+        )
 
         assert [(r.text, r.reasoning, r.thinking_truncated) for r in results] == [
             ("No", "r", False),
@@ -1072,66 +1069,13 @@ class TestVLLMBackendThinking:
             ["chat:q<think>"],
             ["chat:q<think>r</think>"],
         ]
-        sampling = [c.kwargs for c in mock_sp_cls.call_args_list]
-        assert {"max_tokens": 5, "temperature": 0.0, "stop_token_ids": [THINK_START]} in sampling
-        assert {"max_tokens": 3, "temperature": 0.0, "stop_token_ids": [THINK_END]} in sampling
-        assert {"max_tokens": 5, "temperature": 0.0} in sampling  # the reply
-
-    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
-    @patch("s3e.backends.vllm.SamplingParams")
-    @patch("s3e.backends.vllm.LLM")
-    def test_text_mode_reasons_with_the_querys_sampling_settings(
-        self, mock_llm_cls, mock_sp_cls
-    ):
-        """Reasoning and reply are decoded alike (e.g. Qwen's recommended
-        sampling); only what shapes the reply as a whole stays with it."""
-        backend, mock_llm = self._make_backend(
-            mock_llm_cls, thinking=True, max_thinking_tokens=3
-        )
-        mock_llm.chat.return_value = [
-            _request_output(prompt_ids=[1, 2], token_ids=[THINK_START]),
-        ]
-        mock_llm.generate.side_effect = [
-            [_request_output(token_ids=[6, THINK_END], stop_reason=THINK_END)],
-            [_request_output(prompt_ids=[1, 2, THINK_START], text="\n\nYes")],
-        ]
-        sampling = {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "seed": 7}
-
-        result = backend.query(
-            [], "q", generate=True, max_tokens=5, stop=["."], n=1, **sampling
-        )
-
-        assert result.text == "Yes"
+        # Reasoning and reply are decoded alike (e.g. Qwen's recommended
+        # sampling); the length and stop strings bound the reply only.
         params = [c.kwargs for c in mock_sp_cls.call_args_list]
+        reply = {**sampling, "max_tokens": 5, "stop": ["."]}
+        assert {**reply, "stop_token_ids": [THINK_START]} in params  # first reply
         assert {**sampling, "max_tokens": 3, "stop_token_ids": [THINK_END]} in params
-        assert {**sampling, "max_tokens": 5, "stop": ["."], "n": 1} in params  # the reply
-
-    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
-    @patch("s3e.backends.vllm.SamplingParams")
-    @patch("s3e.backends.vllm.LLM")
-    def test_logprobs_mode_reasons_greedily_whatever_the_query_asks(
-        self, mock_llm_cls, mock_sp_cls
-    ):
-        backend, mock_llm = self._make_backend(
-            mock_llm_cls, thinking=True, max_thinking_tokens=3
-        )
-        mock_llm.chat.return_value = [
-            _request_output(prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
-        ]
-        mock_llm.generate.side_effect = [
-            [_request_output(token_ids=[6, THINK_END], stop_reason=THINK_END)],
-            [_separator_output()],
-            [_readout_output({4: 0.9, 5: 0.1})],
-        ]
-
-        backend.query([], "q", interest_tokens=["Yes", "No"], temperature=0.6)
-
-        think_params = [
-            c.kwargs for c in mock_sp_cls.call_args_list if "stop_token_ids" in c.kwargs
-        ]
-        assert think_params == [
-            {"max_tokens": 3, "temperature": 0.0, "stop_token_ids": [THINK_END]}
-        ]
+        assert reply in params  # the reply after the block
 
     @pytest.mark.parametrize(
         "notice, sent",

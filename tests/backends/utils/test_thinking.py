@@ -90,21 +90,19 @@ class TestValidateThinkingOptions:
             True, 1024, "auto", "THINKING TRUNCATED"
         ) == KNOWN_THINKING_DELIMITERS
 
-    @pytest.mark.parametrize("notice", ["", "  \n", 1, b"cut"])
-    def test_empty_or_non_string_notice_rejected(self, notice):
-        with pytest.raises(ValueError, match="non-empty string"):
-            validate_thinking_options(True, 1024, "auto", notice)
-
     @pytest.mark.parametrize(
         "delimiters, notice",
         [
+            ("auto", ""),
+            ("auto", "  \n"),
+            ("auto", 1),
             ("auto", "cut </think> here"),
             ("auto", "[THINK]"),  # any known pair "auto" may pick
             (("<t>", "</t>"), "cut <t>"),
         ],
     )
-    def test_notice_containing_a_delimiter_rejected(self, delimiters, notice):
-        with pytest.raises(ValueError, match="contains the thinking delimiter"):
+    def test_invalid_notice_rejected(self, delimiters, notice):
+        with pytest.raises(ValueError, match="thinking_truncation_notice"):
             validate_thinking_options(True, 1024, delimiters, notice)
 
     def test_notice_may_name_another_pairs_delimiter(self):

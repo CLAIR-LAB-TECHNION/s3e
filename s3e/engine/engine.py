@@ -5,7 +5,7 @@
 
 import sys
 import warnings
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 
 from PIL.Image import Image
 
@@ -37,9 +37,7 @@ def _external_stacklevel() -> int:
     return level
 
 
-def _warn_unmatched(
-    predictions: dict[str, Prediction], scoring: str, truncated: "Collection[str]"
-) -> None:
+def _warn_unmatched(predictions: dict[str, Prediction], scoring: str) -> None:
     unmatched = [p for p in predictions.values() if not p.matched]
     if not unmatched:
         return
@@ -51,29 +49,22 @@ def _warn_unmatched(
     else:
         problem = "put zero probability on every answer token"
         example = repr(first.query)
-    cut = sum(p.query in truncated for p in unmatched)
-    cause = (
-        f" {cut} of them ran out of the thinking budget (max_thinking_tokens)."
-        if cut
-        else ""
-    )
     warnings.warn(
         f"{len(unmatched)} of {len(predictions)} queries {problem}; they have "
         "no answer (P(true) = 0.5 for binary spaces, a uniform distribution "
-        f"otherwise).{cause} First: {example}",
+        f"otherwise). First: {example}",
         UnmatchedAnswerWarning,
         stacklevel=_external_stacklevel(),
     )
 
 
-def _warn_truncated(truncated: "Collection[str]", total: int) -> None:
+def _warn_truncated(truncated: list[str], total: int) -> None:
     if not truncated:
         return
-    first = next(iter(truncated))
     warnings.warn(
         f"{len(truncated)} of {total} queries ran out of the thinking budget "
         "(the backend's max_thinking_tokens), so their reasoning was cut off "
-        f"and the answer read after it. First: {first!r}",
+        f"and the answer read after it. First: {truncated[0]!r}",
         ThinkingTruncatedWarning,
         stacklevel=_external_stacklevel(),
     )
@@ -178,10 +169,7 @@ class QueryEngine:
             )
 
         predictions: dict[str, Prediction] = {}
-        truncated: dict[str, None] = {}  # ordered set of queries
         for query, output in zip(queries, outputs, strict=True):
-            if getattr(output, "thinking_truncated", None):
-                truncated[query] = None
             scored = space.score(output, scoring=mode)
             predictions[query] = Prediction(
                 query=query,
@@ -193,8 +181,11 @@ class QueryEngine:
                 argmax_in_interest=output.argmax_in_interest,
                 raw=output if keep_raw else None,
             )
-        _warn_truncated(truncated.keys(), len(predictions))
-        _warn_unmatched(predictions, mode, truncated.keys())
+        truncated = dict.fromkeys(
+            query for query, output in zip(queries, outputs) if output.thinking_truncated
+        )
+        _warn_truncated(list(truncated), len(predictions))
+        _warn_unmatched(predictions, mode)
         return PredictionSet(predictions)
 
     def ask_each(
