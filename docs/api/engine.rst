@@ -13,8 +13,6 @@ Query engine
 
 .. autoclass:: UnmatchedAnswerWarning
 
-.. autoclass:: ThinkingTruncatedWarning
-
 Answer spaces
 -------------
 

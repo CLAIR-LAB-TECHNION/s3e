@@ -11,7 +11,7 @@ from .answers import (
     ScoredMasses,
     expand_token_variants,
 )
-from .engine import QueryEngine, ThinkingTruncatedWarning, UnmatchedAnswerWarning
+from .engine import QueryEngine, UnmatchedAnswerWarning
 from .results import EPS, PREDICTION_SET_FORMAT_VERSION, Prediction, PredictionSet
 
 __all__ = [
@@ -26,6 +26,5 @@ __all__ = [
     "Prediction",
     "PredictionSet",
     "QueryEngine",
-    "ThinkingTruncatedWarning",
     "UnmatchedAnswerWarning",
 ]

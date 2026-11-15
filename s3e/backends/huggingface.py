@@ -28,7 +28,6 @@ from .backend import (
 from .utils.thinking import (
     DEFAULT_MAX_THINKING_TOKENS,
     MAX_SEPARATOR_TOKENS,
-    close_truncated_block,
     find_thinking_switch,
     leading_whitespace_tokens,
     resolve_thinking_tokens,
@@ -93,14 +92,6 @@ class _StopAtFirstToken(StoppingCriteria):
 # The conversation rendered to find a chat template's thinking switch.
 _PROBE_PROMPT = "Is the switch on?"
 
-# generate() kwargs that shape the reply as a whole (its length, where it
-# stops, how many sequences, the output format): a text-mode reasoning pass
-# takes the query's other kwargs (its decoding settings), but not these.
-_REPLY_ONLY_GENERATE_KWARGS = frozenset({
-    "max_new_tokens", "max_length", "min_new_tokens", "min_length", "eos_token_id",
-    "stopping_criteria", "stop_strings", "num_return_sequences", "return_dict_in_generate",
-})
-
 
 class HuggingFaceVLM(VLMBackend):
     """VLM backend using HuggingFace Transformers Auto classes.
@@ -130,22 +121,14 @@ class HuggingFaceVLM(VLMBackend):
             see :data:`~s3e.backends.utils.thinking.KNOWN_THINKING_SWITCHES`),
             and otherwise closes any thinking block at once, so the answer
             follows an empty block. ``True`` turns the switch on and lets the
-            model reason first, up to ``max_thinking_tokens``: greedily in
-            logprobs mode, and in text mode with the query's decoding
-            settings, like the reply. Either way, the block's text goes in
-            :attr:`VLMOutput.reasoning`. A warning says when ``True``
+            model reason first, greedily and up to ``max_thinking_tokens``, in
+            logprobs and text mode alike. Either way, the block's text goes
+            in :attr:`VLMOutput.reasoning`. A warning says when ``True``
             cannot make the model think.
         max_thinking_tokens: Reasoning budget per query with
             ``thinking=True``; a block still open after this many tokens is
-            closed (:attr:`VLMOutput.thinking_truncated` is then True), and
-            the answer is scored or generated after it. Defaults to 1024.
-        thinking_truncation_notice: Text put inside a block the budget cut
-            off, on its own line before the closing delimiter, e.g.
-            ``"THINKING TRUNCATED"``. It conditions the answer, so it shifts
-            logprobs-mode probabilities, and whether it helps depends on the
-            model; measure before using it. ``None`` (default) closes the
-            block with nothing added. It must not contain a thinking
-            delimiter.
+            closed, and the answer scored or the reply generated after it.
+            Defaults to 1024.
         thinking_delimiters: The tokens that open and close a thinking
             block, active only when both are single tokens of the model's
             vocabulary. ``"auto"`` (default) uses the first such pair among
@@ -167,10 +150,8 @@ class HuggingFaceVLM(VLMBackend):
         kwargs, e.g. ``max_new_tokens=10``). A text-mode query that passes
         neither ``max_new_tokens`` nor ``max_length`` (nor a
         ``generation_config``) gets
-        :data:`~s3e.backends.backend.DEFAULT_MAX_REPLY_TOKENS` new tokens,
-        overriding the checkpoint's generation config. With
-        ``thinking=True`` that length applies to the reply after the
-        reasoning only.
+        :data:`~s3e.backends.backend.DEFAULT_MAX_REPLY_TOKENS` new tokens.
+        With ``thinking=True`` that length applies to the reply only.
     """
 
     def __init__(
@@ -185,18 +166,15 @@ class HuggingFaceVLM(VLMBackend):
         thinking: bool = False,
         max_thinking_tokens: int = DEFAULT_MAX_THINKING_TOKENS,
         thinking_delimiters: tuple[str, str] | str | None = "auto",
-        thinking_truncation_notice: str | None = None,
         **model_kwargs,
     ):
         self.model_id = model_id
         self.num_logprobs = _validate_num_logprobs(num_logprobs)
         delimiter_candidates = validate_thinking_options(
-            thinking, max_thinking_tokens, thinking_delimiters,
-            thinking_truncation_notice,
+            thinking, max_thinking_tokens, thinking_delimiters
         )
         self.thinking = thinking
         self.max_thinking_tokens = max_thinking_tokens
-        self.thinking_truncation_notice = thinking_truncation_notice
         self.thinking_delimiters = thinking_delimiters
         self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self._pad_invariance_checked = bool(skip_pad_invariance_check)
@@ -312,10 +290,10 @@ class HuggingFaceVLM(VLMBackend):
 
         probs = self._forward_next_token_probs(inputs, **inference_kwargs)
         self._check_pad_invariance(images, text_inputs, inputs, probs, **inference_kwargs)
-        probs, thinking = self._skip_thinking(
+        probs, reasonings = self._skip_thinking(
             images, text_inputs, inputs, probs, **inference_kwargs
         )
-        return self._outputs_from_probs(probs, interest_tokens, thinking)
+        return self._outputs_from_probs(probs, interest_tokens, reasonings)
 
     def _query_batch_sequential(
         self,
@@ -338,21 +316,20 @@ class HuggingFaceVLM(VLMBackend):
                 )
             else:
                 probs = self._forward_next_token_probs(inputs, **inference_kwargs)
-                probs, thinking = self._skip_thinking(
+                probs, reasonings = self._skip_thinking(
                     images, [text_input], inputs, probs, **inference_kwargs
                 )
                 results.append(
-                    self._outputs_from_probs(probs, interest_tokens, thinking)[0]
+                    self._outputs_from_probs(probs, interest_tokens, reasonings)[0]
                 )
         return results
 
-    def _outputs_from_probs(self, probs, interest_tokens, thinking):
+    def _outputs_from_probs(self, probs, interest_tokens, reasonings):
         """Build one VLMOutput per probability row.
 
         With ``interest_tokens``, mass is gathered at precomputed ids and
         nothing is detokenized; otherwise the legacy full/top-k path decodes
-        the returned distribution into strings. ``thinking`` holds each
-        row's thinking fields (see :meth:`_skip_thinking`).
+        the returned distribution into strings.
         """
         if interest_tokens is not None:
             return [
@@ -360,16 +337,16 @@ class HuggingFaceVLM(VLMBackend):
                     token_probs=token_probs,
                     text=None,
                     argmax_in_interest=argmax_in_interest,
-                    **row_thinking,
+                    reasoning=reasoning,
                 )
-                for (token_probs, argmax_in_interest), row_thinking in zip(
-                    self._gather_interest_probs(probs, interest_tokens), thinking
+                for (token_probs, argmax_in_interest), reasoning in zip(
+                    self._gather_interest_probs(probs, interest_tokens), reasonings
                 )
             ]
         return [
-            VLMOutput(token_probs=token_probs, text=None, **row_thinking)
-            for token_probs, row_thinking in zip(
-                self._format_token_probs(probs), thinking
+            VLMOutput(token_probs=token_probs, text=None, reasoning=reasoning)
+            for token_probs, reasoning in zip(
+                self._format_token_probs(probs), reasonings
             )
         ]
 
@@ -397,15 +374,14 @@ class HuggingFaceVLM(VLMBackend):
         A row thinks when its prompt ends with an opening delimiter or its
         most likely next token opens one. Returns the probabilities with
         those rows replaced by the answer distribution after the block
-        (scored with ``inference_kwargs``, like the first pass), plus each
-        row's thinking fields for its VLMOutput (``reasoning`` and
-        ``thinking_truncated``; none for rows without a block).
+        (scored with ``inference_kwargs``, like the first pass), plus one
+        ``reasoning`` entry per row (None for rows without a block).
         """
-        thinking = [{} for _ in range(probs.shape[0])]
+        reasonings = [None] * probs.shape[0]
         tokens = self._thinking_tokens
         input_ids = inputs.get("input_ids")
         if tokens is None or not isinstance(input_ids, torch.Tensor):
-            return probs, thinking
+            return probs, reasonings
 
         argmax_ids = probs.argmax(dim=-1).tolist()
         decode = partial(self._decode_sequence, skip_special_tokens=False)
@@ -416,27 +392,25 @@ class HuggingFaceVLM(VLMBackend):
                 rows.append(row)
                 prompt_open.append(is_open)
         if not rows:
-            return probs, thinking
+            return probs, reasonings
 
-        continuations, reasonings, truncated = self._close_blocks(
+        continuations, row_reasonings = self._close_blocks(
             images, [text_inputs[row] for row in rows], prompt_open, tokens
         )
         probs[rows] = self._answer_probs_after(
             images, continuations, **inference_kwargs
         ).to(device=probs.device, dtype=probs.dtype)
-        for row, reasoning, cut in zip(rows, reasonings, truncated):
-            thinking[row] = {"reasoning": reasoning, "thinking_truncated": cut}
-        return probs, thinking
+        for row, reasoning in zip(rows, row_reasonings):
+            reasonings[row] = reasoning
+        return probs, reasonings
 
-    def _close_blocks(self, images, prompts, prompt_open, tokens, decoding=None):
+    def _close_blocks(self, images, prompts, prompt_open, tokens):
         """Continue each prompt past a closed thinking block.
 
         ``prompt_open`` says whether each prompt ends inside the block; the
         others get the opening delimiter first. With thinking on, the model
-        reasons first (:meth:`_think`, decoded with ``decoding``); with it
-        off, the block is closed at once. Returns the continuations, the
-        reasoning texts, and whether each reasoning ran out of the budget
-        (None with thinking off).
+        reasons first (:meth:`_think`); with it off, the block is closed at
+        once. Returns the continuations and the reasoning texts.
         """
         if self.thinking:
             # Open the block where the model was about to, so the reasoning
@@ -448,7 +422,6 @@ class HuggingFaceVLM(VLMBackend):
                     for prompt, is_open in zip(prompts, prompt_open)
                 ],
                 tokens,
-                decoding,
             )
         return (
             [
@@ -456,72 +429,48 @@ class HuggingFaceVLM(VLMBackend):
                 for prompt, is_open in zip(prompts, prompt_open)
             ],
             [""] * len(prompts),
-            [None] * len(prompts),
         )
 
-    def _think(self, images, prompts, tokens, decoding=None):
+    def _think(self, images, prompts, tokens):
         """Generate each prompt's reasoning, up to ``max_thinking_tokens``.
-
-        ``decoding`` are the query's generate() kwargs in text mode: the
-        reasoning is decoded with them, as the first part of the reply, less
-        those that shape the reply as a whole. Without them (logprobs mode)
-        it is greedy.
 
         Every prompt ends inside an open block. Returns one continuation per
         prompt (the prompt plus its reasoning, ending with the closing
         delimiter, which is appended when the budget ran out or the model
-        stopped first), the reasoning texts, and whether each ran out of the
-        budget. A block the budget cut off gets the truncation notice, if
-        any, before its closing delimiter.
+        stopped first) and the reasoning texts.
         """
         inputs = self._prepare_rows(prompts, images)
         eos_ids = self._eos_token_ids()
-        decoding = (
-            {"do_sample": False}
-            if decoding is None
-            else {
-                key: value
-                for key, value in decoding.items()
-                if key not in _REPLY_ONLY_GENERATE_KWARGS
-            }
-        )
         # An explicit pad id: generate() would otherwise pad finished rows
         # with the first stop id, the closing delimiter.
-        pad_id = decoding.pop("pad_token_id", None)
-        if pad_id is None:
-            pad_id = self._pad_token_id(eos_ids)
+        pad_id = self._pad_token_id(eos_ids)
         output_ids = self.model.generate(
             **inputs,
-            **decoding,
             max_new_tokens=self.max_thinking_tokens,
+            do_sample=False,
             eos_token_id=[tokens.end_id, *eos_ids],
             pad_token_id=pad_id,
         )
         sequences = self._trim_generated_sequences(output_ids, inputs)
         stop_ids = {tokens.end_id, *eos_ids, *([pad_id] if pad_id is not None else [])}
 
-        continuations, reasonings, truncated = [], [], []
+        continuations, reasonings = [], []
         for prompt, sequence in zip(prompts, sequences):
             ids = [int(token_id) for token_id in sequence]
             stop = next((i for i, t in enumerate(ids) if t in stop_ids), len(ids))
             closed = stop < len(ids) and ids[stop] == tokens.end_id
-            # No stop id at all: the budget ran out mid-block.
-            cut = stop == len(ids)
             ids = ids[: stop + 1] if closed else ids[:stop]
             generated = self._decode_sequence(ids, skip_special_tokens=False)
             if not closed:
-                generated += close_truncated_block(
-                    generated,
-                    tokens.end,
-                    self.thinking_truncation_notice if cut else None,
-                )
+                if not generated[-1:].isspace():
+                    generated += "\n"
+                generated += tokens.end
             reasoning_ids, _ = tokens.split(ids, prompt_open=True)
             continuations.append(prompt + generated)
             reasonings.append(
                 self._decode_sequence(reasoning_ids or [], skip_special_tokens=True).strip()
             )
-            truncated.append(cut)
-        return continuations, reasonings, truncated
+        return continuations, reasonings
 
     def _answer_probs_after(self, images, continuations, **inference_kwargs):
         """Next-token probabilities at each continuation's answer position.
@@ -822,9 +771,9 @@ class HuggingFaceVLM(VLMBackend):
         A query that sets no length gets ``DEFAULT_MAX_REPLY_TOKENS`` new
         tokens. A reply that would follow a thinking block is generated
         after it (:meth:`_generate_after_blocks`). Generation errors
-        propagate to the caller. ``text`` is None when the generated sequences cannot
-        be aligned one-to-one with the input prompts (e.g. multi-sequence
-        decoding strategies).
+        propagate to the caller. ``text`` is None when the generated
+        sequences cannot be aligned one-to-one with the input prompts (e.g.
+        multi-sequence decoding strategies).
         """
         if not any(
             key in inference_kwargs
@@ -855,9 +804,9 @@ class HuggingFaceVLM(VLMBackend):
 
         A row has a block when its prompt ends by opening one, or when its
         reply would open one (it stops at that token). The block is closed
-        (:meth:`_close_blocks`: at once, or after the model's reasoning,
-        decoded with ``inference_kwargs`` like the reply), and the reply is
-        generated after it. Other rows keep the reply they generated.
+        (:meth:`_close_blocks`: at once, or after the model's reasoning) and
+        the reply generated after it. Other rows keep the reply they
+        generated.
         """
         decode = partial(self._decode_sequence, skip_special_tokens=False)
         texts = list(text_inputs)
@@ -887,12 +836,8 @@ class HuggingFaceVLM(VLMBackend):
             return results
 
         rows = sorted(blocks)
-        continuations, reasonings, truncated = self._close_blocks(
-            images,
-            [texts[row] for row in rows],
-            [blocks[row] for row in rows],
-            tokens,
-            inference_kwargs,
+        continuations, reasonings = self._close_blocks(
+            images, [texts[row] for row in rows], [blocks[row] for row in rows], tokens
         )
         sequences = self._generate_sequences(
             self._prepare_rows(continuations, images), **inference_kwargs
@@ -902,10 +847,8 @@ class HuggingFaceVLM(VLMBackend):
             if sequences is None
             else [reply.lstrip() for reply in self._decode_generated_sequences(sequences)]
         )
-        for row, reply, reasoning, cut in zip(rows, replies, reasonings, truncated):
-            results[row] = VLMOutput(
-                token_probs=None, text=reply, reasoning=reasoning, thinking_truncated=cut
-            )
+        for row, reply, reasoning in zip(rows, replies, reasonings):
+            results[row] = VLMOutput(token_probs=None, text=reply, reasoning=reasoning)
         return results
 
     def _generate_sequences(self, inputs, stop_at_first=None, **inference_kwargs):
