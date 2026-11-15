@@ -87,9 +87,10 @@ covered and the local total is lower.
    mirrors the package layout. Reuse the fixtures in `tests/conftest.py` and
    the `FakeVLM` double in `tests/fakes.py` instead of duplicating setup.
 4. Run `pytest -m "not slow"` and `ruff check .` and make sure both pass.
-   Record user-facing changes under "Unreleased" in `CHANGELOG.md`.
 5. Open a pull request describing the change and its motivation, and link any
-   related issue.
+   related issue. Do not edit `CHANGELOG.md`: the maintainer writes it when
+   cutting a release, from the titles and descriptions of the merged pull
+   requests, so state any user-facing or breaking change there plainly.
 
 ### Style
 
@@ -130,8 +131,11 @@ answer spaces, and calibrators).
 
 Maintainers release from `main`:
 
-1. Move the "Unreleased" entries in `CHANGELOG.md` under a new
-   `## X.Y.Z - YYYY-MM-DD` heading.
+1. Write the release's section of `CHANGELOG.md` under a new
+   `## X.Y.Z - YYYY-MM-DD` heading, from the pull requests merged since the
+   last tag (`git log --first-parent vPREV..main`, or
+   `gh pr list --state merged --base main`), together with any entries
+   already under "Unreleased".
 2. In a commit of its own titled `bump version to X.Y.Z`, set `version` in
    `pyproject.toml` and `version` and `date-released` in `CITATION.cff`
    (`tests/test_metadata.py` checks that they agree).
