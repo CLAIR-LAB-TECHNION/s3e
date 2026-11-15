@@ -59,12 +59,16 @@ class VLMOutput:
             closed the block without reasoning, ``None`` when it had no block
             to handle (including the empty block a chat template renders when
             its switch turns thinking off).
+        thinking_truncated: Whether the reasoning ran out of the backend's
+            ``max_thinking_tokens`` budget, so the backend closed the block
+            for the model. ``None`` when the model did not reason first.
     """
 
     token_probs: dict[str, float] | None = field(default_factory=dict)
     text: str | None = None
     argmax_in_interest: bool | None = None
     reasoning: str | None = None
+    thinking_truncated: bool | None = None
 
 
 class VLMBackend(ABC):
