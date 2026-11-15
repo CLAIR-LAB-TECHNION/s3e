@@ -17,7 +17,7 @@ require("torch", "hf", "HuggingFaceVLM")
 require("transformers", "hf", "HuggingFaceVLM")
 
 import torch
-from transformers import AutoProcessor, StoppingCriteria, StoppingCriteriaList
+from transformers import AutoProcessor, GenerationConfig, StoppingCriteria, StoppingCriteriaList
 
 from .backend import (
     DEFAULT_MAX_REPLY_TOKENS,
@@ -54,6 +54,30 @@ _HUB_KWARGS = (
     "proxies",
     "trust_remote_code",
 )
+
+# Checkpoint generation-config fields kept at load: token ids, length and token constraints.
+_KEPT_GENERATION_FIELDS = (
+    "bos_token_id", "eos_token_id", "pad_token_id", "decoder_start_token_id", "max_length",
+    "max_new_tokens", "suppress_tokens", "begin_suppress_tokens", "bad_words_ids",
+    "forced_bos_token_id", "forced_eos_token_id", "sequence_bias", "cache_implementation",
+)
+_SAMPLING_ONLY = frozenset({"temperature", "top_k", "top_p", "min_p", "typical_p",
+                            "epsilon_cutoff", "eta_cutoff"})
+# Caller settings that choose generated tokens; the exact read never receives them.
+_DECODING_KEYS = _SAMPLING_ONLY | {"do_sample", "repetition_penalty",
+                                   "no_repeat_ngram_size", "num_beams"}
+
+
+def _decoding_kwargs(inference_kwargs) -> dict:
+    """Greedy unless temperature > 0; sampling untruncated unless the caller truncates it."""
+    kwargs = {k: v for k, v in inference_kwargs.items() if k in _DECODING_KEYS}
+    if kwargs.get("do_sample", bool(kwargs.get("temperature"))):
+        return {"top_k": 0, "top_p": 1.0, **kwargs, "do_sample": True}
+    return {k: v for k, v in kwargs.items() if k not in _SAMPLING_ONLY} | {"do_sample": False}
+
+
+def _without_decoding(inference_kwargs) -> dict:
+    return {k: v for k, v in inference_kwargs.items() if k not in _DECODING_KEYS}
 
 
 class _StopAtNonWhitespace(StoppingCriteria):
@@ -121,7 +145,7 @@ class HuggingFaceVLM(VLMBackend):
             see :data:`~s3e.backends.utils.thinking.KNOWN_THINKING_SWITCHES`),
             and otherwise closes any thinking block at once, so the answer
             follows an empty block. ``True`` turns the switch on and lets the
-            model reason first, greedily and up to ``max_thinking_tokens``, in
+            model reason first, up to ``max_thinking_tokens``, in
             logprobs and text mode alike. Either way, the block's text goes
             in :attr:`VLMOutput.reasoning`. A warning says when ``True``
             cannot make the model think.
@@ -152,6 +176,9 @@ class HuggingFaceVLM(VLMBackend):
         ``generation_config``) gets
         :data:`~s3e.backends.backend.DEFAULT_MAX_REPLY_TOKENS` new tokens.
         With ``thinking=True`` that length applies to the reply only.
+
+        Generated tokens, reasoning included, ignore the checkpoint's decoding
+        settings and are greedy unless ``temperature`` is above 0.
     """
 
     def __init__(
@@ -205,6 +232,15 @@ class HuggingFaceVLM(VLMBackend):
         tokenizer = getattr(self.processor, "tokenizer", None)
         if tokenizer is not None:
             tokenizer.padding_side = "left"
+
+        config = self.model.generation_config
+        if isinstance(config, GenerationConfig):
+            eos_ids = self._eos_token_ids()  # adds the tokenizer's, e.g. Qwen3.5's <|im_end|>
+            kept = {k: getattr(config, k) for k in _KEPT_GENERATION_FIELDS
+                    if getattr(config, k, None) is not None}
+            kept["eos_token_id"] = eos_ids or None
+            kept["pad_token_id"] = self._pad_token_id(eos_ids)
+            self.model.generation_config = GenerationConfig(**kept)
 
         self._thinking_tokens = resolve_thinking_tokens(
             delimiter_candidates, tokenizer
@@ -395,7 +431,7 @@ class HuggingFaceVLM(VLMBackend):
             return probs, reasonings
 
         continuations, row_reasonings = self._close_blocks(
-            images, [text_inputs[row] for row in rows], prompt_open, tokens
+            images, [text_inputs[row] for row in rows], prompt_open, tokens, inference_kwargs
         )
         probs[rows] = self._answer_probs_after(
             images, continuations, **inference_kwargs
@@ -404,7 +440,7 @@ class HuggingFaceVLM(VLMBackend):
             reasonings[row] = reasoning
         return probs, reasonings
 
-    def _close_blocks(self, images, prompts, prompt_open, tokens):
+    def _close_blocks(self, images, prompts, prompt_open, tokens, inference_kwargs):
         """Continue each prompt past a closed thinking block.
 
         ``prompt_open`` says whether each prompt ends inside the block; the
@@ -422,6 +458,7 @@ class HuggingFaceVLM(VLMBackend):
                     for prompt, is_open in zip(prompts, prompt_open)
                 ],
                 tokens,
+                inference_kwargs,
             )
         return (
             [
@@ -431,7 +468,7 @@ class HuggingFaceVLM(VLMBackend):
             [""] * len(prompts),
         )
 
-    def _think(self, images, prompts, tokens):
+    def _think(self, images, prompts, tokens, inference_kwargs):
         """Generate each prompt's reasoning, up to ``max_thinking_tokens``.
 
         Every prompt ends inside an open block. Returns one continuation per
@@ -447,7 +484,7 @@ class HuggingFaceVLM(VLMBackend):
         output_ids = self.model.generate(
             **inputs,
             max_new_tokens=self.max_thinking_tokens,
-            do_sample=False,
+            **_decoding_kwargs(inference_kwargs),
             eos_token_id=[tokens.end_id, *eos_ids],
             pad_token_id=pad_id,
         )
@@ -476,7 +513,7 @@ class HuggingFaceVLM(VLMBackend):
         """Next-token probabilities at each continuation's answer position.
 
         Chat templates put whitespace between a closed block and the answer
-        (``"\\n\\n"`` for Qwen). Greedy steps find it, each row stopping at
+        (``"\\n\\n"`` for Qwen). Generated steps find it, each row stopping at
         its first non-whitespace token, and the answer is then read from a
         forward pass over the continuation plus that whitespace, with
         ``inference_kwargs``, like every other query.
@@ -485,7 +522,7 @@ class HuggingFaceVLM(VLMBackend):
         output_ids = self.model.generate(
             **inputs,
             max_new_tokens=MAX_SEPARATOR_TOKENS,
-            do_sample=False,
+            **_decoding_kwargs(inference_kwargs),
             pad_token_id=self._pad_token_id(self._eos_token_ids()),
             stopping_criteria=StoppingCriteriaList(
                 [_StopAtNonWhitespace(self._decode_token_ids)]
@@ -680,7 +717,7 @@ class HuggingFaceVLM(VLMBackend):
         the tokenizer pads on the left.
         """
         with torch.inference_mode():
-            outputs = self.model(**inputs, **inference_kwargs)
+            outputs = self.model(**inputs, **_without_decoding(inference_kwargs))
         return torch.softmax(outputs.logits[:, -1, :].float(), dim=-1)
 
     def _check_pad_invariance(
@@ -837,7 +874,8 @@ class HuggingFaceVLM(VLMBackend):
 
         rows = sorted(blocks)
         continuations, reasonings = self._close_blocks(
-            images, [texts[row] for row in rows], [blocks[row] for row in rows], tokens
+            images, [texts[row] for row in rows], [blocks[row] for row in rows], tokens,
+            inference_kwargs,
         )
         sequences = self._generate_sequences(
             self._prepare_rows(continuations, images), **inference_kwargs
@@ -866,7 +904,9 @@ class HuggingFaceVLM(VLMBackend):
                     _StopAtFirstToken(stop_at_first, prompt_length),
                 ]
             )
-        output_ids = self.model.generate(**inputs, **inference_kwargs)
+        output_ids = self.model.generate(
+            **inputs, **_without_decoding(inference_kwargs), **_decoding_kwargs(inference_kwargs)
+        )
         sequences = self._trim_generated_sequences(output_ids, inputs)
         return self._select_generated_sequences_for_prompts(
             sequences, self._infer_batch_size(inputs)
