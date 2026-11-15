@@ -234,10 +234,14 @@ class TestThinkingTruncatedWarning:
 
     def test_unmatched_warning_names_the_truncated_replies(self, images):
         engine = QueryEngine(_TruncatingVLM(text="Hmm"), scoring="text_match")
-        with pytest.warns(UnmatchedAnswerWarning) as record:
-            with pytest.warns(ThinkingTruncatedWarning):
-                engine.ask(images, ["cut a", "whole b"])
-        assert "1 of them ran out of the thinking budget" in str(record[0].message)
+        # One recorder for both warnings: nested pytest.warns blocks do not
+        # pass on other categories before pytest 8.
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            engine.ask(images, ["cut a", "whole b"])
+        messages = {w.category: str(w.message) for w in record}
+        assert set(messages) == {ThinkingTruncatedWarning, UnmatchedAnswerWarning}
+        assert "1 of them ran out of the thinking budget" in messages[UnmatchedAnswerWarning]
 
     def test_unmatched_warning_without_truncation_says_nothing_of_it(self, images):
         engine = QueryEngine(FakeVLM(text="Hmm"), scoring="text_match")
