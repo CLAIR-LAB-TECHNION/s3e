@@ -75,6 +75,15 @@ from .utils.token_index import build_token_reverse_index, decode_single_token_id
 # The conversation rendered to find a chat template's thinking switch.
 _PROBE_PROMPT = "Is the switch on?"
 
+# SamplingParams fields that the library's own passes (reasoning, separator) inherit.
+_DECODING_KEYS = frozenset({"temperature", "top_p", "top_k", "min_p", "repetition_penalty",
+                            "presence_penalty", "frequency_penalty", "seed"})
+
+
+def _decoding(inference_kwargs) -> dict:
+    return {"temperature": 0.0,
+            **{k: v for k, v in inference_kwargs.items() if k in _DECODING_KEYS}}
+
 
 class VLLMBackend(VLMBackend):
     """VLM backend backed by a local vLLM engine.
@@ -112,7 +121,7 @@ class VLLMBackend(VLMBackend):
             see :data:`~s3e.backends.utils.thinking.KNOWN_THINKING_SWITCHES`),
             and otherwise closes any thinking block at once, so the answer
             follows an empty block. ``True`` turns the switch on and lets the
-            model reason first, greedily and up to ``max_thinking_tokens``, in
+            model reason first, up to ``max_thinking_tokens``, in
             logprobs and text mode alike. Either way, the block's text goes
             in :attr:`VLMOutput.reasoning`. A warning says when ``True``
             cannot make the model think.
@@ -169,6 +178,8 @@ class VLLMBackend(VLMBackend):
         self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self._token_reverse_index: dict[str, list[int]] | None = None
         self._tokenizer = None
+        if engine_kwargs.get("logprobs_mode", "raw_logprobs") != "raw_logprobs":
+            raise ValueError("logprobs_mode must be 'raw_logprobs': answers are exact reads")
 
         # Default to every locally visible GPU so the user does not have to
         # specify a count; an explicit value always wins. max(..., 1) keeps a
@@ -372,7 +383,7 @@ class VLLMBackend(VLMBackend):
             for row in rows
         ]
         continuations, reasonings = self._close_blocks(
-            images, prompt_texts, prompt_open, tokens
+            images, prompt_texts, prompt_open, tokens, inference_kwargs
         )
 
         answers = self._answer_outputs_after(
@@ -433,7 +444,7 @@ class VLLMBackend(VLMBackend):
             return {"prompt": text}
         return {"prompt": text, "multi_modal_data": {"image": list(images)}}
 
-    def _close_blocks(self, images, prompt_texts, prompt_open, tokens):
+    def _close_blocks(self, images, prompt_texts, prompt_open, tokens, inference_kwargs):
         """Continue each prompt past a closed thinking block.
 
         ``prompt_open`` says whether each prompt ends inside the block; the
@@ -451,6 +462,7 @@ class VLLMBackend(VLMBackend):
                     for text, is_open in zip(prompt_texts, prompt_open)
                 ],
                 tokens,
+                inference_kwargs,
             )
         return (
             [
@@ -460,7 +472,7 @@ class VLLMBackend(VLMBackend):
             [""] * len(prompt_texts),
         )
 
-    def _think(self, images, prompt_texts, tokens):
+    def _think(self, images, prompt_texts, tokens, inference_kwargs):
         """Generate each prompt's reasoning, up to ``max_thinking_tokens``.
 
         Every prompt ends inside an open block. Returns one continuation per
@@ -470,8 +482,8 @@ class VLLMBackend(VLMBackend):
         """
         tokenizer = self._get_tokenizer()
         sampling_params = SamplingParams(
+            **_decoding(inference_kwargs),
             max_tokens=self.max_thinking_tokens,
-            temperature=0.0,
             stop_token_ids=[tokens.end_id],
         )
         outputs = self.llm.generate(
@@ -564,6 +576,7 @@ class VLLMBackend(VLMBackend):
             [texts[row] for row in block_rows],
             [blocks[row] for row in block_rows],
             tokens,
+            inference_kwargs,
         )
         replies = self.llm.generate(
             [
@@ -599,7 +612,7 @@ class VLLMBackend(VLMBackend):
         """Score the answer token after each continuation's closed block.
 
         Chat templates put whitespace between a closed block and the answer
-        (``"\\n\\n"`` for Qwen). A few greedy steps find it, and the answer
+        (``"\\n\\n"`` for Qwen). A few generated steps find it, and the answer
         is then scored with the same one-token pass as every other query, on
         the continuation plus that whitespace. Reading it after a decode step
         instead would differ: vLLM's prefill and decode kernels disagree
@@ -610,7 +623,7 @@ class VLLMBackend(VLMBackend):
         tokenizer = self._get_tokenizer()
         separator_outputs = self.llm.generate(
             [self._engine_prompt(text, images) for text in continuations],
-            SamplingParams(max_tokens=MAX_SEPARATOR_TOKENS, temperature=0.0),
+            SamplingParams(**_decoding(inference_kwargs), max_tokens=MAX_SEPARATOR_TOKENS),
         )
         for prompt_ids, output in zip(chat_prompt_ids, separator_outputs):
             self._check_continuation(prompt_ids, output.prompt_token_ids or [])

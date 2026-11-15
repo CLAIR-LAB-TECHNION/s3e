@@ -8,6 +8,7 @@ OpenAI chat completions API with vision capabilities.
 """
 
 import base64
+import warnings
 from collections import defaultdict
 from io import BytesIO
 
@@ -17,6 +18,7 @@ require("openai", "openai", "OpenAIVLM")
 
 import numpy as np
 import openai
+from openai import BadRequestError
 
 from .backend import VLMBackend, VLMOutput
 from .utils.resolve import OPENAI_MODEL_IDENTIFIER
@@ -43,6 +45,7 @@ class OpenAIVLM(VLMBackend):
     def __init__(self, model_id: str, **client_kwargs):
         self.model_id = model_id.removeprefix(OPENAI_MODEL_IDENTIFIER)
         self._client = openai.OpenAI(**client_kwargs)
+        self._send_default_temperature = True
 
     def query(
         self,
@@ -60,6 +63,7 @@ class OpenAIVLM(VLMBackend):
         reasoning models, stay usable via ``scoring="text_match"``) and
         returns text only, like the other backends.
         """
+        sends_default = self._send_default_temperature and "temperature" not in inference_kwargs
         self._set_inference_kwargs_defaults(inference_kwargs, generate)
 
         # Build image content
@@ -77,11 +81,19 @@ class OpenAIVLM(VLMBackend):
             messages.append({"role": "developer", "content": system_prompt})
         messages.append({"role": "user", "content": user_content})
 
-        response = self._client.chat.completions.create(
-            messages=messages,
-            model=self.model_id,
-            **inference_kwargs,
-        )
+        request = dict(messages=messages, model=self.model_id, **inference_kwargs)
+        try:
+            response = self._client.chat.completions.create(**request)
+        except BadRequestError as error:
+            if not sends_default or "temperature" not in (error.param or str(error)):
+                raise
+            from ..engine.engine import _external_stacklevel
+
+            warnings.warn(f"{self.model_id} rejects temperature=0.0; querying it without one",
+                          stacklevel=_external_stacklevel())
+            self._send_default_temperature = False
+            del request["temperature"]
+            response = self._client.chat.completions.create(**request)
         text = response.choices[0].message.content
 
         if generate:
@@ -107,7 +119,8 @@ class OpenAIVLM(VLMBackend):
 
         # by default, use deterministic outputs. enable user override
         # Note that we do not set `max_completion_tokens` by default to enable reasoning to proceed as the model sees fit.
-        inference_kwargs.setdefault("temperature", 0.0)
+        if self._send_default_temperature:
+            inference_kwargs.setdefault("temperature", 0.0)
 
     @staticmethod
     def _extract_token_probs(

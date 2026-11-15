@@ -20,6 +20,7 @@ torch = pytest.importorskip("torch", reason="torch not installed (s3e[hf])")
 
 from s3e.backends.backend import DEFAULT_MAX_REPLY_TOKENS, VLMOutput
 
+from backends.decoding_cases import DECODING_CASES, Decoding
 from backends.test_contract import BackendContract
 
 
@@ -211,6 +212,16 @@ class TestVLLMBackendMocked:
         kwargs = mock_llm_cls.call_args.kwargs
         assert kwargs["gpu_memory_utilization"] == 0.5
         assert kwargs["max_model_len"] == 2048
+
+    @patch("s3e.backends.vllm.LLM")
+    def test_non_raw_logprobs_mode_is_refused(self, mock_llm_cls):
+        from s3e.backends.vllm import VLLMBackend
+
+        with pytest.raises(ValueError, match="raw_logprobs"):
+            VLLMBackend("test/model", logprobs_mode="processed_logprobs")
+        mock_llm_cls.assert_not_called()
+        VLLMBackend("test/model", logprobs_mode="raw_logprobs")
+        assert mock_llm_cls.call_args.kwargs["logprobs_mode"] == "raw_logprobs"
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
@@ -990,6 +1001,40 @@ class TestVLLMBackendThinking:
         ]
         assert result.reasoning == reasoning
         assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1})
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @pytest.mark.parametrize(
+        "kwargs, expected", [*DECODING_CASES, ({"temperature": 0.6, "seed": 3}, Decoding(0.6))]
+    )
+    @patch("s3e.backends.vllm.LLM")
+    def test_reasoning_and_separator_follow_the_query_decoding(
+        self, mock_llm_cls, kwargs, expected
+    ):
+        """Real SamplingParams: the caller's decoding, the library's length and stops."""
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
+
+        backend, mock_llm = self._make_backend(mock_llm_cls, thinking=True, max_thinking_tokens=3)
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
+        ]
+        mock_llm.generate.side_effect = [
+            [_request_output(token_ids=[6, THINK_END], stop_reason=THINK_END)],
+            [_separator_output()],
+            [_readout_output({4: 0.9, 5: 0.1})],
+        ]
+
+        backend.query([], "q", interest_tokens=["Yes", "No"], **kwargs)
+
+        think, separator, _ = (c.args[1] for c in mock_llm.generate.call_args_list)
+        for params in (think, separator):
+            assert (params.temperature, params.repetition_penalty, params.seed) == (
+                expected.temperature, expected.repetition_penalty, kwargs.get("seed")
+            )
+            if expected.temperature > 0:
+                assert params.top_p == expected.top_p
+                assert params.top_k in ((expected.top_k,) if expected.top_k else (0, -1))
+        assert (think.max_tokens, think.stop_token_ids) == (3, [THINK_END])
+        assert (separator.max_tokens, separator.stop_token_ids) == (MAX_SEPARATOR_TOKENS, [])
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @patch("s3e.backends.vllm.SamplingParams")
