@@ -33,6 +33,7 @@ from .engine import (
     Prediction,
     PredictionSet,
     QueryEngine,
+    ThinkingTruncatedWarning,
     UnmatchedAnswerWarning,
 )
 from .estimator import SemanticStateEstimator
@@ -58,6 +59,7 @@ __all__ = [
     "CategoricalAnswers",
     "Prediction",
     "PredictionSet",
+    "ThinkingTruncatedWarning",
     "UnmatchedAnswerWarning",
     "VLMBackend",
     "VLMOutput",

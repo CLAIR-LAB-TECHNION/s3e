@@ -1132,6 +1132,7 @@ class TestHuggingFaceVLMThinking:
 
         assert result.token_probs == pytest.approx({"Yes": 0.6, "No": 0.4}, abs=1e-6)
         assert result.reasoning is None
+        assert result.thinking_truncated is None
         model.generate.assert_not_called()
         assert model.call_count == 1
 
@@ -1154,16 +1155,18 @@ class TestHuggingFaceVLMThinking:
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
-        "generated, continuation, reasoning",
+        "generated, continuation, reasoning, truncated",
         [
-            ([6, 6, THINK_END], "chat:qrr</think>", "rr"),
-            ([6, 6, 6], "chat:qrrr\n</think>", "rrr"),  # budget ran out
+            ([6, 6, THINK_END], "chat:qrr</think>", "rr", False),
+            ([6, 6, 6], "chat:qrrr\n</think>", "rrr", True),  # budget ran out
+            ([6, 6, 0], "chat:qrr\n</think>", "rr", False),  # stopped on EOS
         ],
     )
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_think_mode_generates_reasoning_then_scores(
-        self, mock_model_cls, mock_proc_cls, generated, continuation, reasoning
+        self, mock_model_cls, mock_proc_cls, generated, continuation, reasoning,
+        truncated,
     ):
         from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
@@ -1194,6 +1197,7 @@ class TestHuggingFaceVLMThinking:
             continuation + "\n\n",
         ]
         assert result.reasoning == reasoning
+        assert result.thinking_truncated is truncated
         assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1}, abs=1e-6)
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
@@ -1339,22 +1343,22 @@ class TestHuggingFaceVLMThinking:
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
-        "prompt_ids, first_reply, reasoning_ids, sent, reasoning",
+        "prompt_ids, first_reply, reasoning_ids, sent, reasoning, truncated",
         [
             # The prompt opens the block: reason, then reply after it.
-            ([1, THINK_START], None, [6, THINK_END], "chat:qr</think>", "r"),
+            ([1, THINK_START], None, [6, THINK_END], "chat:qr</think>", "r", False),
             # The budget (3) runs out: the block is closed for the model.
-            ([1, THINK_START], None, [6, 6, 6], "chat:qrrr\n</think>", "rrr"),
+            ([1, THINK_START], None, [6, 6, 6], "chat:qrrr\n</think>", "rrr", True),
             # The reply opens the block: it stops there, and the model
             # reasons inside the block it opened.
-            ([1, 2], [THINK_START], [6, THINK_END], "chat:q<think>r</think>", "r"),
+            ([1, 2], [THINK_START], [6, THINK_END], "chat:q<think>r</think>", "r", False),
         ],
     )
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_text_mode_reasons_then_replies(
         self, mock_model_cls, mock_proc_cls, prompt_ids, first_reply, reasoning_ids,
-        sent, reasoning,
+        sent, reasoning, truncated,
     ):
         from s3e.backends.huggingface import _StopAtFirstToken
 
@@ -1380,6 +1384,7 @@ class TestHuggingFaceVLMThinking:
         result = vlm.query([], "q", generate=True, max_new_tokens=10)
 
         assert (result.text, result.reasoning) == ("Yes", reasoning)
+        assert result.thinking_truncated is truncated
         assert self._texts_sent_to_processor(processor)[-1] == sent
         reasoning_call, reply_call = (
             c.kwargs for c in model.generate.call_args_list[-2:]
@@ -1421,7 +1426,10 @@ class TestHuggingFaceVLMThinking:
 
         results = vlm.query_batch([], ["q", "q"], generate=True)
 
-        assert [(r.text, r.reasoning) for r in results] == [("Yes", "r"), ("No", None)]
+        assert [(r.text, r.reasoning, r.thinking_truncated) for r in results] == [
+            ("Yes", "r", False),
+            ("No", None, None),
+        ]
 
     @pytest.mark.parametrize(
         "prompt_ids, replies, sent, text, reasoning",
