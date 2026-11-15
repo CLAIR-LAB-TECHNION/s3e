@@ -39,6 +39,8 @@ the commit history and PyPI release dates when this file was introduced.
   `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). The
   block's text is in the new `VLMOutput.reasoning`, and a
   `chat_template_kwargs` argument passes other template variables.
+- Calibration in `text_match` mode, which was previously refused. A
+  calibrator applies only in the scoring mode it was fitted in.
 - A thinking-models section in the walkthrough notebook: Qwen3.5-0.8B with
   its thinking block ignored, closed, and thought through, and the tradeoff
   between the accuracy reasoning can add and the time it costs.
