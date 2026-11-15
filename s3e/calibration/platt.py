@@ -88,10 +88,13 @@ def fit_platt_parameters(scores: list[float], labels: list[bool]) -> PlattParame
     if positives == 0 or negatives == 0:
         raise ValueError("Platt scaling requires both positive and negative labels.")
 
-    # lbfgs stops on the mean gradient (default tol 1e-4), so samples making
-    # up less than about 1e-4 of a group could be ignored, e.g. a rare answer
-    # in text_match data; a tight tolerance fits them too, at little cost.
-    model = LogisticRegression(random_state=0, tol=1e-10, max_iter=1000)
+    # The default lbfgs fit can stop before it accounts for a small minority
+    # of samples (e.g. one rare answer among 20,000 text_match replies), and
+    # with scikit-learn 1.0 no tolerance prevents it. Newton steps reach
+    # the same optimum on 1.0 and on current versions alike.
+    model = LogisticRegression(
+        random_state=0, solver="newton-cg", tol=1e-7, max_iter=1000
+    )
     model.fit([[score] for score in scores], labels)
 
     coef = float(model.coef_[0][0])

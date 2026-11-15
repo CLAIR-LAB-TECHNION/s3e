@@ -75,11 +75,11 @@ the commit history and PyPI release dates when this file was introduced.
   `s3e.backends`.
 
 ### Fixed
-- `PlattCalibrator.fit` fits with a tight convergence tolerance. With the
-  default one, a group could stop fitting before it accounted for samples
-  making up less than about 1 in 10,000 of it (e.g. a rare answer in
-  `text_match` data), without a warning. Fits on other data change only in
-  far decimal places.
+- `PlattCalibrator.fit` fits with Newton steps (scikit-learn's `newton-cg`
+  solver) instead of the default lbfgs, which could stop, without a warning,
+  before it accounted for a small minority of a group's samples (e.g. one
+  rare answer among 20,000 `text_match` replies). The objective is the same,
+  so fits on other data change only in far decimal places.
 - Thinking models (e.g. Qwen3.5-4B and larger, Mistral reasoning models, and
   Gemma 4 with thinking enabled) no longer break the HuggingFace and vLLM
   backends: logprobs mode read the token that opens the reasoning, putting
