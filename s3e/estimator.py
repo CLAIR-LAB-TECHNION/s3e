@@ -231,12 +231,6 @@ class SemanticStateEstimator:
     ) -> PredictionSet:
         """Estimate the selected predicates; returns a lazy PredictionSet."""
         if calibrator is not None:
-            if self.engine.scoring != "logprobs":
-                raise ValueError(
-                    "calibrator requires scoring='logprobs'; this estimator uses "
-                    f"scoring={self.engine.scoring!r} — calibration over text-match "
-                    "masses produces meaningless probabilities"
-                )
             self._check_calibrator_compat(calibrator)
         selected = self._select(predicates)
         queries = [self.queries[p] for p in selected]
@@ -280,10 +274,10 @@ class SemanticStateEstimator:
         """
         meta = getattr(calibrator, "meta", None) or {}
         scoring = meta.get("scoring")
-        if scoring is not None and scoring != "logprobs":
+        if scoring is not None and scoring != self.engine.scoring:
             raise ValueError(
-                f"calibrator was fitted on scoring={scoring!r} data; only "
-                "scoring='logprobs' calibration is supported"
+                f"calibrator was fitted on scoring={scoring!r} data; this "
+                f"estimator uses scoring={self.engine.scoring!r}"
             )
         fingerprint = meta.get("domain_fingerprint")
         if (

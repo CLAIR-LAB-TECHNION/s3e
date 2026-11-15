@@ -33,25 +33,19 @@ the commit history and PyPI release dates when this file was introduced.
   `thinking`, or Seed's `thinking_budget`), and otherwise closes any
   thinking block at once, so the answer follows an empty block, in logprobs
   and text mode alike. `thinking=True` turns the switch on and lets the
-  model reason first, up to `max_thinking_tokens`, with a warning when it
-  cannot; the answer is then scored, or the reply generated, after the
-  closed block (text mode decodes the reasoning like the reply). Blocks are found by their delimiters, among those
+  model reason first (up to `max_thinking_tokens` in logprobs mode), with a
+  warning when it cannot. Blocks are found by their delimiters, among those
   of known model families (`<think>`, Gemma 4's `<|channel>`, Mistral's
   `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). The
   block's text is in the new `VLMOutput.reasoning`, and a
   `chat_template_kwargs` argument passes other template variables.
-- Reasoning cut off by `max_thinking_tokens` is reported in
-  `VLMOutput.thinking_truncated` and by one `ThinkingTruncatedWarning` per
-  `QueryEngine.ask` call. `thinking_truncation_notice` (default `None`) puts
-  text inside such a block before its closing delimiter.
+- Calibration in `text_match` mode, which was previously refused. A
+  calibrator applies only in the scoring mode it was fitted in.
 - A thinking-models section in the walkthrough notebook: Qwen3.5-0.8B with
   its thinking block ignored, closed, and thought through, and the tradeoff
   between the accuracy reasoning can add and the time it costs.
 
 ### Changed
-- A text-mode query that sets no length gets `DEFAULT_MAX_REPLY_TOKENS`
-  (256) new tokens on `HuggingFaceVLM` and `VLLMBackend`, instead of the
-  frameworks' defaults (20 for transformers, 16 for vLLM).
 - Runtime dependencies and extras declare minimum supported versions, which
   CI tests on Python 3.10 (all but vLLM's, which needs a GPU), e.g.
   `transformers>=4.56` (for `from_pretrained(dtype=...)`), `openai>=1.66`

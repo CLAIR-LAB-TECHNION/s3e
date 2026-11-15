@@ -90,18 +90,8 @@ class CalibrationSet:
         skipped: their probability is fixed at 0.5 whatever a calibrator says,
         so they are not valid training points. There can therefore be fewer
         samples than labels.
-
-        Raises:
-            ValueError: If the estimator does not use ``scoring="logprobs"``;
-                grouped log-odds scores are not defined for text-match masses.
         """
         meta = estimator.calibration_meta()
-        if meta.get("scoring") != "logprobs":
-            raise ValueError(
-                "CalibrationSet.collect requires an estimator with "
-                f"scoring='logprobs'; got scoring={meta.get('scoring')!r} — "
-                "grouped log-odds scores are not defined for text-match masses"
-            )
         samples: list[CalibrationSample] = []
         original_problem = estimator.problem_pddl
         problem_changed = False

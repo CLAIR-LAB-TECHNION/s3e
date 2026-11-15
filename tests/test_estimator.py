@@ -147,12 +147,16 @@ class TestEstimate:
         results = make_estimator().estimate(images, calibrator=HalfCalibrator())
         assert all(p.probability == 0.5 for p in results.values())
 
-    def test_calibrator_rejected_when_scoring_is_text_match(self, images):
-        fake = FakeVLM()
-        estimator = make_estimator(fake, scoring="text_match")
-        with pytest.raises(ValueError, match="logprobs"):
-            estimator.estimate(images, calibrator=object())
-        assert fake.calls == []
+    def test_calibrator_applied_in_text_match_mode(self, images):
+        class HalfCalibrator:
+            def apply(self, results):
+                return PredictionSet(
+                    {k: p.with_probability(0.5) for k, p in results.items()}
+                )
+
+        estimator = make_estimator(FakeVLM(text="Yes."), scoring="text_match")
+        results = estimator.estimate(images, calibrator=HalfCalibrator())
+        assert all(p.probability == 0.5 for p in results.values())
 
 
 class TestSetProblem:
@@ -588,15 +592,40 @@ class TestCollectIntegration:
         assert estimator.problem_pddl == original_problem
         assert estimator.predicates == original_predicates
 
-    def test_collect_rejects_text_match_estimator(self, images):
-        from s3e.calibration import CalibrationExample, CalibrationSet
+    def test_text_match_collect_fit_apply(self, images):
+        """Platt on text answers gives P(true | said yes) and P(true | said no)."""
+        pytest.importorskip("sklearn")
+        from s3e.calibration import (
+            CalibrationExample,
+            CalibrationSet,
+            PlattCalibrator,
+        )
 
-        fake = FakeVLM(text="Yes.")
-        estimator = make_estimator(fake, scoring="text_match")
-        example = CalibrationExample(images=images, state_dict={"on(a,b)": True})
-        with pytest.raises(ValueError, match="logprobs"):
-            CalibrationSet.collect(estimator, [example])
-        assert fake.calls == []  # refused before any VLM query
+        def text_estimator(reply):
+            return make_estimator(FakeVLM(text=reply), scoring="text_match")
+
+        def collect(reply, labels):
+            examples = [
+                CalibrationExample(images=images, state_dict={"on(a,b)": label})
+                for label in labels
+            ]
+            return CalibrationSet.collect(text_estimator(reply), examples)
+
+        said_yes = collect("Yes.", [True, True, True, False])
+        said_no = collect("No.", [False, False, False, True])
+        data = CalibrationSet(
+            samples=said_yes.samples + said_no.samples, meta=said_yes.meta
+        )
+        calibrator = PlattCalibrator.fit(data, scope="lifted")
+
+        def calibrated(reply):
+            results = text_estimator(reply).estimate(
+                images, predicates=["on(a,b)"], calibrator=calibrator
+            )
+            return results["on(a,b)"].probability
+
+        assert calibrated("Yes.") == pytest.approx(0.75, abs=0.01)
+        assert calibrated("No.") == pytest.approx(0.25, abs=0.01)
 
 
 class TestCalibratorCompat:
@@ -646,11 +675,11 @@ class TestCalibratorCompat:
         with pytest.raises(ValueError, match="answer"):
             estimator.estimate(images, calibrator=self.make_calibrator(meta))
 
-    def test_text_match_meta_rejected(self, images):
-        estimator = make_estimator()
-        with pytest.raises(ValueError, match="logprobs"):
+    def test_scoring_mismatch_rejected(self, images):
+        estimator = make_estimator(FakeVLM(text="Yes."), scoring="text_match")
+        with pytest.raises(ValueError, match="scoring"):
             estimator.estimate(
-                images, calibrator=self.make_calibrator({"scoring": "text_match"})
+                images, calibrator=self.make_calibrator({"scoring": "logprobs"})
             )
 
 

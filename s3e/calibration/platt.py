@@ -172,20 +172,13 @@ class PlattCalibrator(Calibrator):
                 raising.
 
         Raises:
-            ValueError: On an unknown scope, an empty set, data not
-                collected with ``scoring="logprobs"``, or a single-class
+            ValueError: On an unknown scope, an empty set, or a single-class
                 group when ``pass_through_single_class`` is False.
         """
         if scope not in VALID_SCOPES:
             raise ValueError(f"Unknown scope {scope!r}; expected one of {VALID_SCOPES}")
         if not data.samples:
             raise ValueError("Expected at least one calibration sample.")
-        scoring = data.meta.get("scoring")
-        if scoring is not None and scoring != "logprobs":
-            raise ValueError(
-                f"CalibrationSet meta records scoring={scoring!r}; Platt "
-                "scaling requires scores collected with scoring='logprobs'"
-            )
         grouped: dict[str, list] = {}
         for sample in data.samples:
             grouped.setdefault(_group_key(sample.predicate, scope), []).append(sample)

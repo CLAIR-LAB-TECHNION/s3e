@@ -105,10 +105,9 @@ class TestPlattFitApply:
                 CalibrationSet(samples=make_samples(), meta={}), scope="bogus"
             )
 
-    def test_text_match_meta_rejected(self):
+    def test_text_match_meta_accepted(self):
         data = CalibrationSet(samples=make_samples(), meta={"scoring": "text_match"})
-        with pytest.raises(ValueError, match="logprobs"):
-            PlattCalibrator.fit(data, scope="global")
+        assert PlattCalibrator.fit(data, scope="global").group_keys()
 
     def test_logprobs_meta_accepted(self):
         data = CalibrationSet(samples=make_samples(), meta={"scoring": "logprobs"})
