@@ -3,6 +3,7 @@
 
 """Tests for the OpenAI VLM backend (client mocked; no API calls)."""
 
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -242,3 +243,48 @@ class TestOpenAIVLM:
 
         with pytest.raises(ValueError, match="logprobs.*text_match"):
             vlm.query([img], "Is A on B?")
+
+    @staticmethod
+    def _rejecting_temperature(mock_openai_module):
+        from openai import BadRequestError
+
+        response = MagicMock(status_code=400, headers={})
+        rejection = BadRequestError("Unsupported", response=response, body={"param": "temperature"})
+        create = mock_openai_module.OpenAI.return_value.chat.completions.create
+        create.side_effect = [rejection, MagicMock(), MagicMock()]
+        return create
+
+    @patch("s3e.backends.openai.openai")
+    def test_rejected_default_temperature_is_dropped_once(self, mock_openai_module):
+        create = self._rejecting_temperature(mock_openai_module)
+        vlm = OpenAIVLM("gpt-6")
+
+        with pytest.warns(UserWarning, match="rejects temperature") as record:
+            vlm.query_batch([], ["q"], generate=True)
+        assert record[0].filename == __file__
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            vlm.query([], "q", generate=True)
+
+        assert [c.kwargs.get("temperature") for c in create.call_args_list] == [0.0, None, None]
+
+    @patch("s3e.backends.openai.openai")
+    def test_rejected_caller_temperature_is_not_dropped(self, mock_openai_module):
+        from openai import BadRequestError
+
+        create = self._rejecting_temperature(mock_openai_module)
+        with pytest.raises(BadRequestError):
+            OpenAIVLM("gpt-6").query([], "q", generate=True, temperature=0.7)
+        assert create.call_count == 1
+
+    @patch("s3e.backends.openai.openai")
+    def test_other_rejections_are_not_retried(self, mock_openai_module):
+        from openai import BadRequestError
+
+        create = mock_openai_module.OpenAI.return_value.chat.completions.create
+        create.side_effect = BadRequestError(
+            "Unsupported", response=MagicMock(status_code=400, headers={}), body={"param": "logprobs"}
+        )
+        with pytest.raises(BadRequestError):
+            OpenAIVLM("gpt-6").query([], "q", generate=True)
+        assert create.call_count == 1

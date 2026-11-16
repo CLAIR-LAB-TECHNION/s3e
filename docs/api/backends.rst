@@ -29,6 +29,8 @@ Implementations
 
 .. autoclass:: VLLMBackend
 
+.. autodata:: s3e.backends.backend.DEFAULT_MAX_REPLY_TOKENS
+
 Thinking models
 ---------------
 

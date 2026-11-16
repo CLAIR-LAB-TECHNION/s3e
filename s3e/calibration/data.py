@@ -11,6 +11,8 @@ from pathlib import Path
 
 from PIL.Image import Image
 
+from ..engine.results import EPS
+
 CALIBRATION_SET_FORMAT_VERSION = 1
 
 
@@ -79,8 +81,14 @@ class CalibrationSet:
     meta: dict
 
     @classmethod
-    def collect(cls, estimator, examples: list[CalibrationExample]) -> "CalibrationSet":
+    def collect(
+        cls, estimator, examples: list[CalibrationExample], eps: float = EPS
+    ) -> "CalibrationSet":
         """Query the estimator's VLM on labeled examples (the expensive step).
+
+        Each sample's score is :meth:`Prediction.log_odds` with ``eps``, which
+        is recorded in ``meta`` so that calibrators fitted on this set score
+        new predictions the same way.
 
         Examples carrying their own ``problem`` are estimated under that
         problem; the estimator is restored to its original problem before
@@ -92,16 +100,11 @@ class CalibrationSet:
         samples than labels.
 
         Raises:
-            ValueError: If the estimator does not use ``scoring="logprobs"``;
-                grouped log-odds scores are not defined for text-match masses.
+            ValueError: If ``eps`` is not positive.
         """
-        meta = estimator.calibration_meta()
-        if meta.get("scoring") != "logprobs":
-            raise ValueError(
-                "CalibrationSet.collect requires an estimator with "
-                f"scoring='logprobs'; got scoring={meta.get('scoring')!r} — "
-                "grouped log-odds scores are not defined for text-match masses"
-            )
+        if eps <= 0:
+            raise ValueError(f"eps must be positive; got {eps!r}")
+        meta = {**estimator.calibration_meta(), "eps": eps}
         samples: list[CalibrationSample] = []
         original_problem = estimator.problem_pddl
         problem_changed = False
@@ -120,7 +123,7 @@ class CalibrationSet:
                     samples.append(
                         CalibrationSample(
                             predicate=predicate,
-                            score=prediction.score,
+                            score=prediction.log_odds(eps),
                             label=bool(label),
                             problem=example.problem,
                         )

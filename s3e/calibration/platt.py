@@ -88,7 +88,11 @@ def fit_platt_parameters(scores: list[float], labels: list[bool]) -> PlattParame
     if positives == 0 or negatives == 0:
         raise ValueError("Platt scaling requires both positive and negative labels.")
 
-    model = LogisticRegression(random_state=0)
+    # lbfgs can stop before it fits a small minority of samples (one rare
+    # answer among 20,000), and on scikit-learn 1.0 no tolerance prevents it.
+    model = LogisticRegression(
+        random_state=0, solver="newton-cg", tol=1e-7, max_iter=1000
+    )
     model.fit([[score] for score in scores], labels)
 
     coef = float(model.coef_[0][0])
@@ -125,7 +129,7 @@ class PlattCalibrator(Calibrator):
             ``on(...)``), or ``"grounded"`` (one per grounded predicate).
         groups: Fitted parameters per group key.
         meta: Provenance recorded from the :class:`CalibrationSet` (scoring
-            mode, answer space, domain fingerprint), checked by
+            mode, answer space, domain fingerprint, generation policy), checked by
             :meth:`SemanticStateEstimator.estimate` before applying.
 
     Example:
@@ -168,24 +172,18 @@ class PlattCalibrator(Calibrator):
             data: Scores and labels from :meth:`CalibrationSet.collect`.
             scope: ``"global"``, ``"lifted"``, or ``"grounded"`` grouping.
             pass_through_single_class: Skip (leave uncalibrated) groups
-                whose samples are all positive or all negative instead of
-                raising.
+                whose samples are all positive or all negative, or all have
+                the same score, instead of raising.
 
         Raises:
-            ValueError: On an unknown scope, an empty set, data not
-                collected with ``scoring="logprobs"``, or a single-class
-                group when ``pass_through_single_class`` is False.
+            ValueError: On an unknown scope, an empty set, or a single-class
+                or single-score group when ``pass_through_single_class`` is
+                False.
         """
         if scope not in VALID_SCOPES:
             raise ValueError(f"Unknown scope {scope!r}; expected one of {VALID_SCOPES}")
         if not data.samples:
             raise ValueError("Expected at least one calibration sample.")
-        scoring = data.meta.get("scoring")
-        if scoring is not None and scoring != "logprobs":
-            raise ValueError(
-                f"CalibrationSet meta records scoring={scoring!r}; Platt "
-                "scaling requires scores collected with scoring='logprobs'"
-            )
         grouped: dict[str, list] = {}
         for sample in data.samples:
             grouped.setdefault(_group_key(sample.predicate, scope), []).append(sample)
@@ -202,6 +200,15 @@ class PlattCalibrator(Calibrator):
                     "(or pass pass_through_single_class=True to leave such "
                     "groups uncalibrated)"
                 )
+            if len({s.score for s in samples}) < 2:
+                if pass_through_single_class:
+                    continue
+                raise ValueError(
+                    f"Calibration group {key!r} has a single score value, so "
+                    "the fit cannot tell what other scores mean (or pass "
+                    "pass_through_single_class=True to leave such groups "
+                    "uncalibrated)"
+                )
             groups[key] = fit_platt_parameters([s.score for s in samples], labels)
         return cls(scope=scope, groups=groups, meta=dict(data.meta))
 
@@ -212,9 +219,10 @@ class PlattCalibrator(Calibrator):
     def apply(self, results: "PredictionSet") -> "PredictionSet":
         """Return a new PredictionSet with calibrated probabilities.
 
-        Predictions whose group has no fitted parameters are passed
-        through unchanged, and predictions with no answer keep
-        P(true) = 0.5 (see :attr:`Prediction.has_answer`).
+        Predictions are scored with the ``eps`` recorded in :attr:`meta`
+        (default ``EPS``). Predictions whose group has no
+        fitted parameters are passed through unchanged, and predictions with
+        no answer keep P(true) = 0.5 (see :attr:`Prediction.has_answer`).
         """
         calibrated = {}
         for key, prediction in results.items():
@@ -222,8 +230,9 @@ class PlattCalibrator(Calibrator):
             if params is None:
                 calibrated[key] = prediction
             else:
+                score = prediction.log_odds(self.meta.get("eps", EPS))
                 calibrated[key] = prediction.with_probability(
-                    apply_platt_scaling(prediction.score, params)
+                    apply_platt_scaling(score, params)
                 )
         return type(results)(calibrated)
 

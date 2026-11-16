@@ -6,5 +6,5 @@
 
 - [ ] Tests added or updated for behavioral changes
 - [ ] `pytest -m "not slow"` passes locally
-- [ ] Docstrings / README / docs updated for user-facing changes
-- [ ] `CHANGELOG.md` updated under "Unreleased" for user-facing changes
+- [ ] Docstrings and `docs/` updated for user-facing changes
+- [ ] User-facing or breaking changes are stated in the summary (the changelog is written from it at release time)

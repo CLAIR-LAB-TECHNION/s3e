@@ -77,8 +77,8 @@ likely next token tell whether a query is about to think,
 {meth}`~s3e.backends.utils.thinking.ThinkingTokens.closing_text` or a
 generated reasoning ends the block, and the answer token is read at the
 first non-whitespace position after it
-({func}`~s3e.backends.utils.thinking.leading_whitespace_tokens`). Text
-replies are split with
+({func}`~s3e.backends.utils.thinking.leading_whitespace_tokens`), or the
+text reply generated after it. Text replies are split with
 {meth}`~s3e.backends.utils.thinking.ThinkingTokens.split`, and the block's
 text goes in {attr}`VLMOutput.reasoning <s3e.VLMOutput.reasoning>`.
 
@@ -103,7 +103,8 @@ Subclass {class}`~s3e.Calibrator` and implement `apply`, `save`, and `load`.
 `apply` must return a new `PredictionSet` and leave its input untouched;
 `Prediction.with_probability` makes the calibrated copy of each prediction.
 If the calibrator has a `meta` dict, the estimator compares any `scoring`,
-`answers`, and `domain_fingerprint` it holds with its own before applying.
+`answers`, `domain_fingerprint`, and `generation_policy` it holds with its own
+before applying.
 
 ## Tests
 
@@ -120,6 +121,20 @@ If the calibrator has a `meta` dict, the estimator compares any `scoring`,
 - `tests/workflows/` holds end-to-end tests of usage patterns that span
   modules, such as sharing one backend between estimators or calibrating
   offline.
+
+How each part of the library is verified without special hardware:
+
+- Engine, answer spaces, results, translators, calibration, and PDDL
+  grounding: the fast suite drives them through the deterministic fake
+  backends in `tests/fakes.py`.
+- HuggingFace backend: mocked in the fast suite.
+  `pytest -m slow tests/backends/test_huggingface.py` and the documentation
+  tests run real small models on a CPU.
+- OpenAI backend: mocked in the fast suite. Real use needs an
+  `OPENAI_API_KEY`.
+- vLLM backend: mocked in the fast suite when `vllm` is installed. The
+  real-engine tests (`pytest -m slow tests/backends/test_vllm.py`) need a CUDA
+  GPU.
 
 ## Continuous integration
 
@@ -139,8 +154,21 @@ the `Draft PDF` workflow builds the JOSS paper when `paper/` changes.
 
 The documentation is built with Sphinx from `docs/`: MyST Markdown pages,
 autodoc API pages under `docs/api/`, and the walkthrough notebook (rendered
-with its saved outputs). The statement of need and the user guide are
-included from `README.md`, so edit them there. Build locally with:
+with its saved outputs). No page includes text from `README.md`.
+
+Each piece of documentation has one home:
+
+- Docstrings document each public class and function, and are rendered into
+  the API reference. Document a change here first.
+- `docs/user-guide.md` explains configuration options and how to read
+  results. Add to it only when a change affects how users configure S3E or
+  read its results.
+- `docs/getting-started.md` and the walkthrough notebook teach the library
+  through examples that the slow tests run.
+- `README.md` is a landing page: overview, features, installation, a short
+  quick start, and links. Change it only when one of those changes.
+
+Build locally with:
 
 ```bash
 pip install -e ".[docs]"

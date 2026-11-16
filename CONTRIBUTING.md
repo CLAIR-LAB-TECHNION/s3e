@@ -13,8 +13,9 @@ agree to abide by its [Code of Conduct](CODE_OF_CONDUCT.md).
   (HuggingFace, OpenAI, vLLM, or a custom `VLMBackend`), and a minimal code
   snippet.
 - **Documentation**: start with the [README](README.md), the
-  [API reference](https://s3e.readthedocs.io), and the
-  [walkthrough notebook](docs/s3e_walkthrough.ipynb).
+  [walkthrough notebook](docs/s3e_walkthrough.ipynb), and the
+  [documentation](https://s3e.readthedocs.io), which has a getting-started
+  guide, a user guide, and the API reference.
 
 ## Reporting bugs
 
@@ -49,6 +50,10 @@ pip install -e ".[dev]"        # CPU: full fast suite; vLLM-dependent tests skip
 pip install -e ".[dev-gpu]"    # CUDA hosts: adds vllm for the vLLM test coverage
 ```
 
+On a machine without a CUDA GPU, install CPU-only PyTorch first to avoid the
+much larger CUDA build:
+`pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`.
+
 To build the documentation locally:
 
 ```bash
@@ -68,7 +73,7 @@ pytest -m "not slow" --cov=s3e --cov-report=term-missing   # coverage
 
 The fast suite also runs the docstring examples in `s3e/` (doctests) and the
 scripts in `examples/` with fake backends. Tests marked `slow` download real
-models and run the README, getting-started, and notebook code; the vLLM
+models and run the README, getting-started, and notebook code. The vLLM
 integration tests also need a CUDA GPU.
 
 Continuous integration runs the fast suite on Linux, macOS, and Windows and
@@ -86,10 +91,16 @@ covered and the local total is lower.
 3. Add or update tests next to the code you changed; the `tests/` tree
    mirrors the package layout. Reuse the fixtures in `tests/conftest.py` and
    the `FakeVLM` double in `tests/fakes.py` instead of duplicating setup.
-4. Run `pytest -m "not slow"` and `ruff check .` and make sure both pass.
-   Record user-facing changes under "Unreleased" in `CHANGELOG.md`.
-5. Open a pull request describing the change and its motivation, and link any
-   related issue.
+4. Document a user-facing change once, in the docstring of the API it
+   changes. Add to the [user guide](docs/user-guide.md) only when the change
+   affects how users configure S3E or read its results. Edit `README.md` only
+   when installation, the quick start, or the feature list changes. It is a
+   landing page, and the details belong in the documentation.
+5. Run `pytest -m "not slow"` and `ruff check .` and make sure both pass.
+6. Open a pull request describing the change and its motivation, and link any
+   related issue. Do not edit `CHANGELOG.md`: the maintainer writes it when
+   cutting a release, from the titles and descriptions of the merged pull
+   requests, so state any user-facing or breaking change there plainly.
 
 ### Style
 
@@ -130,8 +141,11 @@ answer spaces, and calibrators).
 
 Maintainers release from `main`:
 
-1. Move the "Unreleased" entries in `CHANGELOG.md` under a new
-   `## X.Y.Z - YYYY-MM-DD` heading.
+1. Write the release's section of `CHANGELOG.md` under a new
+   `## X.Y.Z - YYYY-MM-DD` heading, from the pull requests merged since the
+   last tag (`git log --first-parent vPREV..main`, or
+   `gh pr list --state merged --base main`), together with any entries
+   already under "Unreleased".
 2. In a commit of its own titled `bump version to X.Y.Z`, set `version` in
    `pyproject.toml` and `version` and `date-released` in `CITATION.cff`
    (`tests/test_metadata.py` checks that they agree).

@@ -118,15 +118,20 @@ class Prediction:
 
     @cached_property
     def score(self) -> float:
+        """:meth:`log_odds` with the default ``eps``."""
+        return self.log_odds()
+
+    def log_odds(self, eps: float = EPS) -> float:
         """Grouped log-odds log(true_mass / false_mass) for binary spaces.
 
         Computed from the raw masses only (null mass is ignored); this is the
-        input calibrators fit on. ``EPS`` keeps it finite for zero masses.
+        input calibrators fit on. ``eps`` is added to both masses to keep it
+        finite when one is zero.
         """
         self._require_binary("score")
         true_mass = self.masses[self.answers.true_label]
         false_mass = self.masses[self.answers.false_label]
-        return math.log((true_mass + EPS) / (false_mass + EPS))
+        return math.log((true_mass + eps) / (false_mass + eps))
 
     def distribution(self) -> dict[str, float]:
         """Masses normalized over the answer options (uncalibrated).

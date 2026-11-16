@@ -6,7 +6,7 @@ uses [semantic versioning](https://semver.org/) (pre-1.0: minor versions may
 contain breaking changes). Entries for 0.1.0–0.4.1 were reconstructed from
 the commit history and PyPI release dates when this file was introduced.
 
-## Unreleased
+## 0.6.0 - 2026-11-16
 
 ### Added
 - Runnable examples in `examples/`: `custom_backend.py` implements a
@@ -33,12 +33,24 @@ the commit history and PyPI release dates when this file was introduced.
   `thinking`, or Seed's `thinking_budget`), and otherwise closes any
   thinking block at once, so the answer follows an empty block, in logprobs
   and text mode alike. `thinking=True` turns the switch on and lets the
-  model reason first (up to `max_thinking_tokens` in logprobs mode), with a
-  warning when it cannot. Blocks are found by their delimiters, among those
+  model reason first (up to `max_thinking_tokens`, in both scoring modes),
+  with a warning when it cannot. Blocks are found by their delimiters, among those
   of known model families (`<think>`, Gemma 4's `<|channel>`, Mistral's
   `[THINK]`, Seed's `<seed:think>`) or given (`thinking_delimiters`). The
   block's text is in the new `VLMOutput.reasoning`, and a
   `chat_template_kwargs` argument passes other template variables.
+- Calibration in `text_match` mode, which was previously refused. A
+  calibrator applies only in the scoring mode it was fitted in.
+- Calibrators record the generation policy their data was collected under
+  in `meta["generation_policy"]`: the backend's `model_id`, `thinking`,
+  `max_thinking_tokens`, `temperature`, and the decoding settings that are
+  set. `QueryEngine.generation_policy()` returns it.
+  `estimate(..., allow_calibrator_policy_mismatch=True)` applies a
+  calibrator fitted under another policy, with a warning.
+- `CalibrationSet.collect(..., eps=EPS)` and `Prediction.log_odds(eps=EPS)`.
+  A collected calibration set and the calibrators fitted on it record `eps`
+  in `meta`, and `PlattCalibrator.apply` scores predictions with it, or with
+  `EPS` when it is absent, so existing files behave as before.
 - A thinking-models section in the walkthrough notebook: Qwen3.5-0.8B with
   its thinking block ignored, closed, and thought through, and the tradeoff
   between the accuracy reasoning can add and the time it costs.
@@ -58,6 +70,36 @@ the commit history and PyPI release dates when this file was introduced.
   `s3e.backends.utils.resolve` and `s3e.backends.utils.token_index`.
   `resolve_backend` and `OPENAI_MODEL_IDENTIFIER` are still exported by
   `s3e.backends`.
+- **Breaking:** `estimate(..., calibrator=...)` raises `ValueError`, naming
+  each differing field, when a calibrator saved by this version was fitted
+  for another model or under another generation policy. Calibrators saved
+  before apply as before.
+- **Breaking:** `PlattCalibrator.fit` raises `ValueError` for a group whose
+  samples all have the same score, since such a group says nothing about any
+  other score. `pass_through_single_class=True` leaves such groups
+  uncalibrated, as it does single-class groups.
+- `PlattCalibrator.fit` uses scikit-learn's `newton-cg` solver instead of
+  lbfgs, which could stop early on a rare score in a group. On typical data
+  the fitted parameters change only in about the seventh significant digit.
+- Decoding follows one rule on every backend. `temperature` absent or 0 is
+  greedy, and above 0 samples from the untruncated distribution. Other
+  decoding settings are off unless passed. `HuggingFaceVLM` therefore
+  decodes greedily by default in text mode (Qwen3-VL, Gemma 4 and others
+  sampled before), and the checkpoint's penalties and beams no longer apply.
+  After loading, `vlm.model.generation_config` keeps only token ids, length
+  and token constraints.
+- Tokens the library generates itself, such as a thinking model's reasoning,
+  follow the caller's decoding settings on the HuggingFace and vLLM backends.
+  Logprobs answers are exact reads that no decoding setting changes.
+- **Breaking:** `VLLMBackend` raises `ValueError` for any `logprobs_mode`
+  other than `"raw_logprobs"`.
+- A text-mode query that sets no length gets `DEFAULT_MAX_REPLY_TOKENS`
+  (256) new tokens on the HuggingFace and vLLM backends, instead of 20 or 16.
+  A length passed in `inference_kwargs` takes precedence, and with thinking
+  on it limits the reply only.
+- Documentation: the README is a landing page. The configuration reference
+  and the calibration rules are in the user guide, and the full API tour is
+  in the getting-started guide.
 
 ### Fixed
 - Thinking models (e.g. Qwen3.5-4B and larger, Mistral reasoning models, and
@@ -75,6 +117,13 @@ the commit history and PyPI release dates when this file was introduced.
   regenerated once.
 - Calibration data, Platt calibrators, and translation caches are read and
   written as UTF-8 on every platform, not in the locale's encoding.
+- Text mode with `thinking=True` and no length set returned no answer,
+  because the model spent the backend's default length inside its thinking
+  block. It now reasons within `max_thinking_tokens` and then replies.
+- `temperature=0` no longer crashes on checkpoints whose generation config
+  samples, and replies stop at `<|im_end|>` on Qwen3.5-style configs.
+- `OpenAIVLM` works with OpenAI reasoning models. It retries without its
+  default temperature when the model rejects it, warning once.
 
 ## 0.5.0 - 2026-10-05
 

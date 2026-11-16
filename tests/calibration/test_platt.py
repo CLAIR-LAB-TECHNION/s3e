@@ -105,10 +105,48 @@ class TestPlattFitApply:
                 CalibrationSet(samples=make_samples(), meta={}), scope="bogus"
             )
 
-    def test_text_match_meta_rejected(self):
+    def test_single_score_group_rejected(self):
+        samples = [CalibrationSample("on(a,b)", -2.0, i < 3) for i in range(12)]
+        with pytest.raises(ValueError, match="single score value"):
+            PlattCalibrator.fit(CalibrationSet(samples=samples, meta={}))
+
+    def test_single_score_group_passed_through(self):
+        samples = [CalibrationSample("on(a,b)", -2.0, i < 3) for i in range(12)]
+        data = CalibrationSet(samples=samples + make_samples("clear(a)"), meta={})
+        cal = PlattCalibrator.fit(data, scope="lifted", pass_through_single_class=True)
+        assert cal.group_keys() == ["clear"]
+
+    def test_rare_score_is_fitted(self):
+        """One sample among 20,000 at another score: lbfgs stopped before
+        fitting it."""
+        high, low = 27.6, -27.6
+        samples = [
+            CalibrationSample("on(a,b)", high, i % 10 != 0) for i in range(20000)
+        ] + [CalibrationSample("on(a,b)", low, True)]
+        cal = PlattCalibrator.fit(CalibrationSet(samples=samples, meta={}))
+        low_result = make_results(true_mass=0.0, false_mass=1.0)
+        assert low_result["on(a,b)"].score == pytest.approx(low, abs=0.1)
+        assert cal.apply(low_result)["on(a,b)"].probability > 0.9
+
+    def test_text_match_meta_accepted(self):
         data = CalibrationSet(samples=make_samples(), meta={"scoring": "text_match"})
-        with pytest.raises(ValueError, match="logprobs"):
-            PlattCalibrator.fit(data, scope="global")
+        assert PlattCalibrator.fit(data, scope="global").group_keys()
+
+    def test_apply_scores_with_recorded_eps(self):
+        from s3e.calibration.platt import GLOBAL_CALIBRATION_KEY, PlattParameters
+
+        params = PlattParameters(
+            a=-1.0, b=0.0, sample_count=2, positive_count=1, negative_count=1
+        )
+        results = make_results(true_mass=0.9, false_mass=0.0)
+
+        def calibrated(meta):
+            cal = PlattCalibrator("global", {GLOBAL_CALIBRATION_KEY: params}, meta)
+            return cal.apply(results)["on(a,b)"].probability
+
+        # P = sigmoid(log((0.9 + eps) / eps)): 10/11 for eps = 0.1
+        assert calibrated({"eps": 0.1}) == pytest.approx(10 / 11)
+        assert calibrated({}) == pytest.approx(1.0)  # default EPS = 1e-12
 
     def test_logprobs_meta_accepted(self):
         data = CalibrationSet(samples=make_samples(), meta={"scoring": "logprobs"})

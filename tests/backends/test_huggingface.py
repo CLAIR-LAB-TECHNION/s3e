@@ -5,6 +5,7 @@
 integration against tiny real models, and the shared backend contract.
 """
 
+import copy
 import math
 import warnings
 from unittest.mock import MagicMock, patch
@@ -15,8 +16,9 @@ from PIL import Image
 torch = pytest.importorskip("torch", reason="torch not installed (s3e[hf])")
 pytest.importorskip("transformers", reason="transformers not installed (s3e[hf])")
 
-from s3e.backends.backend import VLMOutput
+from s3e.backends.backend import DEFAULT_MAX_REPLY_TOKENS, VLMOutput
 
+from backends.decoding_cases import DECODING_CASES
 from backends.test_contract import BackendContract
 
 
@@ -751,10 +753,20 @@ class TestHuggingFaceVLMMocked:
         assert mock_model.generate.call_args.kwargs["max_new_tokens"] == 7
         assert mock_model.generate.call_args.kwargs["do_sample"] is False
 
+    @pytest.mark.parametrize(
+        "length, expected",
+        [
+            # The library's reply length, not transformers' default of 20.
+            ({}, {"max_new_tokens": DEFAULT_MAX_REPLY_TOKENS}),
+            ({"max_new_tokens": 7}, {"max_new_tokens": 7}),
+            ({"max_length": 30}, {"max_length": 30}),
+            ({"generation_config": "config"}, {"generation_config": "config"}),
+        ],
+    )
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_query_generate_mode_sets_safe_defaults(
-        self, mock_model_cls, mock_proc_cls
+        self, mock_model_cls, mock_proc_cls, length, expected
     ):
         from s3e.backends.huggingface import HuggingFaceVLM
 
@@ -770,11 +782,12 @@ class TestHuggingFaceVLMMocked:
 
         vlm = HuggingFaceVLM("test/model")
         img = Image.new("RGB", (64, 64))
-        _ = vlm.query([img], "Is A on B?", generate=True)
+        _ = vlm.query([img], "Is A on B?", generate=True, **length)
 
         mock_model.generate.assert_called_once()
         generate_kwargs = mock_model.generate.call_args.kwargs
-        assert "max_new_tokens" not in generate_kwargs
+        lengths = {"max_new_tokens", "max_length", "generation_config"}
+        assert {k: v for k, v in generate_kwargs.items() if k in lengths} == expected
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
@@ -1312,35 +1325,103 @@ class TestHuggingFaceVLMThinking:
         assert results[0].token_probs == pytest.approx({"Yes": 0.8, "No": 0.2}, abs=1e-6)
         assert results[1].token_probs == pytest.approx({"Yes": 0.3, "No": 0.7}, abs=1e-6)
 
+    @staticmethod
+    def _decode_whole_sequences(processor):
+        """batch_decode that decodes every id (special ones skipped)."""
+        processor.batch_decode.side_effect = lambda seqs, skip_special_tokens=False: [
+            "".join(
+                THINK_VOCAB[int(i)]
+                for i in seq
+                if not (skip_special_tokens and int(i) == 0)
+            )
+            for seq in seqs
+        ]
+
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
-        "prompt_ids, generated, text, reasoning",
+        "prompt_ids, first_reply, reasoning_ids, sent, reasoning",
         [
-            ([1, THINK_START], [6, THINK_END, 3, 4], "Yes", "r"),
-            # Only the separator after the block is dropped.
-            ([1, THINK_START], [6, THINK_END, 3, 4, 3], "Yes\n\n", "r"),
-            ([1, 2], [THINK_START, 6, 6, THINK_END, 3, 5], "No", "rr"),
-            ([1, THINK_START], [6, 6, 0], None, "rr"),
-            ([1, 2], [4, 3], "Yes", None),  # no block: decoded as before
+            # The prompt opens the block: reason, then reply after it.
+            ([1, THINK_START], None, [6, THINK_END], "chat:qr</think>", "r"),
+            # The budget (3) runs out: the block is closed for the model.
+            ([1, THINK_START], None, [6, 6, 6], "chat:qrrr\n</think>", "rrr"),
+            # The reply opens the block: it stops there, and the model
+            # reasons inside the block it opened.
+            ([1, 2], [THINK_START], [6, THINK_END], "chat:q<think>r</think>", "r"),
         ],
     )
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
-    def test_text_mode_moves_block_to_reasoning(
-        self, mock_model_cls, mock_proc_cls, prompt_ids, generated, text, reasoning
+    def test_text_mode_reasons_then_replies(
+        self, mock_model_cls, mock_proc_cls, prompt_ids, first_reply, reasoning_ids,
+        sent, reasoning,
     ):
-        vlm, _, _ = self._make_vlm(
+        from s3e.backends.huggingface import _StopAtFirstToken
+
+        def generate(**kwargs):
+            if "eos_token_id" in kwargs:  # the reasoning pass
+                return torch.tensor([prompt_ids + reasoning_ids])
+            if any(
+                isinstance(c, _StopAtFirstToken) for c in kwargs.get("stopping_criteria") or []
+            ):
+                return torch.tensor([prompt_ids + first_reply])
+            return torch.tensor([prompt_ids + [3, 4, 0]])  # "\n\nYes", then padding
+
+        vlm, model, processor = self._make_vlm(
             mock_model_cls, mock_proc_cls,
             prompt_ids=prompt_ids,
             forward_steps=[{4: 1.0}],
-            generate=lambda **kwargs: torch.tensor([prompt_ids + generated]),
+            generate=generate,
             thinking=True,
+            max_thinking_tokens=3,
         )
+        self._decode_whole_sequences(processor)
 
         result = vlm.query([], "q", generate=True, max_new_tokens=10)
 
-        assert result.text == text
-        assert result.reasoning == reasoning
+        assert (result.text, result.reasoning) == ("Yes", reasoning)
+        assert self._texts_sent_to_processor(processor)[-1] == sent
+        reasoning_call, reply_call = (
+            c.kwargs for c in model.generate.call_args_list[-2:]
+        )
+        # The budget bounds the reasoning, the caller's length the reply.
+        assert (reasoning_call["max_new_tokens"], reply_call["max_new_tokens"]) == (3, 10)
+        assert reasoning_call["do_sample"] is False
+
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_text_mode_batch_reasons_only_where_a_block_opens(
+        self, mock_model_cls, mock_proc_cls
+    ):
+        """Rows keep their order: the first reasons, the second replied at once."""
+        from s3e.backends.huggingface import _StopAtFirstToken
+
+        def generate(**kwargs):
+            if "eos_token_id" in kwargs:
+                return torch.tensor([[1, 2, 6, THINK_END]])
+            if any(
+                isinstance(c, _StopAtFirstToken) for c in kwargs.get("stopping_criteria") or []
+            ):
+                return torch.tensor([[1, 2, THINK_START, 0], [1, 2, 5, 0]])
+            return torch.tensor([[1, 2, 3, 4]])
+
+        vlm, model, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=[1, 2],
+            forward_steps=[{4: 1.0}],
+            generate=generate,
+            thinking=True,
+        )
+        self._decode_whole_sequences(processor)
+        # The batch has two rows; each later pass continues only the first.
+        processor.side_effect = lambda text, **kwargs: {
+            "input_ids": torch.tensor([[1, 2]] * (len(text) if isinstance(text, list) else 1))
+        }
+
+        results = vlm.query_batch([], ["q", "q"], generate=True)
+
+        assert [(r.text, r.reasoning) for r in results] == [("Yes", "r"), ("No", None)]
 
     @pytest.mark.parametrize(
         "prompt_ids, replies, sent, text, reasoning",
@@ -1373,9 +1454,15 @@ class TestHuggingFaceVLMThinking:
         assert (result.text, result.reasoning) == (text, reasoning)
         last_sent = self._texts_sent_to_processor(processor)[-1]
         assert (last_sent if isinstance(last_sent, str) else last_sent[0]) == sent
-        first_call = model.generate.call_args_list[0].kwargs
-        assert any(isinstance(c, _StopAtFirstToken) for c in first_call["stopping_criteria"])
-        assert first_call["max_new_tokens"] == 10
+        calls = [c.kwargs for c in model.generate.call_args_list]
+        assert all(call["max_new_tokens"] == 10 for call in calls)
+        # Only a prompt that leaves the block to the model stops its reply
+        # at an opening delimiter.
+        stops = [
+            any(isinstance(c, _StopAtFirstToken) for c in call.get("stopping_criteria") or [])
+            for call in calls
+        ]
+        assert stops[0] is (prompt_ids[-1] != THINK_START)
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
@@ -1531,6 +1618,135 @@ class TestHuggingFaceVLMThinking:
 
         mock_model_cls.from_pretrained.assert_not_called()
 
+    @pytest.mark.filterwarnings("ignore:thinking=True found no way")
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_generated_tokens_follow_the_query_decoding(self, mock_model_cls, mock_proc_cls):
+        """The caller's decoding, the library's length and stops; the read gets none."""
+        from s3e.backends.huggingface import _DECODING_KEYS
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
+
+        prompt_ids = [1, THINK_START]
+        vlm, model, _ = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=prompt_ids,
+            forward_steps=[{6: 1.0}, {4: 0.9, 5: 0.1}],
+            generate=lambda **kwargs: torch.tensor([prompt_ids + [6, THINK_END]]),
+            thinking=True,
+            max_thinking_tokens=3,
+        )
+
+        decoding = {"temperature": 0.7, "top_p": 0.9, "min_p": 0.05, "num_beams": 1}
+        vlm.query([], "q", interest_tokens=["Yes", "No"], **decoding)
+        vlm.query([], "q", generate=True, max_new_tokens=5, **decoding)
+
+        think, separator, _, reply = calls = [c.kwargs for c in model.generate.call_args_list]
+        for call in calls:
+            assert {k: call[k] for k in _DECODING_KEYS & call.keys()} == {
+                **decoding, "do_sample": True, "top_k": 0
+            }
+        assert (think["max_new_tokens"], think["eos_token_id"]) == (3, [THINK_END, 0])
+        assert (separator["max_new_tokens"], reply["max_new_tokens"]) == (MAX_SEPARATOR_TOKENS, 5)
+        assert not any(decoding.keys() & c.kwargs.keys() for c in model.call_args_list)
+
+
+# A checkpoint generation config that would change every generated token.
+HOSTILE_DECODING = dict(
+    do_sample=True, temperature=0.5, top_k=20, top_p=0.8, min_p=0.05,
+    repetition_penalty=1.3, no_repeat_ngram_size=2, num_beams=2,
+)
+TOKEN_IDS = dict(bos_token_id=1, eos_token_id=2, pad_token_id=0, suppress_tokens=[7, 8],
+                 bad_words_ids=[[9]])
+
+
+class TestHuggingFaceVLMDecoding:
+    """Generated tokens depend only on the model and the caller's settings."""
+
+    @staticmethod
+    def _load(model, tokenizer_eos):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        processor = MagicMock(**{"tokenizer.eos_token_id": tokenizer_eos,
+                                 "tokenizer.pad_token_id": None})
+        with patch("s3e.backends.huggingface._AutoModelClass") as model_cls, patch(
+            "s3e.backends.huggingface.AutoProcessor"
+        ) as proc_cls:
+            model_cls.from_pretrained.return_value = model
+            proc_cls.from_pretrained.return_value = processor
+            return HuggingFaceVLM("test/model", thinking_delimiters=None)
+
+    @pytest.mark.parametrize("kwargs, expected", DECODING_CASES)
+    def test_decoding_kwargs(self, kwargs, expected):
+        from s3e.backends.huggingface import _decoding_kwargs
+
+        temperature, top_p, top_k, penalty = expected
+        sampling = {"temperature": temperature, "top_p": top_p, "top_k": top_k or 0}
+        assert _decoding_kwargs(kwargs) == {
+            "do_sample": temperature > 0,
+            **(sampling if temperature > 0 else {}),
+            **({"repetition_penalty": penalty} if penalty != 1.0 else {}),
+        }
+
+    @pytest.mark.parametrize("kwargs, expected", [
+        ({"do_sample": True}, {"do_sample": True, "top_k": 0, "top_p": 1.0}),
+        ({"do_sample": False, "temperature": 0.7}, {"do_sample": False}),
+    ])
+    def test_do_sample_wins_over_temperature(self, kwargs, expected):
+        from s3e.backends.huggingface import _decoding_kwargs
+
+        assert _decoding_kwargs(kwargs) == expected
+
+    @pytest.mark.parametrize("ids, tokenizer_eos, eos, pad", [
+        ({"eos_token_id": 2}, 3, [2, 3], 2),  # no pad id: the first EOS
+        ({}, None, None, None),  # no EOS anywhere: none set
+    ])
+    def test_load_fills_in_eos_and_pad(self, ids, tokenizer_eos, eos, pad):
+        from transformers import GenerationConfig
+
+        vlm = self._load(MagicMock(generation_config=GenerationConfig(**ids)), tokenizer_eos)
+        config = vlm.model.generation_config
+        assert (config.eos_token_id, config.pad_token_id) == (eos, pad)
+
+    def test_load_keeps_only_ids_length_and_constraints(self):
+        """Decoding settings go; ids, length and constraints stay, plus the tokenizer's EOS."""
+        from transformers import GenerationConfig
+
+        checkpoint = GenerationConfig(**HOSTILE_DECODING, **TOKEN_IDS, max_new_tokens=5)
+        vlm = self._load(MagicMock(generation_config=checkpoint), tokenizer_eos=3)
+        assert vlm.model.generation_config == GenerationConfig(
+            **{**TOKEN_IDS, "eos_token_id": [2, 3]}, max_new_tokens=5
+        )
+
+    @pytest.mark.parametrize(
+        "kwargs, reference",
+        [
+            ({}, {"do_sample": False}),
+            ({"temperature": 0.7}, {"do_sample": True, "temperature": 0.7, "top_k": 0}),
+        ],
+    )
+    def test_real_generate_ignores_a_hostile_checkpoint_config(self, kwargs, reference):
+        """Every step's scores equal those of the same model with a clean config."""
+        from transformers import GenerationConfig, GPT2Config, GPT2LMHeadModel
+
+        from s3e.backends.huggingface import _decoding_kwargs
+
+        torch.manual_seed(0)
+        clean = GPT2LMHeadModel(GPT2Config(n_layer=1, n_head=2, n_embd=16, vocab_size=100)).eval()
+        clean.generation_config = GenerationConfig(**TOKEN_IDS)
+        hostile = copy.deepcopy(clean)
+        hostile.generation_config = GenerationConfig(**HOSTILE_DECODING, **TOKEN_IDS)
+        vlm = self._load(hostile, tokenizer_eos=None)
+        inputs = dict(input_ids=torch.tensor([[1, 10, 11, 12, 13]]), max_new_tokens=6,
+                      output_scores=True, return_dict_in_generate=True)
+
+        torch.manual_seed(0)
+        output = vlm.model.generate(**inputs, **_decoding_kwargs(kwargs))
+        torch.manual_seed(0)
+        expected = clean.generate(**inputs, **reference)
+
+        assert torch.equal(output.sequences, expected.sequences)
+        assert torch.equal(torch.stack(output.scores), torch.stack(expected.scores))
+
 
 @pytest.mark.slow
 class TestHuggingFaceVLMIntegration:
@@ -1679,12 +1895,12 @@ class TestHuggingFaceVLMThinkingIntegration:
                 single_row.token_probs, abs=1e-5
             )
 
-    def test_text_mode_moves_unfinished_block_to_reasoning(self, image):
-        result = self._backend(thinking=True).query(
-            [image], "Is it red?", generate=True, max_new_tokens=6, do_sample=False
+    def test_text_mode_replies_after_its_reasoning(self, image):
+        result = self._backend(thinking=True, max_thinking_tokens=4).query(
+            [image], "Is it red?", generate=True, max_new_tokens=6
         )
 
-        assert result.text is None
+        assert isinstance(result.text, str)
         assert result.reasoning
 
     def test_text_mode_answers_after_a_closed_block(self, image):
