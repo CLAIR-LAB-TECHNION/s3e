@@ -120,6 +120,14 @@ class TestGenerationPolicy:
         fake.model_id = "org/model"
         assert QueryEngine(fake).generation_policy()["model_id"] == "org/model"
 
+    @pytest.mark.parametrize("thinking, recorded", [(True, True), (False, False)])
+    def test_truncation_notice_only_when_set_and_thinking(self, thinking, recorded):
+        fake = FakeVLM()
+        assert "thinking_truncation_notice" not in QueryEngine(fake).generation_policy()
+        fake.thinking, fake.thinking_truncation_notice = thinking, "CUT"
+        policy = QueryEngine(fake).generation_policy()
+        assert ("thinking_truncation_notice" in policy) is recorded
+
 
 class TestBatching:
     def test_queries_chunked_by_batch_size(self, images):

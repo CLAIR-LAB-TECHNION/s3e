@@ -22,7 +22,7 @@ from .constants import (
     SYSTEM_PROMPT_WITH_TRANSLATION,
 )
 from .engine import BinaryAnswers, PredictionSet, QueryEngine
-from .engine.engine import _POLICY_KEYS, _external_stacklevel
+from .engine.engine import _COMPARED_WHEN_SET, _external_stacklevel
 from .translation import IdentityTranslator, QueryTranslator
 
 
@@ -314,7 +314,7 @@ class SemanticStateEstimator:
             return
         current = self.engine.generation_policy(inference_kwargs)
         # Fields added to the policy later are not compared, so older calibrators still apply.
-        keys = sorted(set(recorded) | {k for k in _POLICY_KEYS if k in current})
+        keys = sorted(set(recorded) | {k for k in _COMPARED_WHEN_SET if k in current})
         details = "; ".join(
             f"{k}: fitted {recorded.get(k)!r}, now {current.get(k)!r}"
             for k in keys if recorded.get(k) != current.get(k)

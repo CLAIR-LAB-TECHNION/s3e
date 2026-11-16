@@ -81,6 +81,9 @@ def _validate_scoring(scoring: str) -> str:
 # Decoding settings a generation policy records when they are set.
 _POLICY_KEYS = ("do_sample", "top_k", "top_p", "min_p", "repetition_penalty",
                 "presence_penalty", "frequency_penalty")
+# Policy fields recorded only when set; a calibrator without one was fitted
+# with it unset, so they are compared whenever the current policy has them.
+_COMPARED_WHEN_SET = (*_POLICY_KEYS, "thinking_truncation_notice")
 
 
 class QueryEngine:
@@ -217,6 +220,9 @@ class QueryEngine:
         model_id = getattr(self.backend, "model_id", None)
         if model_id is not None:
             policy["model_id"] = model_id
+        notice = getattr(self.backend, "thinking_truncation_notice", None)
+        if thinking and notice is not None:
+            policy["thinking_truncation_notice"] = notice
         policy.update({k: merged[k] for k in _POLICY_KEYS if merged.get(k) is not None})
         return policy
 

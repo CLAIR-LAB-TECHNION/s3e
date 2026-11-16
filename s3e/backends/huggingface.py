@@ -28,6 +28,7 @@ from .backend import (
 from .utils.thinking import (
     DEFAULT_MAX_THINKING_TOKENS,
     MAX_SEPARATOR_TOKENS,
+    close_truncated_block,
     find_thinking_switch,
     leading_whitespace_tokens,
     resolve_thinking_tokens,
@@ -154,6 +155,14 @@ class HuggingFaceVLM(VLMBackend):
             closed (:attr:`VLMOutput.thinking_truncated` is then True), and
             the answer scored or the reply generated after it.
             Defaults to 1024.
+        thinking_truncation_notice: Text put inside a block the budget cut
+            off, on its own line before the closing delimiter, e.g.
+            ``"THINKING TRUNCATED"``. It conditions the answer, so it shifts
+            logprobs-mode probabilities and text-mode replies, and whether it
+            helps depends on the model; measure before using it. ``None``
+            (default) closes the block with nothing added. It never appears
+            in :attr:`VLMOutput.reasoning` and must not contain a thinking
+            delimiter.
         thinking_delimiters: The tokens that open and close a thinking
             block, active only when both are single tokens of the model's
             vocabulary. ``"auto"`` (default) uses the first such pair among
@@ -194,15 +203,18 @@ class HuggingFaceVLM(VLMBackend):
         thinking: bool = False,
         max_thinking_tokens: int = DEFAULT_MAX_THINKING_TOKENS,
         thinking_delimiters: tuple[str, str] | str | None = "auto",
+        thinking_truncation_notice: str | None = None,
         **model_kwargs,
     ):
         self.model_id = model_id
         self.num_logprobs = _validate_num_logprobs(num_logprobs)
         delimiter_candidates = validate_thinking_options(
-            thinking, max_thinking_tokens, thinking_delimiters
+            thinking, max_thinking_tokens, thinking_delimiters,
+            thinking_truncation_notice,
         )
         self.thinking = thinking
         self.max_thinking_tokens = max_thinking_tokens
+        self.thinking_truncation_notice = thinking_truncation_notice
         self.thinking_delimiters = thinking_delimiters
         self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self._pad_invariance_checked = bool(skip_pad_invariance_check)
@@ -488,7 +500,8 @@ class HuggingFaceVLM(VLMBackend):
         prompt (the prompt plus its reasoning, ending with the closing
         delimiter, which is appended when the budget ran out or the model
         stopped first), the reasoning texts, and whether each ran out of the
-        budget.
+        budget. A block the budget cut off gets the truncation notice, if
+        any, before its closing delimiter.
         """
         inputs = self._prepare_rows(prompts, images)
         eos_ids = self._eos_token_ids()
@@ -510,19 +523,22 @@ class HuggingFaceVLM(VLMBackend):
             ids = [int(token_id) for token_id in sequence]
             stop = next((i for i, t in enumerate(ids) if t in stop_ids), len(ids))
             closed = stop < len(ids) and ids[stop] == tokens.end_id
+            # No stop id at all: the budget ran out mid-block.
+            cut = stop == len(ids)
             ids = ids[: stop + 1] if closed else ids[:stop]
             generated = self._decode_sequence(ids, skip_special_tokens=False)
             if not closed:
-                if not generated[-1:].isspace():
-                    generated += "\n"
-                generated += tokens.end
+                generated += close_truncated_block(
+                    generated,
+                    tokens.end,
+                    self.thinking_truncation_notice if cut else None,
+                )
             reasoning_ids, _ = tokens.split(ids, prompt_open=True)
             continuations.append(prompt + generated)
             reasonings.append(
                 self._decode_sequence(reasoning_ids or [], skip_special_tokens=True).strip()
             )
-            # No stop id at all: the budget ran out mid-block.
-            truncated.append(stop == len(sequence))
+            truncated.append(cut)
         return continuations, reasonings, truncated
 
     def _answer_probs_after(self, images, continuations, **inference_kwargs):
