@@ -18,7 +18,7 @@ the pieces you need:
 | `pddl` | {meth}`SemanticStateEstimator.from_pddl <s3e.SemanticStateEstimator.from_pddl>`, {mod}`s3e.pddl` | `unified-planning` |
 | `hf` | {class}`~s3e.HuggingFaceVLM` | `torch`, `torchvision`, `transformers`, `accelerate` |
 | `openai` | {class}`~s3e.OpenAIVLM`, OpenAI-backed {class}`~s3e.LLMTranslator` | `openai` |
-| `vllm` | {class}`~s3e.VLLMBackend` (CUDA hosts only) | `vllm>=0.11.0` |
+| `vllm` | {class}`~s3e.VLLMBackend` (CUDA hosts only) | `vllm>=0.11.1` |
 | `calibration` | {meth}`PlattCalibrator.fit <s3e.PlattCalibrator.fit>` | `scikit-learn` |
 | `all` | everything except `vllm` | |
 

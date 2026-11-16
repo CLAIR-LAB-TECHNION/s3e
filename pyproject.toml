@@ -42,7 +42,9 @@ hf = ["torch>=2.2", "torchvision>=0.17", "transformers>=4.56", "accelerate>=0.26
 openai = ["openai>=1.66"]
 # VLLMBackend relies on SamplingParams(logprobs=-1) / LLM(max_logprobs=-1)
 # for full-vocab logprobs, added in vLLM 0.11.0 (vllm-project/vllm#25031).
-vllm = ["vllm>=0.11.0"]
+# 0.11.1 is the floor because 0.11.0 checks the length limit before EOS, so a
+# completion ending in EOS on its last budget token reports finish_reason "length".
+vllm = ["vllm>=0.11.1"]
 pddl = ["unified-planning>=1.3.0"]
 calibration = ["scikit-learn>=1.0.2"]
 # Everything except vllm, which has hard platform constraints.
