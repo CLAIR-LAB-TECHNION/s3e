@@ -55,9 +55,10 @@ scene = [image]
 `QueryEngine` is the PDDL-free heart of S3E: images + queries + an answer space → predictions.
 
 ```python
-from s3e import QueryEngine
+from s3e import HuggingFaceVLM, QueryEngine
 
-engine = QueryEngine("Qwen/Qwen3.5-0.8B")
+vlm = HuggingFaceVLM("Qwen/Qwen3.5-0.8B")  # load the model once, then share it
+engine = QueryEngine(vlm)
 predictions = engine.ask(scene, ["Is there a blue block?", "Is there a green block?"])
 
 print(predictions["Is there a blue block?"].probability)  # P(true), a float in [0, 1]
@@ -72,7 +73,7 @@ Answer spaces are not limited to yes/no. `CategoricalAnswers` scores an arbitrar
 from s3e import CategoricalAnswers
 
 color_engine = QueryEngine(
-    "Qwen/Qwen3.5-0.8B",
+    vlm,
     answers=CategoricalAnswers(["blue", "orange", "green"]),
 )
 question = "What color is the top block? Answer with one word."
@@ -119,7 +120,7 @@ translator = TemplateTranslator(
 estimator = SemanticStateEstimator.from_pddl(
     domain_pddl,
     problem_pddl,
-    vlm="Qwen/Qwen3.5-0.8B",
+    vlm=vlm,
     translator=translator,
     prompt_template="Answer with exactly one word, yes or no: {query}",
 )

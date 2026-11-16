@@ -8,6 +8,7 @@ All tests here are slow: they download ``Qwen/Qwen3.5-0.8B`` (~1.7 GB) and
 run it, on CPU if no GPU is available.
 """
 
+import gc
 import json
 import re
 import sys
@@ -33,11 +34,22 @@ def python_blocks(path: Path, section: str | None = None) -> list[str]:
     return re.findall(r"^```python\n(.*?)^```$", text, re.M | re.S)
 
 
-def run_blocks(blocks: list[str], source: str) -> dict:
+@pytest.fixture
+def namespace():
+    """A namespace for the snippets, cleared after the test.
+
+    Clearing it frees the model the snippets loaded before the next test
+    loads its own, so the tests never hold two models at once.
+    """
     namespace: dict = {"__name__": "__main__"}
+    yield namespace
+    namespace.clear()
+    gc.collect()
+
+
+def run_blocks(blocks: list[str], source: str, namespace: dict) -> None:
     for block in blocks:
         exec(compile(block, source, "exec"), namespace)
-    return namespace
 
 
 GROUNDED = {
@@ -46,21 +58,21 @@ GROUNDED = {
 }
 
 
-def test_readme_quick_start_runs_in_order():
+def test_readme_quick_start_runs_in_order(namespace):
     pytest.importorskip("torch")
     pytest.importorskip("transformers")
     pytest.importorskip("unified_planning")
     blocks = python_blocks(README, "Quick Start")
     assert len(blocks) == 2
 
-    namespace = run_blocks(blocks, str(README))
+    run_blocks(blocks, str(README), namespace)
 
     assert set(namespace["results"].probabilities()) == GROUNDED
     assert set(namespace["state"].values()) <= {True, False}
 
 
 @pytest.mark.skipif(not GETTING_STARTED.exists(), reason="docs/ is not in the sdist")
-def test_getting_started_quick_start_runs_in_order(tmp_path, monkeypatch):
+def test_getting_started_quick_start_runs_in_order(namespace, tmp_path, monkeypatch):
     pytest.importorskip("torch")
     pytest.importorskip("transformers")
     pytest.importorskip("unified_planning")
@@ -72,7 +84,7 @@ def test_getting_started_quick_start_runs_in_order(tmp_path, monkeypatch):
     assert len(blocks) >= 8
     monkeypatch.chdir(tmp_path)  # the calibration snippet writes JSON files
 
-    namespace = run_blocks(blocks, str(GETTING_STARTED))
+    run_blocks(blocks, str(GETTING_STARTED), namespace)
 
     assert set(namespace["results"].probabilities()) == GROUNDED
     assert set(namespace["state"].values()) <= {True, False}
