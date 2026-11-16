@@ -314,20 +314,12 @@ def warn_if_thinking_unavailable(
         )
 
 
-def close_truncated_block(
-    reasoning: str, end: str, notice: "str | None" = None
-) -> str:
-    """Text that closes a block the model left open, appended to its reasoning.
+def close_truncated_block(end: str, notice: "str | None" = None) -> str:
+    """Text appended to reasoning the budget cut off, closing its block.
 
-    Starts a new line unless the reasoning ends in whitespace, then adds
-    ``notice`` (if any) on its own line, then the closing delimiter ``end``:
-    ``"...and finally the"`` becomes ``"...and finally the\\nNOTICE\\n</think>"``.
-    Returns only the appended text.
+    ``"\\n" + end``, or ``"\\n" + notice + "\\n" + end`` with a notice.
     """
-    closing = "" if reasoning[-1:].isspace() else "\n"
-    if notice is not None:
-        closing += notice if notice[-1:].isspace() else notice + "\n"
-    return closing + end
+    return "\n" + ("" if notice is None else notice + "\n") + end
 
 
 def leading_whitespace_tokens(step_tokens: Sequence[str]) -> int:
