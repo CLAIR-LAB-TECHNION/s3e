@@ -8,11 +8,28 @@ and state conversion between s3e's ``dict[str, bool]`` format and
 Unified Planning's native types.
 """
 
+from contextlib import contextmanager
 from itertools import product
 from typing import Optional
 
+from pyparsing import ParserElement
 from unified_planning.io import PDDLReader, PDDLWriter
 from unified_planning.shortcuts import Problem, UPState, FNode
+
+
+@contextmanager
+def _released_parse_cache():
+    """Clear pyparsing's packrat cache when a PDDL parse ends.
+
+    Unified Planning turns the cache on, and it keeps the parse's exceptions
+    until the next parse. Their tracebacks hold every calling frame, so an
+    estimator built during a parse, and the model it loaded, would stay in
+    memory after it is discarded.
+    """
+    try:
+        yield
+    finally:
+        ParserElement.reset_cache()
 
 
 def create_up_problem(domain: str, problem: str) -> Problem:
@@ -21,8 +38,10 @@ def create_up_problem(domain: str, problem: str) -> Problem:
     if domain.lower().endswith(".pddl"):
         if not problem.lower().endswith(".pddl"):
             raise ValueError("if domain is a file, problem must also be a file")
-        return reader.parse_problem(domain, problem)
-    return reader.parse_problem_string(domain, problem)
+        with _released_parse_cache():
+            return reader.parse_problem(domain, problem)
+    with _released_parse_cache():
+        return reader.parse_problem_string(domain, problem)
 
 
 def get_object_names_dict(up_problem: Problem) -> dict[str, list[str]]:
