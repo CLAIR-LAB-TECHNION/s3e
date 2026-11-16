@@ -730,6 +730,9 @@ class TestCalibratorCompat:
             ({"thinking": True, "max_thinking_tokens": 256, "thinking_truncation_notice": "CUT"},
              {"thinking_truncation_notice": None}, None,
              "thinking_truncation_notice: fitted 'CUT', now None"),
+            ({"thinking": True, "max_thinking_tokens": 256, "thinking_truncation_notice": "FIRST"},
+             {"thinking_truncation_notice": "SECOND"}, None,
+             "thinking_truncation_notice: fitted 'FIRST', now 'SECOND'"),
         ],
     )
     def test_policy_mismatch_refused(self, images, fitted, now, call_kwargs, detail):
