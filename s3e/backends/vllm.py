@@ -127,7 +127,8 @@ class VLLMBackend(VLMBackend):
             cannot make the model think.
         max_thinking_tokens: Reasoning budget per query with
             ``thinking=True``; a block still open after this many tokens is
-            closed, and the answer scored or the reply generated after it.
+            closed (:attr:`VLMOutput.thinking_truncated` is then True), and
+            the answer scored or the reply generated after it.
             The prompt plus this budget (plus the reply, in text mode) must
             fit in the engine's ``max_model_len``. Defaults to 1024.
         thinking_delimiters: The tokens that open and close a thinking
@@ -382,7 +383,7 @@ class VLLMBackend(VLMBackend):
             self._prompt_text(outputs[row], images, prompts[row], system_prompt)
             for row in rows
         ]
-        continuations, reasonings = self._close_blocks(
+        continuations, reasonings, truncated = self._close_blocks(
             images, prompt_texts, prompt_open, tokens, inference_kwargs
         )
 
@@ -394,8 +395,8 @@ class VLLMBackend(VLMBackend):
             inference_kwargs,
         )
         results = list(results)
-        for row, answer, reasoning in zip(rows, answers, reasonings):
-            answer.reasoning = reasoning
+        for row, answer, reasoning, cut in zip(rows, answers, reasonings, truncated):
+            answer.reasoning, answer.thinking_truncated = reasoning, cut
             results[row] = answer
         return results
 
@@ -450,7 +451,8 @@ class VLLMBackend(VLMBackend):
         ``prompt_open`` says whether each prompt ends inside the block; the
         others get the opening delimiter first. With thinking on, the model
         reasons first (:meth:`_think`); with it off, the block is closed at
-        once. Returns the continuations and the reasoning texts.
+        once. Returns the continuations, the reasoning texts, and whether
+        each reasoning ran out of the budget (None with thinking off).
         """
         if self.thinking:
             # Open the block where the model was about to, so the reasoning
@@ -470,6 +472,7 @@ class VLLMBackend(VLMBackend):
                 for text, is_open in zip(prompt_texts, prompt_open)
             ],
             [""] * len(prompt_texts),
+            [None] * len(prompt_texts),
         )
 
     def _think(self, images, prompt_texts, tokens, inference_kwargs):
@@ -478,7 +481,8 @@ class VLLMBackend(VLMBackend):
         Every prompt ends inside an open block. Returns one continuation per
         prompt (the prompt plus its reasoning, ending with the closing
         delimiter, which is appended when the budget ran out or the model
-        stopped first) and the reasoning texts.
+        stopped first), the reasoning texts, and whether each ran out of the
+        budget.
         """
         tokenizer = self._get_tokenizer()
         sampling_params = SamplingParams(
@@ -492,15 +496,17 @@ class VLLMBackend(VLMBackend):
         )
         special_ids = set(getattr(tokenizer, "all_special_ids", []) or [])
 
-        continuations, reasonings = [], []
+        continuations, reasonings, truncated = [], [], []
         for text, output in zip(prompt_texts, outputs):
             completion = output.outputs[0]
             ids = [int(token_id) for token_id in completion.token_ids]
+            cut = False
             if tokens.end_id in ids:
                 ids = ids[: ids.index(tokens.end_id) + 1]
             elif completion.stop_reason == tokens.end_id:
                 ids.append(tokens.end_id)
             else:
+                cut = completion.finish_reason == "length"
                 while ids and ids[-1] in special_ids:
                     ids.pop()
             generated = tokenizer.decode(ids, skip_special_tokens=False)
@@ -513,7 +519,8 @@ class VLLMBackend(VLMBackend):
             reasonings.append(
                 tokenizer.decode(reasoning_ids or [], skip_special_tokens=True).strip()
             )
-        return continuations, reasonings
+            truncated.append(cut)
+        return continuations, reasonings, truncated
 
     def _generate_after_blocks(
         self, images, prompts, system_prompt, conversations, chat_kwargs,
@@ -571,7 +578,7 @@ class VLLMBackend(VLMBackend):
             row: self._prompt_text(outputs[row], images, prompts[row], system_prompt)
             for row in block_rows + as_is
         }
-        continuations, reasonings = self._close_blocks(
+        continuations, reasonings, truncated = self._close_blocks(
             images,
             [texts[row] for row in block_rows],
             [blocks[row] for row in block_rows],
@@ -591,7 +598,12 @@ class VLLMBackend(VLMBackend):
             )
             text = reply.outputs[0].text
             results[row] = (
-                VLMOutput(token_probs=None, text=text.lstrip(), reasoning=reasonings[index])
+                VLMOutput(
+                    token_probs=None,
+                    text=text.lstrip(),
+                    reasoning=reasonings[index],
+                    thinking_truncated=truncated[index],
+                )
                 if index < len(block_rows)
                 else VLMOutput(token_probs=None, text=text)
             )

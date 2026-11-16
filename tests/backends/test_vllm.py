@@ -709,13 +709,14 @@ def _step(probs_by_id):
 
 
 def _request_output(prompt="chat:q", prompt_ids=(), token_ids=(), steps=(), text="",
-                    stop_reason=None):
+                    stop_reason=None, finish_reason="stop"):
     """A mock RequestOutput; ``prompt`` is the text LLM.chat rendered."""
     completion = MagicMock()
     completion.token_ids = list(token_ids)
     completion.logprobs = [_step(probs) for probs in steps]
     completion.text = text
     completion.stop_reason = stop_reason
+    completion.finish_reason = finish_reason
     output = MagicMock()
     output.prompt = prompt
     output.prompt_token_ids = list(prompt_ids)
@@ -960,19 +961,20 @@ class TestVLLMBackendThinking:
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
-        "token_ids, stop_reason, continuation, reasoning",
+        "token_ids, stop_reason, finish_reason, continuation, reasoning, truncated",
         [
-            ([6, 6, THINK_END], THINK_END, "chat:qrr</think>", "rr"),
-            ([6, 6], THINK_END, "chat:qrr</think>", "rr"),  # stop token left out
-            ([6, 6, 6], None, "chat:qrrr\n</think>", "rrr"),  # budget ran out
-            ([6, 6, 0], None, "chat:qrr\n</think>", "rr"),  # stopped on EOS
+            ([6, 6, THINK_END], THINK_END, "stop", "chat:qrr</think>", "rr", False),
+            # The stop token left out of the ids.
+            ([6, 6], THINK_END, "stop", "chat:qrr</think>", "rr", False),
+            ([6, 6, 6], None, "length", "chat:qrrr\n</think>", "rrr", True),  # budget ran out
+            ([6, 6, 0], None, "stop", "chat:qrr\n</think>", "rr", False),  # stopped on EOS
         ],
     )
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
     def test_think_mode_generates_reasoning_then_scores(
-        self, mock_llm_cls, mock_sp_cls, token_ids, stop_reason, continuation,
-        reasoning,
+        self, mock_llm_cls, mock_sp_cls, token_ids, stop_reason, finish_reason,
+        continuation, reasoning, truncated,
     ):
         backend, mock_llm = self._make_backend(
             mock_llm_cls, thinking=True, max_thinking_tokens=3
@@ -981,7 +983,12 @@ class TestVLLMBackendThinking:
             _request_output(prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
         ]
         mock_llm.generate.side_effect = [
-            [_request_output(token_ids=token_ids, stop_reason=stop_reason)],
+            [
+                _request_output(
+                    token_ids=token_ids, stop_reason=stop_reason,
+                    finish_reason=finish_reason,
+                )
+            ],
             [_separator_output()],
             [_readout_output({4: 0.9, 5: 0.1})],
         ]
@@ -1000,6 +1007,7 @@ class TestVLLMBackendThinking:
             {"max_tokens": 3, "temperature": 0.0, "stop_token_ids": [THINK_END]}
         ]
         assert result.reasoning == reasoning
+        assert result.thinking_truncated is truncated
         assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1})
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
@@ -1089,7 +1097,10 @@ class TestVLLMBackendThinking:
 
         results = backend.query_batch([], ["q", "q"], generate=True, max_tokens=5)
 
-        assert [(r.text, r.reasoning) for r in results] == [("No", "r"), ("Yes", None)]
+        assert [(r.text, r.reasoning, r.thinking_truncated) for r in results] == [
+            ("No", "r", False),
+            ("Yes", None, None),
+        ]
         assert self._generated_prompts(mock_llm) == [
             ["chat:q<think>"],
             ["chat:q<think>r</think>"],
@@ -1114,13 +1125,15 @@ class TestVLLMBackendThinking:
             _request_output(prompt="chat:q<think>\n", prompt_ids=[1, THINK_START])
         ]
         mock_llm.generate.side_effect = [
-            [_request_output(token_ids=[6, 6, 6])],
+            [_request_output(token_ids=[6, 6, 6], finish_reason="length")],
             [_request_output(prompt_ids=[1, THINK_START, 6], text="\n\nYes")],
         ]
 
         result = backend.query([], "q", generate=True)
 
-        assert (result.text, result.reasoning) == ("Yes", "rrr")
+        assert (result.text, result.reasoning, result.thinking_truncated) == (
+            "Yes", "rrr", True
+        )
         assert self._generated_prompts(mock_llm) == [
             ["chat:q<think>\n"],
             ["chat:q<think>\nrrr\n</think>"],
