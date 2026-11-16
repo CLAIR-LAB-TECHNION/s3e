@@ -4,10 +4,8 @@
 """The code shown in the README, the getting-started guide, and the
 walkthrough notebook runs as documented, against a real (small) model.
 
-All tests here are slow: they download ``HuggingFaceTB/SmolVLM-256M-Instruct``
-(~500 MB) and run it, on CPU if no GPU is available. The notebook also
-downloads and runs ``Qwen/Qwen3.5-0.8B`` (~1.7 GB) for its thinking-models
-section.
+All tests here are slow: they download ``Qwen/Qwen3.5-0.8B`` (~1.7 GB) and
+run it, on CPU if no GPU is available.
 """
 
 import json

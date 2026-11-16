@@ -50,7 +50,7 @@ pip install -e ".[pddl,hf]"     # or ".[dev]" / ".[dev-gpu]" for contributing
 
 ## Quick Start
 
-This example runs as-is on CPU or GPU with `pip install "s3e[pddl,hf]"`. It uses a tiny model (`HuggingFaceTB/SmolVLM-256M-Instruct`, ~500 MB, downloaded on first use) and a synthetic scene, so nothing else needs to be on disk. A model this small is useful for trying the API, not for accurate estimates.
+This example runs as-is on CPU or GPU with `pip install "s3e[pddl,hf]"`. It uses a small model (`Qwen/Qwen3.5-0.8B`, ~1.7 GB, downloaded on first use) and a synthetic scene, so nothing else needs to be on disk. A model this small is useful for trying the API, not for accurate estimates.
 
 ```python
 from PIL import Image, ImageDraw
@@ -82,7 +82,7 @@ scene = [image]
 estimator = SemanticStateEstimator.from_pddl(
     domain_pddl,
     problem_pddl,
-    vlm="HuggingFaceTB/SmolVLM-256M-Instruct",
+    vlm="Qwen/Qwen3.5-0.8B",
     translator=TemplateTranslator({
         "on": "Is the {0} block on top of the {1} block?",
         "clear": "Is the {0} block clear?",
@@ -92,7 +92,7 @@ estimator = SemanticStateEstimator.from_pddl(
 
 results = estimator.estimate(scene)  # PredictionSet: full detail per predicate
 print(results.probabilities())       # {"on(blue,orange)": ..., ...}
-state = estimator(scene)             # dict[str, bool], ready for a planner
+state = results.to_state()          # dict[str, bool], ready for a planner
 ```
 
 `QueryEngine` answers free-form visual questions the same way, with no PDDL:
@@ -100,7 +100,7 @@ state = estimator(scene)             # dict[str, bool], ready for a planner
 ```python
 from s3e import QueryEngine
 
-engine = QueryEngine("HuggingFaceTB/SmolVLM-256M-Instruct")
+engine = QueryEngine("Qwen/Qwen3.5-0.8B")
 predictions = engine.ask(scene, ["Is there a blue block?", "Is there a green block?"])
 print(predictions.to_state())  # {'Is there a blue block?': True, ...}
 ```
