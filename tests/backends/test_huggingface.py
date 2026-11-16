@@ -1155,18 +1155,23 @@ class TestHuggingFaceVLMThinking:
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
-        "generated, continuation, reasoning, truncated",
+        "generated, notice, continuation, reasoning, truncated",
         [
-            ([6, 6, THINK_END], "chat:qrr</think>", "rr", False),
-            ([6, 6, 6], "chat:qrrr\n</think>", "rrr", True),  # budget ran out
-            ([6, 6, 0], "chat:qrr\n</think>", "rr", False),  # stopped on EOS
+            ([6, 6, THINK_END], None, "chat:qrr</think>", "rr", False),
+            ([6, 6, 6], None, "chat:qrrr\n</think>", "rrr", True),  # budget ran out
+            ([6, 6, 0], None, "chat:qrr\n</think>", "rr", False),  # stopped on EOS
+            # The notice goes only into a block the budget cut off ...
+            ([6, 6, 6], "CUT", "chat:qrrr\nCUT\n</think>", "rrr", True),
+            # ... not into one the model closed, or ended with EOS.
+            ([6, 6, THINK_END], "CUT", "chat:qrr</think>", "rr", False),
+            ([6, 6, 0], "CUT", "chat:qrr\n</think>", "rr", False),
         ],
     )
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_think_mode_generates_reasoning_then_scores(
-        self, mock_model_cls, mock_proc_cls, generated, continuation, reasoning,
-        truncated,
+        self, mock_model_cls, mock_proc_cls, generated, notice, continuation,
+        reasoning, truncated,
     ):
         from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
@@ -1184,6 +1189,7 @@ class TestHuggingFaceVLMThinking:
             generate=generate,
             thinking=True,
             max_thinking_tokens=3,
+            thinking_truncation_notice=notice,
         )
 
         result = vlm.query([], "q", interest_tokens=["Yes", "No"])
@@ -1196,7 +1202,7 @@ class TestHuggingFaceVLMThinking:
             continuation,
             continuation + "\n\n",
         ]
-        assert result.reasoning == reasoning
+        assert result.reasoning == reasoning  # never the notice
         assert result.thinking_truncated is truncated
         assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1}, abs=1e-6)
 
@@ -1343,22 +1349,27 @@ class TestHuggingFaceVLMThinking:
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
-        "prompt_ids, first_reply, reasoning_ids, sent, reasoning, truncated",
+        "prompt_ids, first_reply, reasoning_ids, notice, sent, reasoning, truncated",
         [
             # The prompt opens the block: reason, then reply after it.
-            ([1, THINK_START], None, [6, THINK_END], "chat:qr</think>", "r", False),
-            # The budget (3) runs out: the block is closed for the model.
-            ([1, THINK_START], None, [6, 6, 6], "chat:qrrr\n</think>", "rrr", True),
+            ([1, THINK_START], None, [6, THINK_END], None, "chat:qr</think>", "r", False),
+            # The budget (3) runs out: the block is closed for the model,
+            # with the notice when one is set.
+            ([1, THINK_START], None, [6, 6, 6], None, "chat:qrrr\n</think>", "rrr", True),
+            (
+                [1, THINK_START], None, [6, 6, 6], "CUT",
+                "chat:qrrr\nCUT\n</think>", "rrr", True,
+            ),
             # The reply opens the block: it stops there, and the model
             # reasons inside the block it opened.
-            ([1, 2], [THINK_START], [6, THINK_END], "chat:q<think>r</think>", "r", False),
+            ([1, 2], [THINK_START], [6, THINK_END], None, "chat:q<think>r</think>", "r", False),
         ],
     )
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_text_mode_reasons_then_replies(
         self, mock_model_cls, mock_proc_cls, prompt_ids, first_reply, reasoning_ids,
-        sent, reasoning, truncated,
+        notice, sent, reasoning, truncated,
     ):
         from s3e.backends.huggingface import _StopAtFirstToken
 
@@ -1378,6 +1389,7 @@ class TestHuggingFaceVLMThinking:
             generate=generate,
             thinking=True,
             max_thinking_tokens=3,
+            thinking_truncation_notice=notice,
         )
         self._decode_whole_sequences(processor)
 
@@ -1612,6 +1624,8 @@ class TestHuggingFaceVLMThinking:
             {"thinking": True, "thinking_delimiters": None},
             {"max_thinking_tokens": 0},
             {"thinking_delimiters": ("<think>",)},
+            {"thinking_truncation_notice": ""},
+            {"thinking_truncation_notice": "cut</think>"},
         ],
     )
     @patch("s3e.backends.huggingface.AutoProcessor")
@@ -1910,6 +1924,16 @@ class TestHuggingFaceVLMThinkingIntegration:
 
         assert isinstance(result.text, str)
         assert result.reasoning
+
+    def test_text_mode_replies_after_a_block_the_budget_closed(self, image):
+        result = self._backend(
+            thinking=True, max_thinking_tokens=4, thinking_truncation_notice="CUT"
+        ).query([image], "Is it red?", generate=True, max_new_tokens=6)
+
+        assert isinstance(result.text, str)
+        assert result.reasoning
+        assert isinstance(result.thinking_truncated, bool)
+        assert "CUT" not in result.reasoning
 
     def test_text_mode_answers_after_a_closed_block(self, image):
         backend = self._backend(chat_template_kwargs={"enable_thinking": True})

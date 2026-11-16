@@ -723,6 +723,13 @@ class TestCalibratorCompat:
             ({}, {}, {"do_sample": True}, "do_sample: fitted None, now True"),
             ({"model_id": "org/a"}, {"model_id": "org/b"}, None,
              "model_id: fitted 'org/a', now 'org/b'"),
+            # A calibrator fitted without a notice has no such field.
+            ({"thinking": True, "max_thinking_tokens": 256},
+             {"thinking_truncation_notice": "CUT"}, None,
+             "thinking_truncation_notice: fitted None, now 'CUT'"),
+            ({"thinking": True, "max_thinking_tokens": 256, "thinking_truncation_notice": "CUT"},
+             {"thinking_truncation_notice": None}, None,
+             "thinking_truncation_notice: fitted 'CUT', now None"),
         ],
     )
     def test_policy_mismatch_refused(self, images, fitted, now, call_kwargs, detail):

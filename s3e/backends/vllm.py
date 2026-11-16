@@ -63,6 +63,7 @@ from .backend import (
 from .utils.thinking import (
     DEFAULT_MAX_THINKING_TOKENS,
     MAX_SEPARATOR_TOKENS,
+    close_truncated_block,
     find_thinking_switch,
     leading_whitespace_tokens,
     resolve_thinking_tokens,
@@ -131,6 +132,14 @@ class VLLMBackend(VLMBackend):
             the answer scored or the reply generated after it.
             The prompt plus this budget (plus the reply, in text mode) must
             fit in the engine's ``max_model_len``. Defaults to 1024.
+        thinking_truncation_notice: Text put inside a block the budget cut
+            off, on its own line before the closing delimiter, e.g.
+            ``"THINKING TRUNCATED"``. It conditions the answer, so it shifts
+            logprobs-mode probabilities and text-mode replies, and whether it
+            helps depends on the model; measure before using it. ``None``
+            (default) closes the block with nothing added. It never appears
+            in :attr:`VLMOutput.reasoning` and must not contain a thinking
+            delimiter.
         thinking_delimiters: The tokens that open and close a thinking
             block, active only when both are single tokens of the model's
             vocabulary. ``"auto"`` (default) uses the first such pair among
@@ -166,15 +175,18 @@ class VLLMBackend(VLMBackend):
         thinking: bool = False,
         max_thinking_tokens: int = DEFAULT_MAX_THINKING_TOKENS,
         thinking_delimiters: tuple[str, str] | str | None = "auto",
+        thinking_truncation_notice: str | None = None,
         **engine_kwargs,
     ):
         self.model_id = model_id
         self.num_logprobs = _validate_num_logprobs(num_logprobs)
         delimiter_candidates = validate_thinking_options(
-            thinking, max_thinking_tokens, thinking_delimiters
+            thinking, max_thinking_tokens, thinking_delimiters,
+            thinking_truncation_notice,
         )
         self.thinking = thinking
         self.max_thinking_tokens = max_thinking_tokens
+        self.thinking_truncation_notice = thinking_truncation_notice
         self.thinking_delimiters = thinking_delimiters
         self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self._token_reverse_index: dict[str, list[int]] | None = None
@@ -482,7 +494,8 @@ class VLLMBackend(VLMBackend):
         prompt (the prompt plus its reasoning, ending with the closing
         delimiter, which is appended when the budget ran out or the model
         stopped first), the reasoning texts, and whether each ran out of the
-        budget.
+        budget. A block the budget cut off gets the truncation notice, if
+        any, before its closing delimiter.
         """
         tokenizer = self._get_tokenizer()
         sampling_params = SamplingParams(
@@ -511,9 +524,11 @@ class VLLMBackend(VLMBackend):
                     ids.pop()
             generated = tokenizer.decode(ids, skip_special_tokens=False)
             if not ids or ids[-1] != tokens.end_id:
-                if not generated[-1:].isspace():
-                    generated += "\n"
-                generated += tokens.end
+                generated += close_truncated_block(
+                    generated,
+                    tokens.end,
+                    self.thinking_truncation_notice if cut else None,
+                )
             reasoning_ids, _ = tokens.split(ids, prompt_open=True)
             continuations.append(text + generated)
             reasonings.append(

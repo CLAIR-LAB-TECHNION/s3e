@@ -961,23 +961,27 @@ class TestVLLMBackendThinking:
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
     @pytest.mark.parametrize(
-        "token_ids, stop_reason, finish_reason, continuation, reasoning, truncated",
+        "token_ids, stop_reason, finish_reason, notice, continuation, reasoning, truncated",
         [
-            ([6, 6, THINK_END], THINK_END, "stop", "chat:qrr</think>", "rr", False),
+            ([6, 6, THINK_END], THINK_END, "stop", "CUT", "chat:qrr</think>", "rr", False),
             # The stop token left out of the ids.
-            ([6, 6], THINK_END, "stop", "chat:qrr</think>", "rr", False),
-            ([6, 6, 6], None, "length", "chat:qrrr\n</think>", "rrr", True),  # budget ran out
-            ([6, 6, 0], None, "stop", "chat:qrr\n</think>", "rr", False),  # stopped on EOS
+            ([6, 6], THINK_END, "stop", None, "chat:qrr</think>", "rr", False),
+            # The budget ran out; only then does the notice go in.
+            ([6, 6, 6], None, "length", None, "chat:qrrr\n</think>", "rrr", True),
+            ([6, 6, 6], None, "length", "CUT", "chat:qrrr\nCUT\n</think>", "rrr", True),
+            # Stopped on EOS.
+            ([6, 6, 0], None, "stop", "CUT", "chat:qrr\n</think>", "rr", False),
         ],
     )
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
     def test_think_mode_generates_reasoning_then_scores(
         self, mock_llm_cls, mock_sp_cls, token_ids, stop_reason, finish_reason,
-        continuation, reasoning, truncated,
+        notice, continuation, reasoning, truncated,
     ):
         backend, mock_llm = self._make_backend(
-            mock_llm_cls, thinking=True, max_thinking_tokens=3
+            mock_llm_cls, thinking=True, max_thinking_tokens=3,
+            thinking_truncation_notice=notice,
         )
         mock_llm.chat.return_value = [
             _request_output(prompt_ids=[1, THINK_START], steps=[{6: 1.0}])
@@ -1006,7 +1010,7 @@ class TestVLLMBackendThinking:
         assert think_params == [
             {"max_tokens": 3, "temperature": 0.0, "stop_token_ids": [THINK_END]}
         ]
-        assert result.reasoning == reasoning
+        assert result.reasoning == reasoning  # never the notice
         assert result.thinking_truncated is truncated
         assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1})
 
@@ -1111,15 +1115,22 @@ class TestVLLMBackendThinking:
         assert {"max_tokens": 3, "temperature": 0.0, "stop_token_ids": [THINK_END]} in params
         assert {"max_tokens": 5, "temperature": 0.0} in params  # the reply
 
+    @pytest.mark.parametrize(
+        "notice, sent",
+        [
+            (None, "chat:q<think>\nrrr\n</think>"),
+            ("CUT", "chat:q<think>\nrrr\nCUT\n</think>"),
+        ],
+    )
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
     def test_text_mode_replies_after_a_block_the_budget_closed(
-        self, mock_llm_cls, mock_sp_cls
+        self, mock_llm_cls, mock_sp_cls, notice, sent
     ):
         """LLM.chat only renders when the template opens the block."""
         backend, mock_llm = self._make_backend(
             mock_llm_cls, tokenizer=_think_tokenizer(opens=True), thinking=True,
-            max_thinking_tokens=3,
+            max_thinking_tokens=3, thinking_truncation_notice=notice,
         )
         mock_llm.chat.return_value = [
             _request_output(prompt="chat:q<think>\n", prompt_ids=[1, THINK_START])
@@ -1134,10 +1145,7 @@ class TestVLLMBackendThinking:
         assert (result.text, result.reasoning, result.thinking_truncated) == (
             "Yes", "rrr", True
         )
-        assert self._generated_prompts(mock_llm) == [
-            ["chat:q<think>\n"],
-            ["chat:q<think>\nrrr\n</think>"],
-        ]
+        assert self._generated_prompts(mock_llm) == [["chat:q<think>\n"], [sent]]
         sampling = [c.kwargs for c in mock_sp_cls.call_args_list]
         assert {"max_tokens": 1, "temperature": 0.0} in sampling  # the render-only chat
 
@@ -1304,6 +1312,8 @@ class TestVLLMBackendThinking:
             {"thinking": True, "thinking_delimiters": None},
             {"max_thinking_tokens": 0},
             {"thinking_delimiters": ("<think>",)},
+            {"thinking_truncation_notice": ""},
+            {"thinking_truncation_notice": "cut</think>"},
         ],
     )
     @patch("s3e.backends.vllm.SamplingParams")
