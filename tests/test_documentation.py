@@ -42,35 +42,43 @@ def run_blocks(blocks: list[str], source: str) -> dict:
     return namespace
 
 
-def test_readme_quick_start_runs_in_order(tmp_path, monkeypatch):
+GROUNDED = {
+    "on(blue,blue)", "on(blue,orange)", "on(orange,blue)", "on(orange,orange)",
+    "clear(blue)", "clear(orange)",
+}
+
+
+def test_readme_quick_start_runs_in_order():
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    pytest.importorskip("unified_planning")
+    blocks = python_blocks(README, "Quick Start")
+    assert len(blocks) == 2
+
+    namespace = run_blocks(blocks, str(README))
+
+    assert set(namespace["results"].probabilities()) == GROUNDED
+    assert set(namespace["state"].values()) <= {True, False}
+
+
+@pytest.mark.skipif(not GETTING_STARTED.exists(), reason="docs/ is not in the sdist")
+def test_getting_started_quick_start_runs_in_order(tmp_path, monkeypatch):
     pytest.importorskip("torch")
     pytest.importorskip("transformers")
     pytest.importorskip("unified_planning")
     pytest.importorskip("sklearn")
     # The vLLM snippet needs a CUDA host and the vllm extra.
-    blocks = [b for b in python_blocks(README, "Quick Start") if "VLLMBackend(" not in b]
+    blocks = [
+        b for b in python_blocks(GETTING_STARTED, "Quick start") if "VLLMBackend(" not in b
+    ]
     assert len(blocks) >= 8
     monkeypatch.chdir(tmp_path)  # the calibration snippet writes JSON files
 
-    namespace = run_blocks(blocks, str(README))
+    namespace = run_blocks(blocks, str(GETTING_STARTED))
 
+    assert set(namespace["results"].probabilities()) == GROUNDED
     assert set(namespace["state"].values()) <= {True, False}
     assert (tmp_path / "platt-profile.json").exists()
-
-
-@pytest.mark.skipif(not GETTING_STARTED.exists(), reason="docs/ is not in the sdist")
-def test_getting_started_example_runs():
-    pytest.importorskip("torch")
-    pytest.importorskip("transformers")
-    pytest.importorskip("unified_planning")
-    (block,) = [b for b in python_blocks(GETTING_STARTED) if "from_pddl" in b]
-
-    namespace = run_blocks([block], str(GETTING_STARTED))
-
-    assert set(namespace["results"].probabilities()) == {
-        "on(blue,blue)", "on(blue,orange)", "on(orange,blue)", "on(orange,orange)",
-        "clear(blue)", "clear(orange)",
-    }
 
 
 @pytest.mark.skipif(not NOTEBOOK.exists(), reason="docs/ is not in the sdist")

@@ -8,10 +8,7 @@ back to a planner.
 
 ## Statement of need
 
-```{include} ../README.md
-:start-after: <!-- docs:statement-of-need:start -->
-:end-before: <!-- docs:statement-of-need:end -->
-```
+Research that grounds symbolic planners in perception (task planning, task-and-motion planning, embodied AI, neuro-symbolic reasoning) keeps re-implementing the same pipeline: enumerate grounded predicates, phrase a question for each, prompt a particular model API with images, and turn the output into truth values. Parsing generated text throws away the model's uncertainty, and hard-wiring one provider makes cross-model comparisons and calibration studies laborious. S3E packages this pipeline as a backend-agnostic library with probabilities as a first-class output: answer-token probability scoring, an optional explicit "unknown" answer, multi-view averaging, and offline calibration, over HuggingFace, vLLM, and OpenAI models. Its query engine also works without PDDL, for anyone who needs probabilistic yes/no or multiple-choice answers from a VLM.
 
 ## Design
 
