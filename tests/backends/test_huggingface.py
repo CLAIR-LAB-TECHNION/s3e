@@ -975,8 +975,8 @@ class TestHuggingFaceVLMThinking:
 
         ``prompt_ids`` is what the processor returns for every text;
         ``forward_steps`` are the next-token distributions of successive
-        reads (the last one repeats): forward passes, or every step of a
-        generation that returns logits whose ``generate`` gives only ids.
+        forward passes and logit-returning generations (one per call, at
+        every step), and the last one repeats.
         ``generate`` is the side effect of ``model.generate``. With
         ``reads_enable_thinking``, the chat template renders an open block
         when ``enable_thinking`` is set.
@@ -1265,10 +1265,9 @@ class TestHuggingFaceVLMThinking:
         """Only a row of whitespace alone gets a forward pass, with the query kwargs."""
         from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
-        pad = [0] * MAX_SEPARATOR_TOKENS
         sequences = torch.tensor([
-            ([1, THINK_START, 4] + pad)[:-1],  # "Yes" at once
-            ([1, THINK_START, 3, 5] + pad)[:-2],  # "\n\n", then "No"
+            [1, THINK_START, 4] + [0] * (MAX_SEPARATOR_TOKENS - 1),  # "Yes" at once
+            [1, THINK_START, 3, 5] + [0] * (MAX_SEPARATOR_TOKENS - 2),  # "\n\n", then "No"
             [1, THINK_START] + [3] * MAX_SEPARATOR_TOKENS,  # whitespace alone
         ])
         logits = tuple(

@@ -21,10 +21,7 @@ Where no switch exists, a block can still appear: the chat template opens it
 most likely next token opens one. With thinking off, backends then close
 the block at once and read the answer after the empty block; with thinking
 on, the model reasons first and the answer is read after its reasoning,
-past the whitespace the model puts after the block. HuggingFace backends
-read it from the raw logits of the step after that whitespace; vLLM reads it
-from a forward pass over the continuation and the whitespace, since its
-prefill and decode kernels can disagree (e.g. in Qwen3.5's linear attention).
+past the whitespace the model puts after the block.
 """
 
 import warnings
@@ -336,8 +333,7 @@ def close_truncated_block(
 def leading_whitespace_tokens(step_tokens: Sequence[str]) -> int:
     """How many generated tokens come before the first non-whitespace one.
 
-    These tokens are the separator a chat template puts after a closed block;
-    the answer token comes right after them.
+    These tokens separate a closed thinking block from the answer.
     """
     for step, token in enumerate(step_tokens):
         if token.strip():
