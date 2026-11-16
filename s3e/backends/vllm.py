@@ -130,8 +130,9 @@ class VLLMBackend(VLMBackend):
             ``thinking=True``; a block still open after this many tokens is
             closed (:attr:`VLMOutput.thinking_truncated` is then True), and
             the answer scored or the reply generated after it.
-            The prompt plus this budget (plus the reply, in text mode) must
-            fit in the engine's ``max_model_len``. Defaults to 1024.
+            The prompt plus this budget (plus the notice, if set, and the
+            reply, in text mode) must fit in the engine's ``max_model_len``.
+            Defaults to 1024.
         thinking_truncation_notice: Text put inside a block the budget cut
             off, on its own line before the closing delimiter, e.g.
             ``"THINKING TRUNCATED"``. It conditions the answer, so it shifts
