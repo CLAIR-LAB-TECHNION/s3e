@@ -8,13 +8,7 @@
 
 ## Overview
 
-S3E estimates grounded PDDL state predicates from images using vision-language models (VLMs). Given a planning domain, a problem, and images of a scene, it asks a VLM one question per grounded predicate (e.g. `on(a,b)` → "Is block a on top of block b?"), reads the probability the model assigns to the answer tokens instead of parsing its text, and returns a probability per predicate (optionally calibrated against labeled examples) plus a symbolic state you can hand back to a planner.
-
-### Statement of need
-
-<!-- docs:statement-of-need:start -->
-Research that grounds symbolic planners in perception (task planning, task-and-motion planning, embodied AI, neuro-symbolic reasoning) keeps re-implementing the same pipeline: enumerate grounded predicates, phrase a question for each, prompt a particular model API with images, and turn the output into truth values. Parsing generated text throws away the model's uncertainty, and hard-wiring one provider makes cross-model comparisons and calibration studies laborious. S3E packages this pipeline as a backend-agnostic library with probabilities as a first-class output: answer-token probability scoring, an optional explicit "unknown" answer, multi-view averaging, and offline calibration, over HuggingFace, vLLM, and OpenAI models. Its query engine also works without PDDL, for anyone who needs probabilistic yes/no or multiple-choice answers from a VLM.
-<!-- docs:statement-of-need:end -->
+S3E estimates grounded PDDL state predicates from images using vision-language models (VLMs). Given a planning domain, a problem, and images of a scene, it asks a VLM one question per grounded predicate (e.g. `on(a,b)` → "Is block a on top of block b?"), reads the probability the model assigns to the answer tokens instead of parsing its text, and returns a probability per predicate (optionally calibrated against labeled examples) plus a symbolic state you can hand back to a planner. It is built for research that grounds symbolic planners in perception, where parsing a model's text throws away its uncertainty and tying code to one provider makes comparing models laborious.
 
 S3E is built as concentric, independently usable layers:
 

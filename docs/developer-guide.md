@@ -154,8 +154,7 @@ the `Draft PDF` workflow builds the JOSS paper when `paper/` changes.
 
 The documentation is built with Sphinx from `docs/`: MyST Markdown pages,
 autodoc API pages under `docs/api/`, and the walkthrough notebook (rendered
-with its saved outputs). The statement of need on the home page is included
-from `README.md`, so edit it there. Everything else lives in `docs/`.
+with its saved outputs). No page includes text from `README.md`.
 
 Each piece of documentation has one home:
 
