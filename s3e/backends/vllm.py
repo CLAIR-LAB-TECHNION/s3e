@@ -136,7 +136,7 @@ class VLLMBackend(VLMBackend):
             off, on its own line before the closing delimiter, e.g.
             ``"THINKING TRUNCATED"``. It conditions the answer, so it shifts
             logprobs-mode probabilities and text-mode replies, and whether it
-            helps depends on the model; measure before using it. ``None``
+            helps depends on the model. Measure before using it. ``None``
             (default) closes the block with nothing added. It never appears
             in :attr:`VLMOutput.reasoning` and must not contain a thinking
             delimiter.
