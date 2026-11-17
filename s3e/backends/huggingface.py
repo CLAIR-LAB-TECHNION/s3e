@@ -539,7 +539,7 @@ class HuggingFaceVLM(VLMBackend):
         Chat templates put whitespace between a closed block and the answer
         (``"\\n\\n"`` for Qwen). Generated steps find it, each row stopping at
         its first non-whitespace token, and the raw logits of that step are
-        the answer. Rows with no such step are read by a forward pass over
+        the answer. Under beam search they are read by a forward pass over
         the continuation plus the whitespace, with ``inference_kwargs``.
         """
         inputs = self._prepare_rows(continuations, images)
@@ -562,7 +562,10 @@ class HuggingFaceVLM(VLMBackend):
         ):
             ids = [int(token_id) for token_id in sequence]
             count = leading_whitespace_tokens(self._decode_token_ids(ids))
-            if logits is not None and count < len(ids):
+            if count == len(ids):
+                probs[row] = torch.zeros_like(output.logits[0][0], dtype=torch.float)
+                continue
+            if logits is not None:
                 probs[row] = torch.softmax(logits[count][row].float(), dim=-1)
                 continue
             unread.append(row)
@@ -689,7 +692,9 @@ class HuggingFaceVLM(VLMBackend):
                 )
                 for token, start, end in spans
             }
-            results.append((token_probs, argmax_ids[row] in interest_id_set))
+            # An all-zero row (no answer) has no argmax to speak of.
+            in_interest = argmax_ids[row] in interest_id_set and any(token_probs.values())
+            results.append((token_probs, in_interest))
         return results
 
     def _render_prompt(self, images, prompt, system_prompt=None):

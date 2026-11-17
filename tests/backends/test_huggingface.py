@@ -1285,7 +1285,7 @@ class TestHuggingFaceVLMThinking:
     def test_each_row_is_read_at_its_first_non_whitespace_step(
         self, mock_model_cls, mock_proc_cls
     ):
-        """Only a row of whitespace alone gets a forward pass, with the query kwargs."""
+        """A row of whitespace alone never reached an answer, so it has none."""
         from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
 
         sequences = torch.tensor([
@@ -1309,23 +1309,24 @@ class TestHuggingFaceVLMThinking:
 
         results = vlm.query_batch([], ["q"] * 3, interest_tokens=["Yes", "No"], use_cache=False)
 
-        assert [r.token_probs["Yes"] for r in results] == pytest.approx([0.1, 0.2, 0.7])
-        assert self._texts_sent_to_processor(processor)[-1] == (
-            "chat:q</think>" + "\n\n" * MAX_SEPARATOR_TOKENS
-        )
-        assert model.call_count == 2 and model.call_args.kwargs["use_cache"] is False
-        assert "use_cache" not in model.generate.call_args.kwargs
+        assert [r.token_probs["Yes"] for r in results] == pytest.approx([0.1, 0.2, 0.0])
+        assert results[2].token_probs == {"Yes": 0.0, "No": 0.0}
+        assert results[2].argmax_in_interest is False
+        assert model.call_count == 1  # no forward pass after the separator call
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
     def test_beam_search_reads_the_answer_by_a_forward_pass(self, mock_model_cls, mock_proc_cls):
         beams = SimpleNamespace(sequences=torch.tensor([[1, THINK_START, 4]]),
                                 logits=(_logits_for({5: 1.0}).expand(2, -1),))
-        vlm, _, _ = self._make_vlm(mock_model_cls, mock_proc_cls, prompt_ids=[1, THINK_START],
-                                   forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
-                                   generate=lambda **kwargs: beams)
-        result = vlm.query([], "q", interest_tokens=["Yes", "No"], num_beams=2)
+        vlm, model, _ = self._make_vlm(mock_model_cls, mock_proc_cls, prompt_ids=[1, THINK_START],
+                                       forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
+                                       generate=lambda **kwargs: beams)
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"], num_beams=2, use_cache=False)
         assert result.token_probs == pytest.approx({"Yes": 0.6, "No": 0.4}, abs=1e-6)
+        # The forward pass gets the query's kwargs; generate() does not get use_cache.
+        assert model.call_count == 2 and model.call_args.kwargs["use_cache"] is False
+        assert "use_cache" not in model.generate.call_args.kwargs
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")

@@ -75,8 +75,9 @@ class Prediction:
     def matched(self) -> bool:
         """True when any answer option or the null option received mass.
 
-        False for a ``text_match`` reply that starts with no answer token, or
-        when a top-k ``logprobs`` backend returned no answer token at all.
+        False for a ``text_match`` reply that starts with no answer token,
+        when a top-k ``logprobs`` backend returned no answer token at all, or
+        when a thinking model wrote only whitespace after its block.
         """
         return sum(self.masses.values()) + self.null_mass > 0.0
 

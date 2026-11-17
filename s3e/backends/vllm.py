@@ -648,10 +648,11 @@ class VLLMBackend(VLMBackend):
         )
         for prompt_ids, output in zip(chat_prompt_ids, separator_outputs):
             self._check_continuation(prompt_ids, output.prompt_token_ids or [])
-        texts = []
+        texts, stuck = [], []
         for text, output in zip(continuations, separator_outputs):
             ids = [int(token_id) for token_id in output.outputs[0].token_ids]
             count = leading_whitespace_tokens(decode_single_token_ids(tokenizer, ids))
+            stuck.append(count == len(ids))
             texts.append(text + tokenizer.decode(ids[:count], skip_special_tokens=False))
 
         sampling_params = self._build_sampling_params(
@@ -661,7 +662,11 @@ class VLLMBackend(VLMBackend):
             [self._engine_prompt(text, images) for text in texts], sampling_params
         )
         return [
-            self._to_vlm_output(output, False, interest_tokens) for output in outputs
+            VLMOutput(
+                token_probs=dict.fromkeys(interest_tokens or (), 0.0),
+                argmax_in_interest=False if interest_tokens is not None else None,
+            ) if is_stuck else self._to_vlm_output(output, False, interest_tokens)
+            for output, is_stuck in zip(outputs, stuck)
         ]
 
     def _check_continuation(self, chat_prompt_ids, continuation_ids) -> None:
