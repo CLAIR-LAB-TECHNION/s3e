@@ -1365,8 +1365,7 @@ class TestVLLMBackendIntegration:
         from s3e.backends.vllm import VLLMBackend
 
         # num_logprobs=None exercises the full-vocab path (max_logprobs=-1 /
-        # logprobs=-1, the vLLM >= 0.11.0 feature the pyproject pin exists for)
-        # and makes the token-string assertions below deterministic: the full
+        # logprobs=-1) and makes the token-string assertions below deterministic: the full
         # vocabulary necessarily contains the tokens they look for.
         # Prefix caching is off so repeated queries with the same prompt (the
         # parity test) recompute their logits identically.
