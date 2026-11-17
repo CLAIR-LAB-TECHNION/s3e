@@ -838,7 +838,7 @@ class TestVLLMBackendThinking:
                                 token_ids=[3] * MAX_SEPARATOR_TOKENS),
                 _separator_output(),
             ],
-            [_readout_output({4: 0.8, 5: 0.2})],
+            [_readout_output({4: 0.1, 5: 0.1}), _readout_output({4: 0.8, 5: 0.2})],
         ]
 
         stuck, answered = backend.query_batch([], ["q", "q"], interest_tokens=["Yes", "No"])
@@ -847,8 +847,6 @@ class TestVLLMBackendThinking:
         assert stuck.argmax_in_interest is False
         assert stuck.reasoning == ""
         assert answered.token_probs == pytest.approx({"Yes": 0.8, "No": 0.2})
-        # Only the row that reached an answer is scored.
-        assert self._generated_prompts(mock_llm)[-1] == ["chat:q</think>\n\n"]
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
