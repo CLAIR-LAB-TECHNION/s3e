@@ -14,6 +14,13 @@ from typing import Optional
 from unified_planning.io import PDDLReader, PDDLWriter
 from unified_planning.shortcuts import Problem, UPState, FNode
 
+# Unified Planning turns on pyparsing's packrat cache for every grammar. On a cache
+# hit pyparsing re-raises its stored exception, which then keeps the traceback, so
+# the cache holds the frames that called the parser, including any estimator being
+# built and its model, until the next parse. PDDL also parses twice as fast without it.
+from pyparsing import ParserElement
+ParserElement.disable_memoization()
+
 
 def create_up_problem(domain: str, problem: str) -> Problem:
     """Create a Unified Planning problem from PDDL files or strings."""

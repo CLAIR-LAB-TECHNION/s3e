@@ -3,8 +3,10 @@
 
 """Tests for the SemanticStateEstimator facade."""
 
+import gc
 import re
 import warnings
+import weakref
 
 import pytest
 
@@ -93,6 +95,15 @@ class TestConstructionFromPddl:
 
     def test_fingerprint_available(self):
         assert len(make_estimator().domain_fingerprint) == 64
+
+    def test_a_discarded_estimator_frees_its_backend(self):
+        backend = FakeVLM()
+        estimator = make_estimator(backend)
+        estimator.set_problem(BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM_3)
+        backend_ref = weakref.ref(backend)
+        del backend, estimator
+        gc.collect()
+        assert backend_ref() is None
 
     def test_from_pddl_without_vlm_raises_type_error(self):
         with pytest.raises(TypeError, match="vlm"):
