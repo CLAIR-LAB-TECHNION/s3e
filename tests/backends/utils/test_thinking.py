@@ -220,17 +220,11 @@ class TestClosingText:
 
 class TestCloseTruncatedBlock:
     @pytest.mark.parametrize(
-        "reasoning, notice, closing",
-        [
-            ("and finally the", None, "\n</think>"),
-            ("and finally the\n", None, "</think>"),
-            ("", None, "\n</think>"),
-            ("and finally the", "THINKING TRUNCATED", "\nTHINKING TRUNCATED\n</think>"),
-            ("and finally the ", "CUT\n", "CUT\n</think>"),
-        ],
+        "notice, closing",
+        [(None, "\n</think>"), ("CUT ", "\nCUT \n</think>")],
     )
-    def test_closing_text(self, reasoning, notice, closing):
-        assert close_truncated_block(reasoning, "</think>", notice) == closing
+    def test_closing_text(self, notice, closing):
+        assert close_truncated_block("</think>", notice) == closing
 
 class TestSplit:
     def test_no_block(self):

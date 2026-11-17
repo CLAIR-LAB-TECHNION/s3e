@@ -522,9 +522,7 @@ class VLLMBackend(VLMBackend):
             generated = tokenizer.decode(ids, skip_special_tokens=False)
             if not ids or ids[-1] != tokens.end_id:
                 generated += close_truncated_block(
-                    generated,
-                    tokens.end,
-                    self.thinking_truncation_notice if cut else None,
+                    tokens.end, self.thinking_truncation_notice if cut else None
                 )
             reasoning_ids, _ = tokens.split(ids, prompt_open=True)
             continuations.append(text + generated)

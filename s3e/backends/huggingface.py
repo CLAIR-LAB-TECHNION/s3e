@@ -528,9 +528,7 @@ class HuggingFaceVLM(VLMBackend):
             generated = self._decode_sequence(ids, skip_special_tokens=False)
             if not closed:
                 generated += close_truncated_block(
-                    generated,
-                    tokens.end,
-                    self.thinking_truncation_notice if cut else None,
+                    tokens.end, self.thinking_truncation_notice if cut else None
                 )
             reasoning_ids, _ = tokens.split(ids, prompt_open=True)
             continuations.append(prompt + generated)
