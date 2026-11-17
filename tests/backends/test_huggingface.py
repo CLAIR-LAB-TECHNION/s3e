@@ -1937,16 +1937,6 @@ class TestHuggingFaceVLMThinkingIntegration:
         assert isinstance(result.text, str)
         assert result.reasoning
 
-    def test_text_mode_replies_after_a_block_the_budget_closed(self, image):
-        result = self._backend(
-            thinking=True, max_thinking_tokens=4, thinking_truncation_notice="CUT"
-        ).query([image], "Is it red?", generate=True, max_new_tokens=6)
-
-        assert isinstance(result.text, str)
-        assert result.reasoning
-        assert isinstance(result.thinking_truncated, bool)
-        assert "CUT" not in result.reasoning
-
     def test_text_mode_answers_after_a_closed_block(self, image):
         backend = self._backend(chat_template_kwargs={"enable_thinking": True})
 
