@@ -29,3 +29,9 @@ class QueryTranslator(ABC):
 
     def close(self) -> None:  # noqa: B027 (deliberate no-op default)
         """Release any model the translator holds. It is unusable afterwards."""
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass

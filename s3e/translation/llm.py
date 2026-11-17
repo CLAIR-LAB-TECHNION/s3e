@@ -116,12 +116,6 @@ class LLMTranslator(QueryTranslator):
         import torch
         torch.cuda.empty_cache()
 
-    def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
-
     def translate(
         self,
         predicates: list[str],
