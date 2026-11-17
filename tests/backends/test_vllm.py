@@ -825,6 +825,33 @@ class TestVLLMBackendThinking:
 
     @patch("s3e.backends.vllm.SamplingParams")
     @patch("s3e.backends.vllm.LLM")
+    def test_whitespace_alone_after_a_block_is_no_answer(self, mock_llm_cls, mock_sp_cls):
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
+
+        backend, mock_llm = self._make_backend(mock_llm_cls)
+        mock_llm.chat.return_value = [
+            _request_output(prompt_ids=[1, THINK_START], steps=[{6: 0.9, 4: 0.1}])
+        ] * 2
+        mock_llm.generate.side_effect = [
+            [
+                _request_output(prompt_ids=[1, THINK_START, THINK_END],
+                                token_ids=[3] * MAX_SEPARATOR_TOKENS),
+                _separator_output(),
+            ],
+            [_readout_output({4: 0.8, 5: 0.2})],
+        ]
+
+        stuck, answered = backend.query_batch([], ["q", "q"], interest_tokens=["Yes", "No"])
+
+        assert stuck.token_probs == {"Yes": 0.0, "No": 0.0}
+        assert stuck.argmax_in_interest is False
+        assert stuck.reasoning == ""
+        assert answered.token_probs == pytest.approx({"Yes": 0.8, "No": 0.2})
+        # Only the row that reached an answer is scored.
+        assert self._generated_prompts(mock_llm)[-1] == ["chat:q</think>\n\n"]
+
+    @patch("s3e.backends.vllm.SamplingParams")
+    @patch("s3e.backends.vllm.LLM")
     def test_rows_without_a_block_are_untouched(self, mock_llm_cls, mock_sp_cls):
         backend, mock_llm = self._make_backend(mock_llm_cls)
         mock_llm.chat.return_value = [

@@ -644,8 +644,10 @@ class VLLMBackend(VLMBackend):
         the continuation plus that whitespace. Reading it after a decode step
         instead would differ: vLLM's prefill and decode kernels disagree
         slightly for some architectures (e.g. Qwen3.5's linear attention).
-        ``chat_prompt_ids`` are the prompt ids ``LLM.chat`` scored for each
-        continuation, which it must extend.
+        A continuation whose steps are all whitespace never reached an answer
+        and gets zero mass on every interest token, which the engine reads as
+        no answer. ``chat_prompt_ids`` are the prompt ids ``LLM.chat`` scored
+        for each continuation, which it must extend.
         """
         tokenizer = self._get_tokenizer()
         separator_outputs = self.llm.generate(
@@ -654,11 +656,21 @@ class VLLMBackend(VLMBackend):
         )
         for prompt_ids, output in zip(chat_prompt_ids, separator_outputs):
             self._check_continuation(prompt_ids, output.prompt_token_ids or [])
-        texts = []
+        results, read, texts = [], [], []
         for text, output in zip(continuations, separator_outputs):
             ids = [int(token_id) for token_id in output.outputs[0].token_ids]
             count = leading_whitespace_tokens(decode_single_token_ids(tokenizer, ids))
+            if count == len(ids):
+                results.append(VLMOutput(
+                    token_probs=dict.fromkeys(interest_tokens or (), 0.0),
+                    argmax_in_interest=False if interest_tokens is not None else None,
+                ))
+                continue
+            read.append(len(results))
+            results.append(None)
             texts.append(text + tokenizer.decode(ids[:count], skip_special_tokens=False))
+        if not texts:
+            return results
 
         sampling_params = self._build_sampling_params(
             False, interest_tokens is not None, **inference_kwargs
@@ -666,9 +678,9 @@ class VLLMBackend(VLMBackend):
         outputs = self.llm.generate(
             [self._engine_prompt(text, images) for text in texts], sampling_params
         )
-        return [
-            self._to_vlm_output(output, False, interest_tokens) for output in outputs
-        ]
+        for row, output in zip(read, outputs):
+            results[row] = self._to_vlm_output(output, False, interest_tokens)
+        return results
 
     def _check_continuation(self, chat_prompt_ids, continuation_ids) -> None:
         """Raise unless a continuation's ids extend those ``LLM.chat`` scored.
