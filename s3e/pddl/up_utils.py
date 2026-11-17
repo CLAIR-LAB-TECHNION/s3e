@@ -11,7 +11,6 @@ Unified Planning's native types.
 from itertools import product
 from typing import Optional
 
-from pyparsing import ParserElement
 from unified_planning.io import PDDLReader, PDDLWriter
 from unified_planning.shortcuts import Problem, UPState, FNode
 
@@ -19,6 +18,7 @@ from unified_planning.shortcuts import Problem, UPState, FNode
 # hit pyparsing re-raises its stored exception, which then keeps the traceback, so
 # the cache holds the frames that called the parser, including any estimator being
 # built and its model, until the next parse. PDDL also parses twice as fast without it.
+from pyparsing import ParserElement
 ParserElement.disable_memoization()
 
 
