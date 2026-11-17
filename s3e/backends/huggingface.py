@@ -431,9 +431,8 @@ class HuggingFaceVLM(VLMBackend):
         A row thinks when its prompt ends with an opening delimiter or its
         most likely next token opens one. Returns the probabilities with
         those rows replaced by the answer distribution after the block
-        (scored with ``inference_kwargs``, like the first pass), plus one
-        ``reasoning`` and one ``thinking_truncated`` entry per row (None for
-        rows without a block).
+        (:meth:`_answer_probs_after`), plus one ``reasoning`` and one
+        ``thinking_truncated`` entry per row (None for rows without a block).
         """
         reasonings = [None] * probs.shape[0]
         truncated = [None] * probs.shape[0]
@@ -546,12 +545,12 @@ class HuggingFaceVLM(VLMBackend):
 
         Chat templates put whitespace between a closed block and the answer
         (``"\\n\\n"`` for Qwen). Generated steps find it, each row stopping at
-        its first non-whitespace token, and the answer is then read from a
-        forward pass over the continuation plus that whitespace, with
-        ``inference_kwargs``, like every other query.
+        its first non-whitespace token, and the raw logits of that step are
+        the answer. Rows with no such step are read by a forward pass over
+        the continuation plus the whitespace, with ``inference_kwargs``.
         """
         inputs = self._prepare_rows(continuations, images)
-        output_ids = self.model.generate(
+        output = self.model.generate(
             **inputs,
             max_new_tokens=MAX_SEPARATOR_TOKENS,
             **_decoding_kwargs(inference_kwargs),
@@ -559,20 +558,32 @@ class HuggingFaceVLM(VLMBackend):
             stopping_criteria=StoppingCriteriaList(
                 [_StopAtNonWhitespace(self._decode_token_ids)]
             ),
+            output_logits=True,
+            return_dict_in_generate=True,
         )
-        texts = []
-        for continuation, sequence in zip(
-            continuations, self._trim_generated_sequences(output_ids, inputs)
+        # Beam search has one logits row per beam, not per prompt.
+        logits = output.logits if output.logits[0].shape[0] == len(continuations) else None
+        probs, unread, texts = [None] * len(continuations), [], []
+        for row, (continuation, sequence) in enumerate(
+            zip(continuations, self._trim_generated_sequences(output.sequences, inputs))
         ):
             ids = [int(token_id) for token_id in sequence]
             count = leading_whitespace_tokens(self._decode_token_ids(ids))
+            if logits is not None and count < len(ids):
+                probs[row] = torch.softmax(logits[count][row].float(), dim=-1)
+                continue
+            unread.append(row)
             texts.append(
                 continuation
                 + self._decode_sequence(ids[:count], skip_special_tokens=False)
             )
-        return self._forward_next_token_probs(
-            self._prepare_rows(texts, images), **inference_kwargs
-        )
+        if unread:
+            read = self._forward_next_token_probs(
+                self._prepare_rows(texts, images), **inference_kwargs
+            )
+            for row, row_probs in zip(unread, read):
+                probs[row] = row_probs
+        return torch.stack(probs)
 
     def _prepare_rows(self, texts, images):
         """Processor inputs for prompts that all show the same images."""

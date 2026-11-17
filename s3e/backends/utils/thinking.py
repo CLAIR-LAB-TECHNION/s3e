@@ -20,12 +20,8 @@ Where no switch exists, a block can still appear: the chat template opens it
 *thinking* when its prompt ends with an opening delimiter or the model's
 most likely next token opens one. With thinking off, backends then close
 the block at once and read the answer after the empty block; with thinking
-on, the model reasons first and the answer is read after its reasoning. The
-answer is always read from a forward pass over the prompt, the closed
-block, and the whitespace the model puts after it, like the pass that
-scores every other query: reading it after a decode step instead can differ
-numerically, since some engines (e.g. vLLM with Qwen3.5's linear-attention
-layers) use different kernels for prefill and decode.
+on, the model reasons first and the answer is read after its reasoning,
+past the whitespace the model puts after the block.
 """
 
 import warnings
@@ -337,8 +333,7 @@ def close_truncated_block(
 def leading_whitespace_tokens(step_tokens: Sequence[str]) -> int:
     """How many generated tokens come before the first non-whitespace one.
 
-    Backends append these tokens (the separator a chat template puts after a
-    closed block) to the continuation before scoring the answer token.
+    These tokens separate a closed thinking block from the answer.
     """
     for step, token in enumerate(step_tokens):
         if token.strip():
