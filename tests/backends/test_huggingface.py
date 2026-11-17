@@ -106,6 +106,15 @@ class TestHuggingFaceVLMMocked:
         mock_proc_cls.from_pretrained.assert_called_once()
         assert vlm.num_logprobs is None
 
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_close_drops_model(self, mock_model_cls, mock_proc_cls):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        vlm = HuggingFaceVLM("test/model")
+        vlm.close()
+        assert vlm.model is None and vlm.processor is None
+
     @pytest.mark.parametrize("num_logprobs", [0, -1, 1.5, True])
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")

@@ -49,6 +49,16 @@ def make_estimator(fake=None, **kwargs):
     )
 
 
+class TestClose:
+    def test_close_reaches_backend_and_translator(self, monkeypatch):
+        estimator = make_estimator()
+        closed = []
+        monkeypatch.setattr(estimator.engine.backend, "close", lambda: closed.append("vlm"))
+        monkeypatch.setattr(estimator.translator, "close", lambda: closed.append("translator"))
+        estimator.close()
+        assert closed == ["vlm", "translator"]
+
+
 class TestConstructionFromPredicates:
     def test_predicates_without_pddl(self, images):
         estimator = SemanticStateEstimator(

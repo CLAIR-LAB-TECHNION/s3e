@@ -137,6 +137,10 @@ class QueryEngine:
         self.batch_size = batch_size
         self.inference_kwargs = dict(inference_kwargs or {})
 
+    def close(self) -> None:
+        """Close the backend, including one the caller passed in."""
+        self.backend.close()
+
     def ask(
         self,
         images: list[Image],

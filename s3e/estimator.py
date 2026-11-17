@@ -141,6 +141,11 @@ class SemanticStateEstimator:
         self.queries: dict[str, str] = {}
         self.set_predicates(predicates)
 
+    def close(self) -> None:
+        """Close the VLM backend and the translator, including ones the caller passed in."""
+        self.engine.close()
+        self.translator.close()
+
     @classmethod
     def from_pddl(cls, domain: str, problem: str, **kwargs) -> "SemanticStateEstimator":
         """Build an estimator by grounding a PDDL domain and problem.
