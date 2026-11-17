@@ -20,7 +20,6 @@ design with full context):
 * ``vllm`` is an optional dependency; this module is imported lazily (from
   ``s3e.backends``) so importing s3e never requires it. Importing this module
   directly raises a helpful :class:`ImportError` when it is missing.
-* Requires vLLM >= 0.11.1. The pin and its reasons live in ``pyproject.toml``.
 * Thinking models (see :mod:`s3e.backends.utils.thinking`): the chat
   template's thinking switch, found once by rendering a probe conversation
   with the engine's tokenizer, travels with every ``LLM.chat`` call. Rows
