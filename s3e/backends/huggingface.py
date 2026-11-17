@@ -125,12 +125,7 @@ class HuggingFaceVLM(VLMBackend):
         model_id: HuggingFace model identifier.
         torch_dtype: PyTorch dtype for model weights. Defaults to
             ``"auto"`` (the dtype the checkpoint was saved in) when CUDA is
-            available, else ``torch.float32``. The default follows CUDA
-            *visibility*, not ``device_map``: on a GPU host,
-            ``device_map="cpu"`` still loads the checkpoint's dtype, often
-            bfloat16, which runs slowly on CPU. Pass
-            ``torch_dtype=torch.float32`` explicitly when pinning a model to
-            CPU on such a host.
+            available, else ``torch.float32``.
         device_map: Device placement strategy. Defaults to ``"auto"``.
         attn_implementation: Attention implementation to use. ``None`` uses default.
         num_logprobs: Number of top tokens to include in token_probs. ``None``
