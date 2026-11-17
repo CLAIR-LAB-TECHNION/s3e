@@ -844,10 +844,9 @@ class VLLMBackend(VLMBackend):
 
     def close(self) -> None:
         """Shut down the vLLM engine and free its GPU memory."""
-        llm = getattr(self, "llm", None)
-        if llm is None:
+        if self.llm is None:
             return
-        self.llm = None
+        llm, self.llm = self.llm, None
         # Stop the engine now; garbage collection would stop it only eventually.
         llm.llm_engine.engine_core.shutdown()
         del llm
