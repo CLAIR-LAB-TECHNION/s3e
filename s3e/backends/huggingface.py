@@ -548,8 +548,7 @@ class HuggingFaceVLM(VLMBackend):
         its first non-whitespace token, and the raw logits of that step are
         the answer. Under beam search they are read by a forward pass over
         the continuation plus the whitespace, with ``inference_kwargs``. A
-        row whose steps are all whitespace never reached an answer and gets
-        all-zero probabilities, which the engine reads as no answer.
+        row whose steps are all whitespace gets all-zero probabilities.
         """
         inputs = self._prepare_rows(continuations, images)
         output = self.model.generate(

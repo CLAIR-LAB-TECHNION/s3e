@@ -50,7 +50,8 @@ DEFAULT_MAX_THINKING_TOKENS = 1024
 # Most whitespace tokens a chat template puts next to a delimiter: after the
 # opening one that ends a prompt ("<think>\n"), or between a closed block and
 # the answer ("\n\n" after Qwen's "</think>"), which this many generated
-# steps look for.
+# steps look for. A model that writes only whitespace for all of them never
+# reaches an answer, so its query has none.
 MAX_SEPARATOR_TOKENS = 8
 
 

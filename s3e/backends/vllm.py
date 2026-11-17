@@ -644,10 +644,9 @@ class VLLMBackend(VLMBackend):
         the continuation plus that whitespace. Reading it after a decode step
         instead would differ: vLLM's prefill and decode kernels disagree
         slightly for some architectures (e.g. Qwen3.5's linear attention).
-        A continuation whose steps are all whitespace never reached an answer
-        and gets zero mass on every interest token, which the engine reads as
-        no answer. ``chat_prompt_ids`` are the prompt ids ``LLM.chat`` scored
-        for each continuation, which it must extend.
+        A continuation whose steps are all whitespace gets zero mass on every
+        interest token. ``chat_prompt_ids`` are the prompt ids ``LLM.chat``
+        scored for each continuation, which it must extend.
         """
         tokenizer = self._get_tokenizer()
         separator_outputs = self.llm.generate(
