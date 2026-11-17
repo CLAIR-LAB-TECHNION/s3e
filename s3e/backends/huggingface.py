@@ -157,10 +157,7 @@ class HuggingFaceVLM(VLMBackend):
             Defaults to 1024.
         thinking_truncation_notice: Text put inside a block the budget cut
             off, on its own line before the closing delimiter, e.g.
-            ``"THINKING TRUNCATED"``. It conditions the answer, so it shifts
-            logprobs-mode probabilities and text-mode replies, and whether it
-            helps depends on the model; measure before using it. ``None``
-            (default) closes the block with nothing added. It never appears
+            ``"THINKING TRUNCATED"``. ``None`` (default) closes the block with nothing added. It never appears
             in :attr:`VLMOutput.reasoning` and must not contain a thinking
             delimiter.
         thinking_delimiters: The tokens that open and close a thinking
