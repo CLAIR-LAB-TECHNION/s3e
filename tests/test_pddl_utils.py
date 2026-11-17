@@ -7,6 +7,7 @@ These tests use the unified-planning library directly (CPU-only, no models).
 """
 
 import pytest
+from pyparsing import ParserElement
 
 from s3e.pddl.up_utils import (
     create_up_problem,
@@ -67,6 +68,12 @@ class TestCreateUpProblem:
 
         with pytest.raises(ValueError, match="problem must also be a file"):
             create_up_problem(str(domain_path), BLOCKSWORLD_PROBLEM)
+
+    def test_packrat_setting_is_restored(self):
+        # Unified Planning turns packrat on at import, for its ANML grammar.
+        assert ParserElement._packratEnabled
+        create_up_problem(BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM)
+        assert ParserElement._packratEnabled
 
 
 class TestGetObjectNamesDict:

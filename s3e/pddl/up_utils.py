@@ -18,18 +18,24 @@ from unified_planning.shortcuts import Problem, UPState, FNode
 
 
 @contextmanager
-def _released_parse_cache():
-    """Clear pyparsing's packrat cache when a PDDL parse ends.
+def _without_packrat():
+    """Parse with pyparsing's packrat cache off, then restore it if it was on.
 
-    Unified Planning turns the cache on, and it keeps the parse's exceptions
-    until the next parse. Their tracebacks hold every calling frame, so an
-    estimator built during a parse, and the model it loaded, would stay in
-    memory after it is discarded.
+    Unified Planning turns the cache on at import, for its ANML grammar. The
+    cache keeps exceptions from the last parse, and pyparsing re-raises the
+    cached objects, so they pick up tracebacks that hold every calling frame.
+    An estimator built during a parse, and the model it loaded, would then
+    stay in memory after it is discarded. PDDL parsing is also about twice as
+    fast without the cache. Toggling it is process-wide, so a parse in another
+    thread may briefly run without it.
     """
+    was_enabled = ParserElement._packratEnabled
+    ParserElement.disable_memoization()
     try:
         yield
     finally:
-        ParserElement.reset_cache()
+        if was_enabled:
+            ParserElement.enable_packrat()
 
 
 def create_up_problem(domain: str, problem: str) -> Problem:
@@ -38,9 +44,9 @@ def create_up_problem(domain: str, problem: str) -> Problem:
     if domain.lower().endswith(".pddl"):
         if not problem.lower().endswith(".pddl"):
             raise ValueError("if domain is a file, problem must also be a file")
-        with _released_parse_cache():
+        with _without_packrat():
             return reader.parse_problem(domain, problem)
-    with _released_parse_cache():
+    with _without_packrat():
         return reader.parse_problem_string(domain, problem)
 
 

@@ -11,7 +11,7 @@ from unified_planning.model.fnode import FNode
 from unified_planning.model.operators import OperatorKind
 from unified_planning.shortcuts import Problem
 
-from .up_utils import _released_parse_cache
+from .up_utils import _without_packrat
 
 
 _COMMUTATIVE_BINARY_OPS = frozenset({OperatorKind.AND, OperatorKind.OR, OperatorKind.EQUALS, OperatorKind.IFF})
@@ -167,7 +167,7 @@ def compute_domain_fingerprint(domain: str | Problem) -> str:
     in the action's FNode canonicalization.
     """
     if isinstance(domain, str):
-        with _released_parse_cache():
+        with _without_packrat():
             problem = PDDLReader().parse_problem_string(domain, None)
     else:
         problem = domain
