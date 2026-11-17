@@ -846,10 +846,9 @@ class VLLMBackend(VLMBackend):
         """Shut down the vLLM engine and free its GPU memory."""
         if self.llm is None:
             return
-        llm, self.llm = self.llm, None
         # Stop the engine now; garbage collection would stop it only eventually.
-        llm.llm_engine.engine_core.shutdown()
-        del llm
+        self.llm.llm_engine.engine_core.shutdown()
+        self.llm = None
         cleanup_dist_env_and_memory()
 
     def _get_token_reverse_index(self) -> dict[str, list[int]]:
