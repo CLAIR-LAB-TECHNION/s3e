@@ -87,8 +87,6 @@ class TestConstructionFromPddl:
         assert len(make_estimator().domain_fingerprint) == 64
 
     def test_a_discarded_estimator_frees_its_backend(self):
-        # unified_planning turns on pyparsing's packrat cache, whose stored
-        # exceptions keep the parsing frames, and the estimator in them, alive.
         backend = FakeVLM()
         estimator = make_estimator(backend)
         estimator.set_problem(BLOCKSWORLD_DOMAIN, BLOCKSWORLD_PROBLEM_3)
