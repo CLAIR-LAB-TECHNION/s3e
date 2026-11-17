@@ -9,7 +9,7 @@ Quick start::
 
     estimator = SemanticStateEstimator.from_pddl(
         domain_pddl, problem_pddl,
-        vlm="HuggingFaceTB/SmolVLM-256M-Instruct",
+        vlm="Qwen/Qwen3.5-0.8B",
         translator=TemplateTranslator({"on": "Is {0} on {1}?"}),
     )
     state = estimator(images)  # dict[str, bool]

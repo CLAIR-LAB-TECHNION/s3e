@@ -36,7 +36,7 @@ if your model and environment support it.
 
 ## Quick start
 
-The snippets below run as-is, in order, on CPU or GPU, with `pip install "s3e[pddl,hf,calibration]"`. They use a tiny model (`HuggingFaceTB/SmolVLM-256M-Instruct`, ~500 MB, downloaded on first use) and a synthetic scene so nothing else needs to be on disk. A model this small is useful for trying the API, not for accurate estimates: expect poorly calibrated probabilities, which is what the calibration layer is for. On a GPU each snippet takes seconds; on a laptop-class CPU, expect a minute or more per query (SmolVLM splits each image into many tiles).
+The snippets below run as-is, in order, on CPU or GPU, with `pip install "s3e[pddl,hf,calibration]"`. They use a small model (`Qwen/Qwen3.5-0.8B`, ~1.7 GB, downloaded on first use) and a synthetic scene so nothing else needs to be on disk. A model this small is useful for trying the API, not for accurate estimates: expect poorly calibrated probabilities, which is what the calibration layer is for. On a GPU each query takes a fraction of a second. On a laptop-class CPU, expect a few seconds per query.
 
 ```python
 from PIL import Image, ImageDraw
@@ -55,9 +55,10 @@ scene = [image]
 `QueryEngine` is the PDDL-free heart of S3E: images + queries + an answer space → predictions.
 
 ```python
-from s3e import QueryEngine
+from s3e import HuggingFaceVLM, QueryEngine
 
-engine = QueryEngine("HuggingFaceTB/SmolVLM-256M-Instruct")
+vlm = HuggingFaceVLM("Qwen/Qwen3.5-0.8B")  # load the model once, then share it
+engine = QueryEngine(vlm)
 predictions = engine.ask(scene, ["Is there a blue block?", "Is there a green block?"])
 
 print(predictions["Is there a blue block?"].probability)  # P(true), a float in [0, 1]
@@ -72,7 +73,7 @@ Answer spaces are not limited to yes/no. `CategoricalAnswers` scores an arbitrar
 from s3e import CategoricalAnswers
 
 color_engine = QueryEngine(
-    "HuggingFaceTB/SmolVLM-256M-Instruct",
+    vlm,
     answers=CategoricalAnswers(["blue", "orange", "green"]),
 )
 question = "What color is the top block? Answer with one word."
@@ -119,14 +120,14 @@ translator = TemplateTranslator(
 estimator = SemanticStateEstimator.from_pddl(
     domain_pddl,
     problem_pddl,
-    vlm="HuggingFaceTB/SmolVLM-256M-Instruct",
+    vlm=vlm,
     translator=translator,
     prompt_template="Answer with exactly one word, yes or no: {query}",
 )
 
-state = estimator(scene)                 # dict[str, bool]
-results = estimator.estimate(scene)      # PredictionSet: full detail per predicate
-probabilities = results.probabilities()  # dict[str, float]
+results = estimator.estimate(scene, keep_raw=True)  # PredictionSet: full detail per predicate
+probabilities = results.probabilities()             # dict[str, float]
+state = results.to_state()                          # dict[str, bool], same as estimator(scene)
 
 print(state)
 print(probabilities)
@@ -143,10 +144,9 @@ views = [scene, [ImageOps.mirror(image)]]
 averaged = estimator.estimate_averaged(views)
 ```
 
-Inspect the normalized backend output behind a prediction with `keep_raw=True`:
+`keep_raw=True` keeps the normalized backend output behind each prediction:
 
 ```python
-results = estimator.estimate(scene, keep_raw=True)
 print(results["on(blue,orange)"].raw)   # VLMOutput: token_probs, text, argmax_in_interest
 ```
 
