@@ -13,6 +13,8 @@
 
 ## Documentation
 - Document a change once, in the docstring of the API it changes. Add to `docs/user-guide.md` only when the change affects how users configure S3E or read its results.
+- Give each explanation one home, next to the code it is about. Copies in other comments, docstrings, or docs drift apart when only one is updated, so don't restate it elsewhere, even reworded or summarized. When you edit an explanation that already exists in several places, merge the copies into its home.
+- Before writing a pointer to another file ("see X", "lives in X"), ask whether a reader of this code needs X to use or change it correctly. If not, leave the pointer out. A reader who does need X is already looking there.
 - State user-facing changes in the PR summary. That is where the changelog is written from.
 
 ## Gotchas

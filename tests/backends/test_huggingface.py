@@ -8,6 +8,7 @@ integration against tiny real models, and the shared backend contract.
 import copy
 import math
 import warnings
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -974,9 +975,11 @@ class TestHuggingFaceVLMThinking:
 
         ``prompt_ids`` is what the processor returns for every text;
         ``forward_steps`` are the next-token distributions of successive
-        forward passes (the last one repeats); ``generate`` is the side
-        effect of ``model.generate``. With ``reads_enable_thinking``, the
-        chat template renders an open block when ``enable_thinking`` is set.
+        forward passes and logit-returning generations (one per call, at
+        every step), and the last one repeats.
+        ``generate`` is the side effect of ``model.generate``. With
+        ``reads_enable_thinking``, the chat template renders an open block
+        when ``enable_thinking`` is set.
         """
         from s3e.backends.huggingface import HuggingFaceVLM
 
@@ -986,14 +989,24 @@ class TestHuggingFaceVLMThinking:
         model.config.is_encoder_decoder = False
         model.generation_config.eos_token_id = 0
         model.generation_config.pad_token_id = 0
-        steps = [
-            _logits_for(probs).expand(1, len(prompt_ids), -1) for probs in forward_steps
-        ]
+        steps = [_logits_for(probs) for probs in forward_steps]
+
+        def next_step():
+            return steps.pop(0) if len(steps) > 1 else steps[0]
+
         model.side_effect = lambda *a, **k: MagicMock(
-            logits=steps.pop(0) if len(steps) > 1 else steps[0]
+            logits=next_step().expand(*k["input_ids"].shape, -1)
         )
+
+        def generate_output(**kwargs):
+            output = generate(**kwargs)
+            if not (kwargs.get("output_logits") and isinstance(output, torch.Tensor)):
+                return output
+            step = next_step().expand(len(output), -1)
+            return SimpleNamespace(sequences=output, logits=(step,) * output.shape[1])
+
         if generate is not None:
-            model.generate.side_effect = generate
+            model.generate.side_effect = generate_output
 
         processor = MagicMock()
         mock_proc_cls.from_pretrained.return_value = processor
@@ -1050,14 +1063,10 @@ class TestHuggingFaceVLMThinking:
         assert result.token_probs == pytest.approx({"Yes": 0.8, "No": 0.2}, abs=1e-6)
         assert result.argmax_in_interest is True
         assert result.reasoning == ""
-        # The separator pass sees the closed block; the answer is read from a
-        # forward pass over the block plus the separator it found.
-        assert self._texts_sent_to_processor(processor)[-2:] == [
-            "chat:q</think>",
-            "chat:q</think>\n\n",
-        ]
+        assert self._texts_sent_to_processor(processor)[-1] == "chat:q</think>"
         assert model.generate.call_args.kwargs["max_new_tokens"] == MAX_SEPARATOR_TOKENS
         assert model.generate.call_args.kwargs["do_sample"] is False
+        assert model.generate.call_args.kwargs["return_dict_in_generate"] is True
         # An explicit pad id keeps generate() from logging that it picks one.
         assert model.generate.call_args.kwargs["pad_token_id"] == 0
         assert model.call_args.kwargs["logits_to_keep"] == 1
@@ -1078,26 +1087,7 @@ class TestHuggingFaceVLMThinking:
         result = vlm.query([], "q", interest_tokens=["Yes", "No"])
 
         assert result.token_probs == pytest.approx({"Yes": 0.3, "No": 0.7}, abs=1e-6)
-        assert self._texts_sent_to_processor(processor)[-1] == (
-            "chat:q<think>\n\n</think>\n\n"
-        )
-
-    @patch("s3e.backends.huggingface.AutoProcessor")
-    @patch("s3e.backends.huggingface._AutoModelClass")
-    def test_answer_right_after_block_needs_no_separator(
-        self, mock_model_cls, mock_proc_cls
-    ):
-        prompt_ids = [1, THINK_START]
-        vlm, _, processor = self._make_vlm(
-            mock_model_cls, mock_proc_cls,
-            prompt_ids=prompt_ids,
-            forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
-            generate=lambda **kwargs: torch.tensor([prompt_ids + [5]]),
-        )
-
-        vlm.query([], "q", interest_tokens=["Yes", "No"])
-
-        assert self._texts_sent_to_processor(processor)[-1] == "chat:q</think>"
+        assert self._texts_sent_to_processor(processor)[-1] == "chat:q<think>\n\n</think>"
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
@@ -1198,10 +1188,7 @@ class TestHuggingFaceVLMThinking:
         assert think_call["max_new_tokens"] == 3
         assert think_call["eos_token_id"] == [THINK_END, 0]
         assert think_call["pad_token_id"] == 0
-        assert self._texts_sent_to_processor(processor)[-2:] == [
-            continuation,
-            continuation + "\n\n",
-        ]
+        assert self._texts_sent_to_processor(processor)[-1] == continuation
         assert result.reasoning == reasoning  # never the notice
         assert result.thinking_truncated is truncated
         assert result.token_probs == pytest.approx({"Yes": 0.9, "No": 0.1}, abs=1e-6)
@@ -1236,9 +1223,7 @@ class TestHuggingFaceVLMThinking:
         result = vlm.query([], "q", interest_tokens=["Yes", "No"])
 
         assert model.generate.call_args_list[0].kwargs["pad_token_id"] == 0
-        assert self._texts_sent_to_processor(processor)[-1] == (
-            "chat:qr\n</think>\n\n"
-        )
+        assert self._texts_sent_to_processor(processor)[-1] == "chat:qr\n</think>"
         assert result.reasoning == "r"
 
     @pytest.mark.filterwarnings("ignore:thinking=True found no way")
@@ -1274,23 +1259,50 @@ class TestHuggingFaceVLMThinking:
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
-    def test_answer_after_block_is_scored_with_the_query_kwargs(
+    def test_each_row_is_read_at_its_first_non_whitespace_step(
         self, mock_model_cls, mock_proc_cls
     ):
-        prompt_ids = [1, THINK_START]
-        vlm, model, _ = self._make_vlm(
-            mock_model_cls, mock_proc_cls,
-            prompt_ids=prompt_ids,
-            forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
-            generate=lambda **kwargs: self._separator_then_answer(prompt_ids),
+        """Only a row of whitespace alone gets a forward pass, with the query kwargs."""
+        from s3e.backends.utils.thinking import MAX_SEPARATOR_TOKENS
+
+        sequences = torch.tensor([
+            [1, THINK_START, 4] + [0] * (MAX_SEPARATOR_TOKENS - 1),  # "Yes" at once
+            [1, THINK_START, 3, 5] + [0] * (MAX_SEPARATOR_TOKENS - 2),  # "\n\n", then "No"
+            [1, THINK_START] + [3] * MAX_SEPARATOR_TOKENS,  # whitespace alone
+        ])
+        logits = tuple(
+            _logits_for({4: step / 10, 5: 1 - step / 10}).expand(3, -1)
+            for step in range(1, MAX_SEPARATOR_TOKENS + 1)
         )
+        vlm, model, processor = self._make_vlm(
+            mock_model_cls, mock_proc_cls,
+            prompt_ids=[1, THINK_START],
+            forward_steps=[{6: 1.0}, {4: 0.7, 5: 0.3}],
+            generate=lambda **kwargs: SimpleNamespace(sequences=sequences, logits=logits),
+        )
+        processor.side_effect = lambda text, **kwargs: {"input_ids": torch.tensor(
+            [[1, THINK_START]] * (len(text) if isinstance(text, list) else 1)
+        )}
 
-        vlm.query([], "q", interest_tokens=["Yes", "No"], use_cache=False)
+        results = vlm.query_batch([], ["q"] * 3, interest_tokens=["Yes", "No"], use_cache=False)
 
-        first_pass, answer_pass = (c.kwargs for c in model.call_args_list)
-        assert answer_pass["use_cache"] is first_pass["use_cache"] is False
-        assert answer_pass["logits_to_keep"] == 1
+        assert [r.token_probs["Yes"] for r in results] == pytest.approx([0.1, 0.2, 0.7])
+        assert self._texts_sent_to_processor(processor)[-1] == (
+            "chat:q</think>" + "\n\n" * MAX_SEPARATOR_TOKENS
+        )
+        assert model.call_count == 2 and model.call_args.kwargs["use_cache"] is False
         assert "use_cache" not in model.generate.call_args.kwargs
+
+    @patch("s3e.backends.huggingface.AutoProcessor")
+    @patch("s3e.backends.huggingface._AutoModelClass")
+    def test_beam_search_reads_the_answer_by_a_forward_pass(self, mock_model_cls, mock_proc_cls):
+        beams = SimpleNamespace(sequences=torch.tensor([[1, THINK_START, 4]]),
+                                logits=(_logits_for({5: 1.0}).expand(2, -1),))
+        vlm, _, _ = self._make_vlm(mock_model_cls, mock_proc_cls, prompt_ids=[1, THINK_START],
+                                   forward_steps=[{6: 1.0}, {4: 0.6, 5: 0.4}],
+                                   generate=lambda **kwargs: beams)
+        result = vlm.query([], "q", interest_tokens=["Yes", "No"], num_beams=2)
+        assert result.token_probs == pytest.approx({"Yes": 0.6, "No": 0.4}, abs=1e-6)
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
