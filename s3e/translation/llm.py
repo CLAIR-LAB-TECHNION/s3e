@@ -7,6 +7,8 @@ Supports both HuggingFace text models (via ``AutoModelForCausalLM``) and
 OpenAI API models (identified by the ``"OpenAI/"`` prefix).
 """
 
+import gc
+
 from tqdm.auto import tqdm
 
 from .cache import make_cache_key, load_cache, save_cache
@@ -103,6 +105,22 @@ class LLMTranslator(QueryTranslator):
             self._hf_model = AutoModelForCausalLM.from_pretrained(
                 model_id, device_map="auto"
             )
+
+    def close(self) -> None:
+        """Drop the HuggingFace model and return its GPU memory to the device."""
+        if self._hf_model is None:
+            return
+        self._hf_model = None
+        self._hf_tokenizer = None
+        gc.collect()
+        import torch
+        torch.cuda.empty_cache()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def translate(
         self,

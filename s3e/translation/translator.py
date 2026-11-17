@@ -26,3 +26,6 @@ class QueryTranslator(ABC):
         that can work without it must accept ``None``.
         """
         ...
+
+    def close(self) -> None:  # noqa: B027 (deliberate no-op default)
+        """Release any model the translator holds. It is unusable afterwards."""

@@ -9,6 +9,7 @@ models loadable through them (exercised with SmolVLM and LLaVA-architecture
 checkpoints in the tests and walkthrough notebook).
 """
 
+import gc
 from functools import partial
 
 from .._deps import require
@@ -634,6 +635,13 @@ class HuggingFaceVLM(VLMBackend):
         vocab_size = len(tokenizer) if tokenizer is not None else 0
         index = self._get_token_reverse_index(vocab_size)
         return [t for t in dict.fromkeys(tokens) if t not in index]
+
+    def close(self) -> None:
+        """Drop the model and processor and return their GPU memory to the device."""
+        self.model = None
+        self.processor = None
+        gc.collect()
+        torch.cuda.empty_cache()
 
     def _get_token_reverse_index(self, vocab_size: int) -> dict[str, list[int]]:
         """Build (once) and return the decoded-string -> ids index.

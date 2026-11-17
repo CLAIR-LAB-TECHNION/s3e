@@ -53,6 +53,7 @@ require("vllm", "vllm", "VLLMBackend")
 
 import torch
 from vllm import LLM, SamplingParams
+from vllm.distributed.parallel_state import cleanup_dist_env_and_memory
 
 from .backend import (
     DEFAULT_MAX_REPLY_TOKENS,
@@ -840,6 +841,17 @@ class VLLMBackend(VLMBackend):
         """
         index = self._get_token_reverse_index()
         return [t for t in dict.fromkeys(tokens) if t not in index]
+
+    def close(self) -> None:
+        """Shut down the vLLM engine and free its GPU memory."""
+        llm = getattr(self, "llm", None)
+        if llm is None:
+            return
+        self.llm = None
+        # Stop the engine now; garbage collection would stop it only eventually.
+        llm.llm_engine.engine_core.shutdown()
+        del llm
+        cleanup_dist_env_and_memory()
 
     def _get_token_reverse_index(self) -> dict[str, list[int]]:
         """Build (once) the decoded-string -> ids index from the tokenizer."""
