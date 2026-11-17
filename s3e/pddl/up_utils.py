@@ -8,7 +8,6 @@ and state conversion between s3e's ``dict[str, bool]`` format and
 Unified Planning's native types.
 """
 
-from contextlib import contextmanager
 from itertools import product
 from typing import Optional
 
@@ -16,26 +15,11 @@ from pyparsing import ParserElement
 from unified_planning.io import PDDLReader, PDDLWriter
 from unified_planning.shortcuts import Problem, UPState, FNode
 
-
-@contextmanager
-def _without_packrat():
-    """Parse with pyparsing's packrat cache off, then restore it if it was on.
-
-    Unified Planning turns the cache on at import, for its ANML grammar. The
-    cache keeps exceptions from the last parse, and pyparsing re-raises the
-    cached objects, so they pick up tracebacks that hold every calling frame.
-    An estimator built during a parse, and the model it loaded, would then
-    stay in memory after it is discarded. PDDL parsing is also about twice as
-    fast without the cache. Toggling it is process-wide, so a parse in another
-    thread may briefly run without it.
-    """
-    was_enabled = ParserElement._packratEnabled
-    ParserElement.disable_memoization()
-    try:
-        yield
-    finally:
-        if was_enabled:
-            ParserElement.enable_packrat()
+# Unified Planning turns on pyparsing's packrat cache for every grammar. On a cache
+# hit pyparsing re-raises its stored exception, which then keeps the traceback, so
+# the cache holds the frames that called the parser, including any estimator being
+# built and its model, until the next parse. PDDL also parses twice as fast without it.
+ParserElement.disable_memoization()
 
 
 def create_up_problem(domain: str, problem: str) -> Problem:
@@ -44,10 +28,8 @@ def create_up_problem(domain: str, problem: str) -> Problem:
     if domain.lower().endswith(".pddl"):
         if not problem.lower().endswith(".pddl"):
             raise ValueError("if domain is a file, problem must also be a file")
-        with _without_packrat():
-            return reader.parse_problem(domain, problem)
-    with _without_packrat():
-        return reader.parse_problem_string(domain, problem)
+        return reader.parse_problem(domain, problem)
+    return reader.parse_problem_string(domain, problem)
 
 
 def get_object_names_dict(up_problem: Problem) -> dict[str, list[str]]:
