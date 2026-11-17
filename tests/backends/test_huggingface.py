@@ -953,6 +953,20 @@ class TestHuggingFaceVLMMocked:
         ]
 
 
+
+class TestHuggingFaceVLMDefaultDtype:
+    @pytest.mark.parametrize("cuda, expected", [(False, torch.float32), (True, "auto")])
+    def test_default_dtype_follows_cuda(self, cuda, expected):
+        from s3e.backends.huggingface import HuggingFaceVLM
+
+        with (
+            patch("s3e.backends.huggingface.AutoProcessor"),
+            patch("s3e.backends.huggingface._AutoModelClass") as model_cls,
+            patch("s3e.backends.huggingface.torch.cuda.is_available", return_value=cuda),
+        ):
+            HuggingFaceVLM("test/model")
+        assert model_cls.from_pretrained.call_args.kwargs["dtype"] == expected
+
 # Vocabulary for the thinking tests: id -> decoded string.
 THINK_VOCAB = ["<pad>", "q", "x", "\n\n", "Yes", "No", "r", "<think>", "</think>"]
 THINK_START, THINK_END = 7, 8
