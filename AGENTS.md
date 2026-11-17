@@ -10,6 +10,7 @@
 - Don't remove the `OpenAI/` model-name prefix convention or the compatibility branches for different transformers versions. Both are intentional.
 - Don't use em-dashes, semicolons, or unnecessary colons in documentation.
 - Don't edit `README.md` unless installation, the quick start, or the feature list changes. Behavior details, new arguments, and edge cases go in docstrings and `docs/user-guide.md`.
+- Don't add the same comment in multiple places. Choose the one most fitting place for it.
 
 ## Documentation
 - Document a change once, in the docstring of the API it changes. Add to `docs/user-guide.md` only when the change affects how users configure S3E or read its results.
