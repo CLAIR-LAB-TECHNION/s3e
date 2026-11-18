@@ -71,7 +71,6 @@ def test_readme_quick_start_runs_in_order(namespace):
     assert set(namespace["state"].values()) <= {True, False}
 
 
-@pytest.mark.skipif(not GETTING_STARTED.exists(), reason="docs/ is not in the sdist")
 def test_getting_started_quick_start_runs_in_order(namespace, tmp_path, monkeypatch):
     pytest.importorskip("torch")
     pytest.importorskip("transformers")
@@ -91,7 +90,6 @@ def test_getting_started_quick_start_runs_in_order(namespace, tmp_path, monkeypa
     assert (tmp_path / "platt-profile.json").exists()
 
 
-@pytest.mark.skipif(not NOTEBOOK.exists(), reason="docs/ is not in the sdist")
 def test_walkthrough_notebook_executes(tmp_path, monkeypatch):
     nbformat = pytest.importorskip("nbformat")
     nbclient = pytest.importorskip("nbclient")
