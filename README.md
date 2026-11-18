@@ -93,7 +93,9 @@ estimator = SemanticStateEstimator.from_pddl(
 results = estimator.estimate(scene)  # PredictionSet: full detail per predicate
 print(results.probabilities())       # {"on(blue,orange)": ..., ...}
 state = results.to_state()          # dict[str, bool], ready for a planner
-estimator.close()                   # free the model's memory
+
+# Free the model's memory when you are done, or let the garbage collector do it.
+estimator.close()
 ```
 
 `QueryEngine` answers free-form visual questions the same way, with no PDDL:
@@ -104,7 +106,6 @@ from s3e import QueryEngine
 engine = QueryEngine("Qwen/Qwen3.5-0.8B")
 predictions = engine.ask(scene, ["Is there a blue block?", "Is there a green block?"])
 print(predictions.to_state())  # {'Is there a blue block?': True, ...}
-engine.close()
 ```
 
 ## Documentation
