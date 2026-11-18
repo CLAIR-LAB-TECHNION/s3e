@@ -1,3 +1,0 @@
-include CHANGELOG.md CITATION.cff CONTRIBUTING.md CODE_OF_CONDUCT.md GOVERNANCE.md SECURITY.md pytest.ini
-recursive-include tests *.py
-recursive-include examples *.py *.md
