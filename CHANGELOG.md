@@ -6,6 +6,73 @@ uses [semantic versioning](https://semver.org/) (pre-1.0: minor versions may
 contain breaking changes). Entries for 0.1.0–0.4.1 were reconstructed from
 the commit history and PyPI release dates when this file was introduced.
 
+## 0.6.1 - 2026-11-18
+
+### Added
+- `close()` on `VLMBackend`, `QueryTranslator`, `QueryEngine`, and
+  `SemanticStateEstimator` frees a model's memory without ending the
+  process. `HuggingFaceVLM` drops its model and processor and empties the
+  CUDA cache, `VLLMBackend` shuts down its engine, and `LLMTranslator` drops
+  its HuggingFace model. `QueryEngine` and `SemanticStateEstimator` also
+  close a backend or translator passed to them. Backends and `LLMTranslator`
+  close themselves when garbage-collected. A closed object cannot be used
+  again.
+- `VLMOutput.thinking_truncated` says whether `max_thinking_tokens` cut a
+  thinking model's reasoning off (`True`), the model ended it (`False`), or
+  the model did not reason first (`None`), on `HuggingFaceVLM` and
+  `VLLMBackend` in both scoring modes. `QueryEngine.ask` emits a
+  `ThinkingTruncatedWarning` (exported from `s3e`) for each call that had
+  such queries.
+- `thinking_truncation_notice` on `HuggingFaceVLM` and `VLLMBackend` puts a
+  given line inside a thinking block the budget cut off, before the closing
+  delimiter. It is off by default. When it is set and thinking is on,
+  `QueryEngine.generation_policy()` records it, so `estimate` refuses a
+  calibrator fitted with a different notice.
+
+### Changed
+- On CUDA, `HuggingFaceVLM` loads a model in its checkpoint's dtype when no
+  `torch_dtype` is given, instead of float16. bfloat16 checkpoints such as
+  SmolVLM, Qwen3.5, Qwen3-VL, and LFM2-VL therefore run in bfloat16, and
+  their probabilities can shift slightly. Without CUDA, models still load in
+  float32.
+- In logprobs mode, `HuggingFaceVLM` reads the answer after a closed thinking
+  block from the call that generates the separator, instead of a second
+  forward pass over the prompt, image, and reasoning. In float32 the
+  probabilities match the previous read to about 1e-6, and in bfloat16 they
+  can differ by a few hundredths.
+- Without `thinking_truncation_notice`, reasoning the budget cut off after
+  whitespace now also gets a newline before the closing delimiter, so answers
+  read after such rows can differ slightly from 0.6.0.
+- `s3e[vllm]` requires vLLM 0.11.1 or later. vLLM 0.11.0 reports a
+  completion whose last budget token is end-of-sequence as cut off by length.
+- Importing `s3e.pddl` turns off pyparsing's packrat cache for the whole
+  process, which makes PDDL parsing about twice as fast.
+- The README quick start, the getting-started guide, and the walkthrough
+  notebook run on `Qwen/Qwen3.5-0.8B` (~1.7 GB) instead of SmolVLM-256M
+  (~500 MB), at a few seconds per query on CPU instead of about a minute. The
+  README quick start passes the model name and calls `close()`.
+- The sdist no longer contains the test suite or the examples. The wheel is
+  unchanged.
+
+### Removed
+- **Breaking:** the `skip_pad_invariance_check` argument of
+  `HuggingFaceVLM`. Its padding check now reads the attention mask and raises
+  when a batch row does not end on a real token, which costs no extra forward
+  pass.
+
+### Fixed
+- `HuggingFaceVLM`'s padding check no longer rejects bfloat16 models over
+  rounding. It reran a row alone and raised when a probability moved by more
+  than 0.05, which bfloat16 does with any change of batch shape.
+- Dropping a `SemanticStateEstimator` built with `from_pddl`, or after
+  `set_problem`, frees its backend and model. Before, pyparsing's packrat
+  cache kept them in memory until a later PDDL parse.
+- In logprobs mode, a thinking query whose model writes only whitespace in
+  every separator step after its block now has no answer (`has_answer` is
+  `False`, with an `UnmatchedAnswerWarning`) on `HuggingFaceVLM` and
+  `VLLMBackend`. Before, the little mass left on the answer tokens became a
+  confident-looking probability.
+
 ## 0.6.0 - 2026-11-16
 
 ### Added
