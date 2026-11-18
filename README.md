@@ -55,7 +55,7 @@ This example runs as-is on CPU or GPU with `pip install "s3e[pddl,hf]"`. It uses
 ```python
 from PIL import Image, ImageDraw
 
-from s3e import HuggingFaceVLM, SemanticStateEstimator, TemplateTranslator
+from s3e import SemanticStateEstimator, TemplateTranslator
 
 domain_pddl = """
 (define (domain blocksworld)
@@ -79,11 +79,10 @@ draw.rectangle((78, 60, 178, 130), fill="deepskyblue", outline="black", width=3)
 draw.rectangle((78, 130, 178, 200), fill="orange", outline="black", width=3)
 scene = [image]
 
-vlm = HuggingFaceVLM("Qwen/Qwen3.5-0.8B")  # load the model once, then share it
 estimator = SemanticStateEstimator.from_pddl(
     domain_pddl,
     problem_pddl,
-    vlm=vlm,
+    vlm="Qwen/Qwen3.5-0.8B",
     translator=TemplateTranslator({
         "on": "Is the {0} block on top of the {1} block?",
         "clear": "Is the {0} block clear?",
@@ -94,6 +93,7 @@ estimator = SemanticStateEstimator.from_pddl(
 results = estimator.estimate(scene)  # PredictionSet: full detail per predicate
 print(results.probabilities())       # {"on(blue,orange)": ..., ...}
 state = results.to_state()          # dict[str, bool], ready for a planner
+estimator.close()                   # free the model's memory
 ```
 
 `QueryEngine` answers free-form visual questions the same way, with no PDDL:
@@ -101,9 +101,10 @@ state = results.to_state()          # dict[str, bool], ready for a planner
 ```python
 from s3e import QueryEngine
 
-engine = QueryEngine(vlm)  # the same loaded model
+engine = QueryEngine("Qwen/Qwen3.5-0.8B")
 predictions = engine.ask(scene, ["Is there a blue block?", "Is there a green block?"])
 print(predictions.to_state())  # {'Is there a blue block?': True, ...}
+engine.close()
 ```
 
 ## Documentation
