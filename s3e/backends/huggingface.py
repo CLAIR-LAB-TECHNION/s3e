@@ -133,9 +133,6 @@ class HuggingFaceVLM(VLMBackend):
             returns probabilities for all tokens. Defaults to ``None``.
             Irrelevant when a query passes ``interest_tokens``: that path
             gathers exact masses at known token ids and never truncates.
-        skip_pad_invariance_check: Skip the one-time check that padded batches
-            reproduce unbatched answers, for models already known to be
-            pad-invariant. Defaults to False.
         chat_template_kwargs: Extra variables for the chat template. They
             override the thinking switch ``thinking`` sets. Defaults to None.
         thinking: Whether a thinking model reasons before it answers.
@@ -193,7 +190,6 @@ class HuggingFaceVLM(VLMBackend):
         device_map: str = "auto",
         attn_implementation: str | None = None,
         num_logprobs: int | None = None,
-        skip_pad_invariance_check: bool = False,
         chat_template_kwargs: dict | None = None,
         thinking: bool = False,
         max_thinking_tokens: int = DEFAULT_MAX_THINKING_TOKENS,
@@ -212,7 +208,6 @@ class HuggingFaceVLM(VLMBackend):
         self.thinking_truncation_notice = thinking_truncation_notice
         self.thinking_delimiters = thinking_delimiters
         self.chat_template_kwargs = dict(chat_template_kwargs or {})
-        self._pad_invariance_checked = bool(skip_pad_invariance_check)
         self._token_reverse_index: dict[str, list[int]] | None = None
 
         if torch_dtype is None:
@@ -333,7 +328,7 @@ class HuggingFaceVLM(VLMBackend):
             return self._generate_outputs(images, text_inputs, inputs, **inference_kwargs)
 
         probs = self._forward_next_token_probs(inputs, **inference_kwargs)
-        self._check_pad_invariance(images, text_inputs, inputs, probs, **inference_kwargs)
+        self._check_left_padded(inputs)
         probs, reasonings, truncated = self._skip_thinking(
             images, text_inputs, inputs, probs, **inference_kwargs
         )
@@ -768,36 +763,21 @@ class HuggingFaceVLM(VLMBackend):
             outputs = self.model(**inputs, **_without_decoding(inference_kwargs))
         return torch.softmax(outputs.logits[:, -1, :].float(), dim=-1)
 
-    def _check_pad_invariance(
-        self, images, text_inputs, inputs, batched_probs, **inference_kwargs
-    ):
-        """One-time check that padding does not change a row's answer.
+    def _check_left_padded(self, inputs):
+        """Raise if a batch row does not end on a real token.
 
-        Reruns the most-padded row of the first padded batch on its own and
-        compares the two distributions, catching models whose answers depend
-        on where padding sits (e.g. learned absolute position embeddings, or
-        a processor that ignores ``padding_side``).
+        Answers are read at the last position, so a processor that ignores
+        ``padding_side`` and pads on the right would return a pad token's
+        answer.
         """
-        if self._pad_invariance_checked:
-            return
         attention_mask = inputs.get("attention_mask")
         if not isinstance(attention_mask, torch.Tensor) or attention_mask.ndim != 2:
             return
-        if bool(attention_mask.all()):
-            return
-
-        row = int(attention_mask.sum(dim=1).argmin())
-        row_inputs = self._prepare_inputs(text_inputs[row], images if images else None)
-        solo_probs = self._forward_next_token_probs(row_inputs, **inference_kwargs)[0]
-
-        max_diff = float((solo_probs - batched_probs[row]).abs().max())
-        if max_diff > 0.05:
+        if not bool(attention_mask[:, -1].all()):
             raise ValueError(
-                f"{self.model_id} changes its next-token distribution under "
-                f"padding (max probability difference {max_diff:.3f}), so "
-                f"batched results cannot be trusted. Use batch_size=1."
+                f"The processor of {self.model_id} padded a batch on the right, "
+                f"so batched answers would be read from padding. Use batch_size=1."
             )
-        self._pad_invariance_checked = True
 
     def _format_token_probs(self, probs):
         """Convert per-row probability tensors into token->probability dicts."""
