@@ -593,43 +593,21 @@ class TestHuggingFaceVLMMocked:
             "tok6",
         ]
 
-        # 3 unbatched + 1 batched + 1 invariance-check rerun of the shortest row
-        assert mock_model.call_count == 5
-        vlm.query_batch([], prompts)
-        assert mock_model.call_count == 6  # the check does not run again
+        assert mock_model.call_count == 4  # 3 unbatched + 1 batched
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
-    def test_right_padded_batch_fails_the_pad_invariance_check(
-        self, mock_model_cls, mock_proc_cls
-    ):
+    def test_right_padded_batch_is_rejected(self, mock_model_cls, mock_proc_cls):
         """A processor that right-pads despite the configured side is caught.
 
         Right padding puts a pad token at the final position of every short
-        row, so the batched answer diverges from the row's unbatched answer
-        and must be rejected rather than returned.
+        row, so the batched answer would be read from padding.
         """
         vlm, _ = self._make_ragged_length_hf_components(mock_model_cls, mock_proc_cls)
         vlm.processor.tokenizer.padding_side = "right"
 
-        with pytest.raises(ValueError, match="under padding"):
+        with pytest.raises(ValueError, match="on the right"):
             vlm.query_batch([], ["q0", "q1", "q2"])
-
-    @patch("s3e.backends.huggingface.AutoProcessor")
-    @patch("s3e.backends.huggingface._AutoModelClass")
-    def test_pad_invariance_check_can_be_skipped(self, mock_model_cls, mock_proc_cls):
-        vlm, mock_model = self._make_ragged_length_hf_components(
-            mock_model_cls, mock_proc_cls, skip_pad_invariance_check=True
-        )
-
-        results = vlm.query_batch([], ["q0", "q1", "q2"])
-
-        assert mock_model.call_count == 1  # no verification forward
-        assert [max(r.token_probs, key=r.token_probs.get) for r in results] == [
-            "tok4",
-            "tok5",
-            "tok6",
-        ]
 
     @patch("s3e.backends.huggingface.AutoProcessor")
     @patch("s3e.backends.huggingface._AutoModelClass")
