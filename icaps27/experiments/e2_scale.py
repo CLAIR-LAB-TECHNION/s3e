@@ -103,9 +103,21 @@ def time_main(args) -> None:
                 atoms, _ = atoms_for(scene, domain, mask, estimator.up_problem)
                 images = scene.images(args.view)
                 if not provenance_written:
+                    inner = getattr(backend, "inner", backend)
+                    resolved_dtype = None
+                    model_obj = getattr(inner, "model", None)
+                    if model_obj is not None:
+                        resolved_dtype = str(getattr(model_obj, "dtype", None))
+                    elif hasattr(inner, "llm"):
+                        try:
+                            resolved_dtype = str(inner.llm.llm_engine.model_config.dtype)
+                        except Exception:
+                            resolved_dtype = None
                     write_json(Path(args.out).with_suffix(".run.json"), run_provenance(
                         spec, backend, estimator, config,
-                        {"batch_sizes": args.batch_sizes, "masks": args.masks}))
+                        {"batch_sizes": args.batch_sizes, "masks": args.masks,
+                         "backend_label": backend_kind, "backend_kwargs": backend_kwargs,
+                         "vlm_kwargs": args.vlm_kwargs, "resolved_dtype": resolved_dtype}))
                     provenance_written = True
                 if not warmed:
                     estimate(estimator, backend, scene, atoms[:batch_size], images, scene.state)

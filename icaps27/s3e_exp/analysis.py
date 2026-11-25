@@ -70,7 +70,7 @@ def rows(record: dict, truth: dict[str, bool], results: "PredictionSet | None" =
 # --- calibration ---
 
 
-def calibration_set(pairs, meta: "dict | None" = None) -> CalibrationSet:
+def calibration_set(pairs, meta: "dict | None" = None, *, scoring: str = "logprobs") -> CalibrationSet:
     """Samples from ``(PredictionSet, true state)`` pairs; unanswered skipped."""
     samples = [
         CalibrationSample(atom, prediction.score, bool(state[atom]))
@@ -81,11 +81,11 @@ def calibration_set(pairs, meta: "dict | None" = None) -> CalibrationSet:
     first = next(iter(pairs), None)
     answers = next(iter(first[0].values())).answers.to_dict() if first and first[0] else None
     return CalibrationSet(samples=samples,
-                          meta={"scoring": "logprobs", "answers": answers, **(meta or {})})
+                          meta={"scoring": scoring, "answers": answers, **(meta or {})})
 
 
-def fit_calibrator(pairs, scope: str = "lifted") -> "PlattCalibrator | None":
-    data = calibration_set(pairs)
+def fit_calibrator(pairs, scope: str = "lifted", *, scoring: str = "logprobs") -> "PlattCalibrator | None":
+    data = calibration_set(pairs, scoring=scoring)
     if not data.samples:
         return None
     try:
@@ -112,7 +112,8 @@ def scene_group(record: dict) -> str:
 
 
 def cross_fit(records: list[dict], truth: dict, scope: str = "lifted", folds: int = 5,
-              group=scene_group, seed: int = 0) -> dict[tuple, PredictionSet]:
+              group=scene_group, seed: int = 0, *, scoring: str = "logprobs",
+              coverage: "list | None" = None) -> dict[tuple, PredictionSet]:
     """Calibrated results per ``(scene, view)``, each from a calibrator fitted
     on the other folds' groups (scenes or episodes)."""
     assignment = folds_by([group(r) for r in records], folds, seed)
@@ -123,7 +124,19 @@ def cross_fit(records: list[dict], truth: dict, scope: str = "lifted", folds: in
         test = [r for r in records if assignment[group(r)] == fold]
         if not test:
             continue
-        calibrator = fit_calibrator(train, scope)
+        calibrator = fit_calibrator(train, scope, scoring=scoring)
+        if coverage is not None:
+            all_keys = sorted({
+                "__global__" if scope == "global"
+                else (atom.split("(", 1)[0] if scope == "lifted" else atom)
+                for res, _ in train for atom, pred in res.items() if pred.has_answer
+            })
+            fitted_keys = sorted(calibrator.group_keys()) if calibrator else []
+            coverage.append({
+                "fold": fold,
+                "fitted": fitted_keys,
+                "skipped": sorted(set(all_keys) - set(fitted_keys)),
+            })
         for r in test:
             key = (r["scene"], r.get("view"))
             calibrated[key] = calibrator.apply(r["results"]) if calibrator else r["results"]

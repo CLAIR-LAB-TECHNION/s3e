@@ -28,6 +28,7 @@ Example::
 """
 
 import argparse
+import hashlib
 import itertools
 import sys
 from collections import defaultdict
@@ -37,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from s3e_exp import analysis, metrics, provenance  # noqa: E402
 from s3e_exp.estimation import load_predictions  # noqa: E402
-from s3e_exp.store import write_json  # noqa: E402
+from s3e_exp.store import read_json, write_json  # noqa: E402
 
 KEYS = ("accuracy", "f1", "brier", "ece", "nll", "no_answer_rate")
 LABELS = ("acc", "F1", "Brier", "ECE", "NLL", "no-ans")
@@ -50,29 +51,79 @@ def scored(records, results_by_key, truth) -> dict:
     return {**{k: v for k, v in metrics.atom_metrics(rows).items()}, **metrics.scene_metrics(rows)}
 
 
+def run_scoring(run_dir: Path, records: list[dict]) -> str:
+    """Resolve and validate the run's scoring mode against prediction records."""
+    run_path = Path(run_dir) / "run.json"
+    from_meta = read_json(run_path)["config"]["scoring"] if run_path.exists() else None
+    from_rows = {r["scoring"] for r in records if r.get("scoring")}
+    if len(from_rows) > 1:
+        raise ValueError(f"Mixed scoring modes in {run_dir}: {sorted(from_rows)}")
+    scoring = from_meta or (next(iter(from_rows)) if from_rows else "logprobs")
+    if from_rows and next(iter(from_rows)) != scoring:
+        raise ValueError(f"{run_dir}: run.json scoring={scoring!r} != rows {sorted(from_rows)}")
+    return scoring
+
+
+def image_group_fn(instances: Path, view: str):
+    """Group scenes by SHA-256 of their image bytes for ``view``."""
+    hashes: dict[str, str] = {}
+    for meta in Path(instances).rglob("meta.json"):
+        scene_id = read_json(meta)["id"]
+        img_path = meta.parent / f"view{view}.png"
+        if not img_path.exists():
+            img_path = meta.parent / f"view_{view}.png"
+        if not img_path.exists():
+            matches = sorted(meta.parent.glob(f"*{view}*.png"))
+            img_path = matches[0] if matches else None
+        hashes[scene_id] = (
+            hashlib.sha256(img_path.read_bytes()).hexdigest()
+            if img_path is not None else scene_id
+        )
+    return lambda record: hashes.get(record["scene"], analysis.scene_group(record))
+
+
 def load(args):
     truth = analysis.load_truth(args.instances)
     records = [r for r in load_predictions(args.run) if r["scene"] in truth]
-    return truth, records
+    scoring = run_scoring(args.run, records)
+    return truth, records, scoring
 
 
 def scopes_main(args) -> None:
-    truth, records = load(args)
+    truth, records, scoring = load(args)
     single = [r for r in records if r["view"] == args.view]
-    report = {"uncalibrated": scored(single, {}, truth), "scopes": {}}
+    group = image_group_fn(args.instances, args.view) if args.group_by == "image" else analysis.scene_group
+    report = {
+        "scoring": scoring,
+        "view": args.view,
+        "folds": args.folds,
+        "repeats": args.repeats,
+        "group_by": args.group_by,
+        "uncalibrated": scored(single, {}, truth),
+        "scopes": {},
+    }
     for scope in analysis.SCOPES:
         runs = []
+        fold_coverage = []
         for seed in range(args.repeats):
-            calibrated = analysis.cross_fit(single, truth, scope, args.folds, seed=seed)
+            cov: list[dict] = []
+            calibrated = analysis.cross_fit(
+                single, truth, scope, args.folds, group=group, seed=seed,
+                scoring=scoring, coverage=cov,
+            )
             runs.append(scored(single, calibrated, truth))
+            fold_coverage.append({"repeat": seed, "folds": cov})
         report["scopes"][scope] = {
             "runs": runs,
             "summary": {k: metrics.summarize([r[k] for r in runs]) for k in KEYS},
+            "coverage": fold_coverage if scope != "grounded" else None,
         }
     rows = [row for r in single for row in analysis.rows(r, truth[r["scene"]])]
     report["reliability"] = {"uncalibrated": metrics.reliability(
         [r["probability"] for r in rows], [r["truth"] for r in rows])}
-    calibrated = analysis.cross_fit(single, truth, "lifted", args.folds)
+    calibrated = analysis.cross_fit(
+        single, truth, "lifted", args.folds, group=group, scoring=scoring
+    )
     rows = [row for r in single for row in
             analysis.rows(r, truth[r["scene"]], calibrated[(r["scene"], r["view"])])]
     report["reliability"]["lifted"] = metrics.reliability(
@@ -85,7 +136,7 @@ def scopes_main(args) -> None:
 
 
 def transfer_main(args) -> None:
-    truth, records = load(args)
+    truth, records, scoring = load(args)
     single = [r for r in records if r["view"] == args.view]
     splits = {}
     if args.fit_sizes and args.test_sizes:
@@ -98,14 +149,15 @@ def transfer_main(args) -> None:
             splits[f"seed {seed} -> others"] = (
                 [r for r in single if r["seed"] == seed],
                 [r for r in single if r["seed"] != seed])
-    report = {"splits": {}}
+    report = {"scoring": scoring, "splits": {}}
     for name, (fit, test) in splits.items():
         result = {"fit_scenes": len({r["scene"] for r in fit}),
                   "test_scenes": len({r["scene"] for r in test}),
                   "uncalibrated": scored(test, {}, truth)}
         for scope in analysis.SCOPES:
-            calibrator = analysis.fit_calibrator([(r["results"], truth[r["scene"]]) for r in fit],
-                                                 scope)
+            calibrator = analysis.fit_calibrator(
+                [(r["results"], truth[r["scene"]]) for r in fit], scope, scoring=scoring
+            )
             applied = {(r["scene"], r["view"]): calibrator.apply(r["results"])
                        for r in test} if calibrator else {}
             result[scope] = scored(test, applied, truth)
@@ -118,7 +170,7 @@ def transfer_main(args) -> None:
 
 
 def views_main(args) -> None:
-    truth, records = load(args)
+    truth, records, scoring = load(args)
     table = analysis.by_scene_view(records)
     singles = sorted({v for views in table.values() for v in views if v.isdigit()})
     if not singles:
@@ -130,8 +182,8 @@ def views_main(args) -> None:
     if args.calibrate:
         for view in singles:
             one = [r for r in records if r["view"] == view]
-            calibrated.update(analysis.cross_fit(one, truth, args.scope, args.folds))
-    report = {"views": singles, "scenes": len(table), "by_count": {}}
+            calibrated.update(analysis.cross_fit(one, truth, args.scope, args.folds, scoring=scoring))
+    report = {"scoring": scoring, "views": singles, "scenes": len(table), "by_count": {}}
     for count in range(1, len(singles) + 1):
         subsets = {}
         for subset in itertools.combinations(singles, count):
@@ -174,19 +226,20 @@ def views_main(args) -> None:
 
 
 def fit_main(args) -> None:
-    truth, records = load(args)
+    truth, records, scoring = load(args)
     single = [r for r in records if r["view"] == args.view]
     if args.sizes:
         single = [r for r in single if r["size"] in args.sizes]
     if args.seeds:
         single = [r for r in single if r["seed"] in args.seeds]
-    calibrator = analysis.fit_calibrator([(r["results"], truth[r["scene"]]) for r in single],
-                                         args.scope)
+    calibrator = analysis.fit_calibrator(
+        [(r["results"], truth[r["scene"]]) for r in single], args.scope, scoring=scoring
+    )
     if calibrator is None:
         raise SystemExit("no answered predictions to fit on")
     args.out.parent.mkdir(parents=True, exist_ok=True)
     calibrator.save(args.out)
-    print(f"fitted {args.scope} Platt scaling on {len(single)} scenes -> {args.out}")
+    print(f"fitted {args.scope} Platt scaling ({scoring}) on {len(single)} scenes -> {args.out}")
 
 
 def finish(args, report) -> None:
@@ -204,7 +257,7 @@ def main(argv=None) -> None:
         p = sub.add_parser(name)
         p.add_argument("--instances", type=Path, required=True)
         p.add_argument("--run", type=Path, required=True,
-                       help="a logprobs run directory written by collect.py")
+                       help="a run directory written by collect.py (logprobs or text_match)")
         p.add_argument("--view", default="0")
         p.add_argument("--folds", type=int, default=5)
         p.add_argument("--scope", default="lifted", choices=analysis.SCOPES)
@@ -212,6 +265,8 @@ def main(argv=None) -> None:
         p.set_defaults(func=func)
         if name == "scopes":
             p.add_argument("--repeats", type=int, default=3, help="fold assignments to average")
+            p.add_argument("--group-by", choices=("scene", "image"), default="scene",
+                           help="unit for cross-fitting folds (scene id or view image hash)")
         if name == "transfer":
             p.add_argument("--fit-sizes", type=int, nargs="*", default=[3, 4, 5])
             p.add_argument("--test-sizes", type=int, nargs="*", default=[6, 7])
